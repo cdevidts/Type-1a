@@ -1,0 +1,28 @@
+{
+  "name": "@type1a/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "lint": "eslint src test",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.1.0",
+    "@type1a/ai": "workspace:*",
+    "@type1a/cgm": "workspace:*",
+    "@type1a/domain": "workspace:*",
+    "@type1a/schemas": "workspace:*",
+    "dotenv": "^17.2.3",
+    "fastify": "^5.7.4",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.10"
+  }
+}
