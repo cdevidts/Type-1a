@@ -59,7 +59,15 @@ fases, más los hallazgos de diagnóstico que lo sustentan.
   `packages/domain/src/freshness.ts` → `latestLiveReading()` (excluye
   `imported`, no `synthetic` — sintético sí es "actual" legítimo, solo que
   rotulado). **Cualquier lugar nuevo que necesite "la lectura actual" debe
-  usar `latestLiveReading()`, nunca reimplementar la lógica.**
+  usar `latestLiveReading()`, nunca reimplementar la lógica.** Segunda
+  vuelta del reviewer encontró que `GlucoseChart.tsx` tenía el mismo
+  problema por su cuenta (dibuja el punto resaltado "Ahora" con
+  `coordinates.at(-1)` sobre lo que le pasen, sin filtrar `origin`) —
+  `GlucoseCard.tsx` le pasaba el array crudo. Se agregó `liveReadings()`
+  (mismo archivo, mismo filtro) y ahora `GlucoseCard` le pasa
+  `liveReadings(readings)` al gráfico. **Moraleja: cuando encuentres un
+  patrón repetido (`.at(-1)` sobre `CGMReading[]`), busca TODOS los
+  lugares donde se repite, no solo el que reportó el bug original.**
 
 ## Bugs encontrados (van primero, antes que features nuevas)
 

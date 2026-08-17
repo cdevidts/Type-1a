@@ -32,24 +32,32 @@ export function assessFreshness(
 }
 
 /**
- * The most recent reading that can legitimately stand in for "current
- * glucose" — i.e. never an imported historical row, no matter how recent
- * its `sourceTimestamp` happens to be. `readings` is expected sorted
- * ascending by `sourceTimestamp` (as `getCGMReadings` returns it).
+ * Readings that can legitimately stand in for "live/current" data — i.e.
+ * never imported historical rows, no matter how recent their
+ * `sourceTimestamp` happens to be. `origin: 'synthetic'` is intentionally
+ * KEPT — it's a legitimate "current" value for the dev/mock provider,
+ * just visibly labelled as synthetic by the UI, unlike imported history.
  *
- * Without this, a same-day CSV import can leave a MySugr row young enough
- * to pass `assessFreshness`, and naive `readings.at(-1)` picks it as
- * "current" — which is exactly the "imported data presented as live"
- * failure AGENTS.md prohibits, and it would also get silently pre-filled
- * into the correction-dose calculator as though it came from a live CGM.
- * `origin: 'synthetic'` is intentionally NOT excluded here — it's a
- * legitimate "current" value for the dev/mock provider, just visibly
- * labelled as synthetic by the UI, unlike imported history.
+ * Use this for anything that presents "now"/"the current trend" — the
+ * live-status badge, the correction calculator's auto-fill, and the trend
+ * chart's highlighted latest point. A same-day CSV import can leave a
+ * MySugr row young enough to pass `assessFreshness`, or to sort as the
+ * chronologically-last point in a recent window, and any code that reads
+ * the raw readings array directly (`.at(-1)`, `[length - 1]`, etc.)
+ * without going through this risks showing imported history as if it
+ * were live — exactly what AGENTS.md prohibits.
+ */
+export function liveReadings(readings: readonly CGMReading[]): CGMReading[] {
+  return readings.filter((reading) => reading.origin !== 'imported');
+}
+
+/**
+ * The most recent reading that can legitimately stand in for "current
+ * glucose". `readings` is expected sorted ascending by `sourceTimestamp`
+ * (as `getCGMReadings` returns it) — see `liveReadings` for why imported
+ * rows are excluded.
  */
 export function latestLiveReading(readings: readonly CGMReading[]): CGMReading | null {
-  for (let i = readings.length - 1; i >= 0; i -= 1) {
-    const reading = readings[i]!;
-    if (reading.origin !== 'imported') return reading;
-  }
-  return null;
+  const live = liveReadings(readings);
+  return live.length === 0 ? null : live[live.length - 1]!;
 }

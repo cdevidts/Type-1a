@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { assessFreshness, latestLiveReading } from '@type1a/domain';
+import { assessFreshness, latestLiveReading, liveReadings } from '@type1a/domain';
 import type { CGMProviderStatus, CGMReading } from '@type1a/schemas';
 
 import { formatClock, relativeAge, trendArrow } from '../format';
@@ -59,7 +59,7 @@ export function GlucoseCard({
         </>
       )}
 
-      <GlucoseChart readings={readings} />
+      <GlucoseChart readings={liveReadings(readings)} />
       <Text style={styles.disclaimer}>No sustituye las alarmas ni la app oficial de FreeStyle.</Text>
     </View>
   );

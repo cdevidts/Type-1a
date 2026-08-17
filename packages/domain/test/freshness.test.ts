@@ -1,7 +1,7 @@
 import type { CGMReading } from '@type1a/schemas';
 import { describe, expect, it } from 'vitest';
 
-import { assessFreshness, latestLiveReading } from '../src/index.js';
+import { assessFreshness, latestLiveReading, liveReadings } from '../src/index.js';
 
 describe('CGM freshness', () => {
   const now = new Date('2026-08-12T14:00:00.000Z');
@@ -59,5 +59,21 @@ describe('latestLiveReading', () => {
 
   it('returns null for an empty list', () => {
     expect(latestLiveReading([])).toBeNull();
+  });
+});
+
+describe('liveReadings', () => {
+  it('filters out imported readings but keeps everything else, preserving order', () => {
+    const readings = [
+      reading({ id: 'live-1', sourceTimestamp: '2026-08-12T13:00:00.000Z', origin: 'real' }),
+      reading({ id: 'imported-1', sourceTimestamp: '2026-08-12T13:30:00.000Z', origin: 'imported' }),
+      reading({ id: 'synthetic-1', sourceTimestamp: '2026-08-12T13:45:00.000Z', origin: 'synthetic' }),
+      reading({ id: 'live-2', sourceTimestamp: '2026-08-12T13:59:00.000Z', origin: 'real' }),
+    ];
+    expect(liveReadings(readings).map((entry) => entry.id)).toEqual(['live-1', 'synthetic-1', 'live-2']);
+  });
+
+  it('returns an empty array when every reading is imported', () => {
+    expect(liveReadings([reading({ origin: 'imported' })])).toEqual([]);
   });
 });
