@@ -69,13 +69,18 @@ const UNSUPPORTED_STRICT_JSON_SCHEMA_KEYWORDS = new Set([
   'maximum',
 ]);
 
-function sanitizeForStrictJsonSchema(schema: unknown): unknown {
-  if (Array.isArray(schema)) return schema.map(sanitizeForStrictJsonSchema);
+// `isPropertiesMap` is true only while recursing through the *values* of a
+// "properties" object — there, keys are application field names (e.g. a
+// hypothetical field literally called "maximum"), not JSON Schema
+// keywords, so they must never be filtered. Every other object level is a
+// real schema node, where these keys really are the keywords to strip.
+export function sanitizeForStrictJsonSchema(schema: unknown, isPropertiesMap = false): unknown {
+  if (Array.isArray(schema)) return schema.map((item) => sanitizeForStrictJsonSchema(item));
   if (schema !== null && typeof schema === 'object') {
     return Object.fromEntries(
       Object.entries(schema)
-        .filter(([key]) => !UNSUPPORTED_STRICT_JSON_SCHEMA_KEYWORDS.has(key))
-        .map(([key, value]) => [key, sanitizeForStrictJsonSchema(value)]),
+        .filter(([key]) => isPropertiesMap || !UNSUPPORTED_STRICT_JSON_SCHEMA_KEYWORDS.has(key))
+        .map(([key, value]) => [key, sanitizeForStrictJsonSchema(value, key === 'properties')]),
     );
   }
   return schema;

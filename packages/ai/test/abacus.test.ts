@@ -4,6 +4,7 @@ import {
   AbacusGlucoseInsightService,
   AbacusMealVisionService,
   AbacusRouteLLMClient,
+  sanitizeForStrictJsonSchema,
 } from '../src/index.js';
 
 function routeResponse(content: unknown): Response {
@@ -96,6 +97,30 @@ describe('Abacus RouteLLM services', () => {
     expect(sentSerialized).not.toContain('maxItems');
     expect(sentSerialized).not.toContain('"minimum"');
     expect(sentSerialized).not.toContain('"maximum"');
+  });
+
+  it('sanitizeForStrictJsonSchema only strips real keyword positions, never an application field of the same name', () => {
+    const schema = {
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      type: 'object',
+      properties: {
+        // A hypothetical field literally named like a stripped keyword —
+        // its key (under "properties") must survive, and its own value
+        // (a real schema node) must still have ITS "maximum" keyword
+        // stripped, same as any other field.
+        maximum: { type: 'number', minimum: 0, maximum: 10 },
+        dose: { type: 'number', minItems: 1, minimum: 0, maximum: 5 },
+      },
+      required: ['maximum', 'dose'],
+    };
+
+    const sanitized = sanitizeForStrictJsonSchema(schema) as Record<string, unknown>;
+    const properties = sanitized.properties as Record<string, unknown>;
+
+    expect(sanitized.$schema).toBeUndefined();
+    expect(Object.keys(properties)).toContain('maximum'); // field name preserved
+    expect(properties.maximum).toEqual({ type: 'number' }); // its own keywords stripped
+    expect(properties.dose).toEqual({ type: 'number' });
   });
 
   it('rejects therapeutic advice even if it matches the output schema', async () => {
