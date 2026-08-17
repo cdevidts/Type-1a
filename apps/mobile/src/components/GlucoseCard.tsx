@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { assessFreshness } from '@type1a/domain';
+import { assessFreshness, latestLiveReading } from '@type1a/domain';
 import type { CGMProviderStatus, CGMReading } from '@type1a/schemas';
 
 import { formatClock, relativeAge, trendArrow } from '../format';
@@ -14,7 +14,7 @@ export function GlucoseCard({
   readings: readonly CGMReading[];
   status: CGMProviderStatus | null;
 }) {
-  const latest = readings.at(-1) ?? null;
+  const latest = latestLiveReading(readings);
   const freshness = latest === null ? null : assessFreshness(latest.sourceTimestamp);
   const isStale = freshness?.state !== 'connected';
   const isSynthetic = latest?.origin === 'synthetic' || status?.isSynthetic === true;

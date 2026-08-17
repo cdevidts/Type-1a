@@ -42,6 +42,11 @@ docs/
   parámetros que el usuario ingresó (nunca inferidos).
 - `freshness.ts` — decide si una lectura CGM está "stale"; `assessFreshness`
   se usa en `apps/api` antes de exponer una lectura como actual.
+  `latestLiveReading()` decide cuál lectura cuenta como "actual" en la UI —
+  excluye `origin:'imported'` (nunca `synthetic`, que sí es legítimamente
+  "actual"). Cualquier código nuevo que necesite "la última lectura" debe
+  usar esto, no reimplementar `.at(-1)` a mano (ver hallazgo en
+  `docs/ROADMAP_V0.2.md`).
 - `meal.ts` — construcción de Meal Episodes y métricas +60/+120/+180, pico,
   delta, tiempo a pico.
 - `units.ts` — conversión mg/dL ↔ mmol/L.

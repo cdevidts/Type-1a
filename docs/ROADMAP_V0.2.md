@@ -49,6 +49,17 @@ fases, más los hallazgos de diagnóstico que lo sustentan.
   SQLite pasa por una acción explícita del usuario (confirmar, guardar,
   registrar). El chat de IA nuevo debe seguir exactamente este patrón:
   proponer, nunca escribir directo.
+- **"Última lectura" nunca debe calcularse con `.at(-1)` a mano sobre el
+  array de `CGMReading`.** El `domain-safety-reviewer` encontró que al
+  agregar `origin:'imported'` (Fase 2), tanto `App.tsx` como `GlucoseCard.tsx`
+  calculaban `latest` por separado con `readings.at(-1)`, sin filtrar
+  `origin` — una fila importada con `sourceTimestamp` reciente (ej.
+  importar el mismo día) se mostraba como "EN LÍNEA" y se precargaba sola
+  en el calculador de corrección. Se centralizó en
+  `packages/domain/src/freshness.ts` → `latestLiveReading()` (excluye
+  `imported`, no `synthetic` — sintético sí es "actual" legítimo, solo que
+  rotulado). **Cualquier lugar nuevo que necesite "la lectura actual" debe
+  usar `latestLiveReading()`, nunca reimplementar la lógica.**
 
 ## Bugs encontrados (van primero, antes que features nuevas)
 

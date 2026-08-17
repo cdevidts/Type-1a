@@ -6,6 +6,7 @@ import { planMySugrImport } from '@type1a/domain';
 import {
   ActivityEventSchema,
   CGMReadingSchema,
+  CarbEventSchema,
   GlucoseInsightSchema,
   HbA1cLabResultSchema,
   InsulinEventSchema,
@@ -185,13 +186,18 @@ export async function saveCarbEvent(
   db: SQLiteDatabase,
   input: { id: string; timestamp: string; carbsG: number; source: 'manual' | 'meal_confirmed' | 'imported'; createdAt: string },
 ): Promise<void> {
+  // Validate explicitly rather than relying only on the SQL CHECK
+  // constraint: now that this is INSERT OR IGNORE (for idempotent
+  // imports), a constraint violation would otherwise be silently dropped
+  // instead of surfacing to the caller.
+  const parsed = CarbEventSchema.parse(input);
   await db.runAsync(
     'INSERT OR IGNORE INTO carb_events (id, timestamp, carbs_g, source, created_at) VALUES (?, ?, ?, ?, ?)',
-    input.id,
-    input.timestamp,
-    input.carbsG,
-    input.source,
-    input.createdAt,
+    parsed.id,
+    parsed.timestamp,
+    parsed.carbsG,
+    parsed.source,
+    parsed.createdAt,
   );
 }
 

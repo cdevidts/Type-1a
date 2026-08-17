@@ -1,6 +1,7 @@
+import type { CGMReading } from '@type1a/schemas';
 import { describe, expect, it } from 'vitest';
 
-import { assessFreshness } from '../src/index.js';
+import { assessFreshness, latestLiveReading } from '../src/index.js';
 
 describe('CGM freshness', () => {
   const now = new Date('2026-08-12T14:00:00.000Z');
@@ -18,5 +19,45 @@ describe('CGM freshness', () => {
 
   it('treats an implausible future source time as provider error', () => {
     expect(assessFreshness('2026-08-12T14:05:00.000Z', now, 15).state).toBe('provider_error');
+  });
+});
+
+function reading(overrides: Partial<CGMReading>): CGMReading {
+  return {
+    id: 'r1',
+    glucose: 120,
+    unit: 'mg/dL',
+    timestamp: '2026-08-12T13:58:00.000Z',
+    trend: 'unknown',
+    trendSource: 'unknown',
+    source: 'test',
+    origin: 'real',
+    sourceTimestamp: '2026-08-12T13:58:00.000Z',
+    ingestedAt: '2026-08-12T13:58:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('latestLiveReading', () => {
+  it('skips a trailing imported reading, even one more recent than the last live one', () => {
+    const readings = [
+      reading({ id: 'live-1', sourceTimestamp: '2026-08-12T13:50:00.000Z', origin: 'real' }),
+      reading({ id: 'imported-1', sourceTimestamp: '2026-08-12T13:59:00.000Z', origin: 'imported' }),
+    ];
+    expect(latestLiveReading(readings)?.id).toBe('live-1');
+  });
+
+  it('treats synthetic readings as legitimately current (visibly labelled, not history)', () => {
+    const readings = [reading({ id: 'synthetic-1', origin: 'synthetic' })];
+    expect(latestLiveReading(readings)?.id).toBe('synthetic-1');
+  });
+
+  it('returns null when every reading is imported', () => {
+    const readings = [reading({ origin: 'imported' })];
+    expect(latestLiveReading(readings)).toBeNull();
+  });
+
+  it('returns null for an empty list', () => {
+    expect(latestLiveReading([])).toBeNull();
   });
 });

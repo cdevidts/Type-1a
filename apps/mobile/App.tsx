@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
+import { latestLiveReading } from '@type1a/domain';
 import type {
   CGMProviderStatus,
   CGMReading,
@@ -85,7 +86,7 @@ function Type1AApp() {
   const [notice, setNotice] = useState<string | null>(null);
   const refreshingRef = useRef(false);
 
-  const latest = readings.at(-1) ?? null;
+  const latest = latestLiveReading(readings);
 
   const loadLocalState = useCallback(async (): Promise<void> => {
     const to = new Date();
