@@ -23,6 +23,10 @@ Mantenlo actualizado cuando agregues un módulo, paquete o decisión nueva.
 
 Otros documentos de contexto en `docs/`:
 
+- `ROADMAP_V0.2.md` — plan de fases post-MVP en curso (rediseño de UX,
+  importación de historial, chat de IA, reportes, etc.), con los hallazgos
+  de diagnóstico que lo sustentan. Léelo antes de tocar cualquier feature
+  nueva de esta ronda — evita re-explorar lo que ya está documentado ahí.
 - `MVP_IMPLEMENTATION_BRIEF.md` — alcance y criterios de aceptación de
   seguridad de la v0.1.
 - `CGM_INTEGRATION_DECISION.md` — por qué Junction/LibreView EU y no
