@@ -52,7 +52,7 @@ fases, más los hallazgos de diagnóstico que lo sustentan.
 
 ## Bugs encontrados (van primero, antes que features nuevas)
 
-### Bug 1 — Modal de corrección: no muestra el resultado ni guarda
+### Bug 1 — Modal de corrección: no muestra el resultado ni guarda — ✅ RESUELTO (2026-08-17)
 
 **Causa raíz diagnosticada** (no es una promesa no manejada ni un error de
 red): `apps/mobile/src/components/CorrectionModal.tsx`, el `useEffect` que
@@ -67,10 +67,15 @@ propio click** — puede disparar el reset justo después (o en vez) de
 mostrar el resultado recién calculado. Por eso no hay mensaje de error: no
 es un fallo, es el efecto de "modal recién abierto" re-disparándose solo.
 
-**Fix:** cambiar las dependencias del efecto de reset a algo que no cambie
-de identidad en cada refresh (ids/timestamps primitivos, o un flag de
-"se acaba de abrir"), y no resetear `result`/`error` una vez que el usuario
-ya interactuó con el formulario en esta apertura del modal.
+**Fix aplicado:** `apps/mobile/src/components/CorrectionModal.tsx` — el
+efecto de reset ahora usa un `useRef` para detectar la transición real de
+`visible` de `false` a `true` (el modal recién se abrió), y solo
+inicializa el formulario en ese momento. `latest`/`profile` siguen en las
+dependencias (se leen dentro del efecto), pero ya no disparan un reset por
+sí solos mientras el modal permanece abierto — ni por un refresh en
+segundo plano, ni por el propio `onSaveProfile` de "Guardar y calcular".
+`pnpm verify` pasa limpio; pendiente de probar en un build real (Fase 0
+sigue sin cerrarse del todo — falta confirmar en el dispositivo).
 
 ### Bug 2 — Análisis de foto de comida: HTTP 502
 

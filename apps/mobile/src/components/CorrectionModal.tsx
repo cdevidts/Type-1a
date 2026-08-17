@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { assessFreshness, calculateCorrection, type CorrectionResult } from '@type1a/domain';
@@ -62,16 +62,27 @@ export function CorrectionModal({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Only re-initialize the form on the true "modal just opened" transition.
+  // `latest` and `profile` are freshly parsed objects on every background
+  // refresh (new identity, same or different value) — and saving the
+  // profile below changes `profile`'s identity as a side effect of its own
+  // click. Resetting on every identity change (instead of just on open)
+  // was wiping the just-computed result/error mid-session with no visible
+  // error, since it isn't a failure path — it's "open modal fresh" firing
+  // again while already open.
+  const wasVisibleRef = useRef(false);
   useEffect(() => {
-    if (!visible) return;
-    const canUseReading = latest !== null && assessFreshness(latest.sourceTimestamp).state === 'connected';
-    setCurrent(canUseReading ? String(latest.glucose) : '');
-    setUsingLiveReading(canUseReading);
-    setTarget(String(profile.targetGlucose));
-    setFactor(String(profile.correctionFactor));
-    setIncrement(String(profile.doseIncrement));
-    setResult(null);
-    setError(null);
+    if (visible && !wasVisibleRef.current) {
+      const canUseReading = latest !== null && assessFreshness(latest.sourceTimestamp).state === 'connected';
+      setCurrent(canUseReading ? String(latest.glucose) : '');
+      setUsingLiveReading(canUseReading);
+      setTarget(String(profile.targetGlucose));
+      setFactor(String(profile.correctionFactor));
+      setIncrement(String(profile.doseIncrement));
+      setResult(null);
+      setError(null);
+    }
+    wasVisibleRef.current = visible;
   }, [visible, latest, profile]);
 
   async function calculate(): Promise<void> {
