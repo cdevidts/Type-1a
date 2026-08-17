@@ -184,6 +184,30 @@ Este documento asume que estas dos reformulaciones son aceptables; si
 Verónica quisiera literalmente que la IA ajuste la dosis sola, eso está
 fuera de lo que este proyecto puede construir sin violar `AGENTS.md`.
 
+## Bugs/gaps encontrados probando la Fase 2 en el dispositivo (2026-08-17)
+
+Verónica importó su CSV real y reportó: no aparece ninguna glucosa en el
+Timeline, y ningún ítem del Timeline se puede tocar para ver detalle o
+editar. Investigado — **no es pérdida de datos**:
+
+- **`getTimeline()` (`apps/mobile/src/db.ts`) nunca consulta `cgm_readings`.**
+  Solo arma la lista desde `insulin_events`, `carb_events`, `meal_events` y
+  `meal_episodes`. Esto es así desde antes de la Fase 2 — nunca fue
+  específico del importador, ni de datos en vivo ni importados. Las
+  glucosas importadas SÍ están en la base (se guardan vía
+  `upsertCGMReadings`, ya idempotente), simplemente no hay ninguna pantalla
+  que las liste hoy. Tampoco aparecen en el gráfico principal porque ese
+  solo muestra la ventana de las últimas 3 horas — historial de días atrás
+  no tiene dónde mostrarse todavía.
+- **Ningún ítem de `Timeline.tsx` es tocable.** Están armados con `<View>`,
+  no `<Pressable>` — cero detalle, cero edición, para cualquier tipo de
+  evento (no es algo que rompió el importador, nunca existió).
+
+Ambos son gaps reales de UX, agravados por la Fase 2: ahora mismo, después
+de importar, no hay ninguna forma de verificar visualmente que la
+importación funcionó — hay que confiar en el resumen de conteos. Se agregan
+como ítems concretos al plan de fases (ver Fase 3).
+
 ## Plan de fases
 
 Cada fase es un lote de trabajo independiente, verificable con `pnpm verify`
@@ -196,7 +220,7 @@ persistencia de datos de salud, o `packages/cgm`.
 | **0** | Fix bug modal de corrección (diagnosticado arriba). Diagnosticar bug 502 vía logs reales de DeepAgent y corregir. | — |
 | **1** | ✅ **Completada (2026-08-17).** Fundación de datos: extender schemas (`carbRatio`, `note` en MealEvent, `purpose` en InsulinEvent, `source:'imported'` en CarbEvent, `ActivityEventSchema`, `NoteEventSchema`, `VitalsEventSchema`, `HbA1cLabResultSchema`) + tablas SQLite y funciones `save*`/`get*` en `db.ts`, siguiendo el patrón existente (id, timestamp, payload JSON, índice por timestamp). Primer archivo de test de `packages/schemas` (10 tests). Revisado por `domain-safety-reviewer` — sin hallazgos, todo confirmado inerte (nada de esto se usa aún en `packages/domain` ni en ninguna pantalla). No requiere build de APK (sin UI todavía). | 0 |
 | **2** | ✅ **Código completado y auditado (2026-08-17), pendiente de correr en el dispositivo.** Importador del CSV de MySugr → historial local. Parseo/mapeo puro en `packages/domain/src/mysugr-import.ts` (17 tests, usando filas reales del CSV) + orquestador `importMySugrCsv()` en `db.ts` (idempotente vía IDs determinísticos — reimportar el mismo archivo no duplica). Botón nuevo en Ajustes ("Elegir archivo CSV de MySugr", usa `expo-file-system`'s `File.pickFileAsync`, 100% en el dispositivo, el CSV nunca sale del teléfono). Los eventos importados no crean `meal_episodes` (evita ráfagas de llamadas de IA sobre historial viejo). El `domain-safety-reviewer` encontró y se corrigió en el camino un bug real (lectura importada mostrándose como "en vivo" — ver hallazgo arriba). Falta: que Verónica corra la importación real con su archivo en el APK nuevo y confirme los conteos. | 1 |
-| **3** | Rediseño del gráfico de glucosa (`GlucoseChart.tsx`): ejes con valores, más puntos visibles, no solo el último marcado, mejor uso del espacio. | — (independiente, se puede hacer en paralelo a 1-2) |
+| **3** | Rediseño del gráfico de glucosa (`GlucoseChart.tsx`): ejes con valores, más puntos visibles, no solo el último marcado, mejor uso del espacio. **Agregado tras probar la Fase 2:** (a) `getTimeline()` debe incluir `cgm_readings` como ítems del Timeline — hoy nunca aparecen, ni en vivo ni importados; (b) ítems del Timeline deben ser tocables (`Pressable`) con vista de detalle como mínimo — edición completa puede quedar para una fase propia si el detalle solo (a) resulta insuficiente. | — (independiente, se puede hacer en paralelo a 1-2) |
 | **4** | Configuración de terapia en `SettingsModal`: exponer `targetGlucose`, `correctionFactor`, `doseIncrement` y el nuevo `carbRatio` como editables ahí (hoy solo se editan dentro de Corrección). | 1 |
 | **5** | Flujo unificado de registro "+": un botón que junta foto (IA estima HdC), HdC confirmados, glucosa actual (auto desde CGM), y calcula la dosis total (bolo de comida por `carbRatio` + corrección por `correctionFactor`) en una función nueva y determinística de `packages/domain`. | 4 |
 | **6** | Alarmas configurables: generalizar `scheduleEpisodeNotifications` (ya existe para comidas a 60/120/180min) para que los offsets sean configurables, y agregar el mismo mecanismo para correcciones. Guardar la config en `app_settings` (tabla que ya existe). | — |
