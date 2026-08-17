@@ -63,6 +63,24 @@ describe('LibreLinkUp normalization', () => {
     expect(calls.some((url) => url.includes('api-la.libreview.io'))).toBe(true);
   });
 
+  it('breaks a multi-hop region redirect cycle instead of recursing forever', async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes('api-eu.libreview.io')) return jsonResponse({ status: 0, data: { redirect: true, region: 'US' } });
+      if (url.includes('api-us.libreview.io')) return jsonResponse({ status: 0, data: { redirect: true, region: 'EU' } });
+      throw new Error(`unexpected url: ${url}`);
+    };
+    const provider = new LibreLinkUpCGMProvider({
+      email: 'test@example.com',
+      password: 'secret',
+      region: 'eu',
+      fetcher,
+      now: () => new Date('2026-08-17T16:05:00.000Z'),
+    });
+
+    expect(await provider.getStatus()).toMatchObject({ state: 'provider_error', isSynthetic: false });
+  });
+
   it('maps invalid credentials to authentication_required without retrying forever', async () => {
     const fetcher: typeof fetch = async () => jsonResponse({ status: 2, data: {} });
     const provider = new LibreLinkUpCGMProvider({

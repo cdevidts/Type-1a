@@ -149,7 +149,10 @@ export class LibreLinkUpCGMProvider implements CGMProvider {
     return headers;
   }
 
-  private async loginAtRegion(region: LibreLinkUpRegion): Promise<LibreLinkUpSession> {
+  private async loginAtRegion(
+    region: LibreLinkUpRegion,
+    visitedRegions: ReadonlySet<LibreLinkUpRegion> = new Set(),
+  ): Promise<LibreLinkUpSession> {
     let response: Response;
     try {
       response = await this.fetcher(`https://${regionHost(region)}/llu/auth/login`, {
@@ -182,10 +185,11 @@ export class LibreLinkUpCGMProvider implements CGMProvider {
       if (!LLU_REGIONS.includes(correctRegion as LibreLinkUpRegion)) {
         throw new CGMProviderError(`LibreLinkUp redirected to an unknown region: ${redirectRegion}.`, 'invalid_response', false);
       }
-      if (correctRegion === region) {
+      const nextVisited = new Set(visitedRegions).add(region);
+      if (nextVisited.has(correctRegion as LibreLinkUpRegion)) {
         throw new CGMProviderError('LibreLinkUp redirect loop.', 'provider_error', false);
       }
-      return this.loginAtRegion(correctRegion as LibreLinkUpRegion);
+      return this.loginAtRegion(correctRegion as LibreLinkUpRegion, nextVisited);
     }
 
     if (!authTicket || !user) {
