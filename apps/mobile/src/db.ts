@@ -607,7 +607,7 @@ export async function updateEpisode(
 }
 
 export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<TimelineItem[]> {
-  const [insulinRows, carbRows, mealRows, episodeRows] = await Promise.all([
+  const [insulinRows, carbRows, mealRows, episodeRows, glucoseRows] = await Promise.all([
     db.getAllAsync<{ payload: string }>(
       'SELECT payload FROM insulin_events ORDER BY timestamp DESC LIMIT ?',
       limit,
@@ -629,6 +629,15 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
     }>(
       `SELECT id, meal_timestamp, status, metrics_json, insight_json FROM meal_episodes
        WHERE status != 'collecting' ORDER BY meal_timestamp DESC LIMIT ?`,
+      limit,
+    ),
+    // TODO(Fase 3): CGM readings are far denser than the other event types
+    // (one every few minutes vs. a handful a day), so once real multi-day
+    // history is common this LIMIT-then-merge-then-slice approach will let
+    // glucose crowd out everything else in the combined list. Fine as an
+    // interim fix to make imported/live glucose visible at all.
+    db.getAllAsync<{ payload: string }>(
+      'SELECT payload FROM cgm_readings ORDER BY source_timestamp DESC LIMIT ?',
       limit,
     ),
   ]);
@@ -669,6 +678,21 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
           ? 'Sin carbohidratos confirmados'
           : `${meal.data.confirmedCarbsG} g confirmados`,
         tone: 'orange',
+      });
+    }
+  }
+  for (const row of glucoseRows) {
+    const reading = CGMReadingSchema.safeParse(JSON.parse(row.payload));
+    if (reading.success) {
+      items.push({
+        id: reading.data.id,
+        kind: 'glucose',
+        timestamp: reading.data.sourceTimestamp,
+        title: 'Glucosa',
+        detail: reading.data.origin === 'imported'
+          ? `${reading.data.glucose} mg/dL · importado`
+          : `${reading.data.glucose} mg/dL`,
+        tone: 'teal',
       });
     }
   }

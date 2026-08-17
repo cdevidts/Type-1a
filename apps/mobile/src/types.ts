@@ -41,6 +41,14 @@ export type TimelineItem =
       tone: 'green' | 'navy';
       metrics?: MealEpisodeMetrics;
       insight?: GlucoseInsight;
+    }
+  | {
+      id: string;
+      kind: 'glucose';
+      timestamp: string;
+      title: string;
+      detail: string;
+      tone: 'teal';
     };
 
 export interface StoredMealEpisode {

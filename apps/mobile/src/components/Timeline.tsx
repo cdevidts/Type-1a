@@ -9,6 +9,7 @@ const toneColors = {
   navy: colors.navy,
   orange: colors.orange,
   green: colors.green,
+  teal: colors.teal,
 } as const;
 
 export function Timeline({ items }: { items: readonly TimelineItem[] }) {
