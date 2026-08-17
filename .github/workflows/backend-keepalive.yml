@@ -1,0 +1,46 @@
+name: Backend keep-alive
+
+# Pings the deployed backend's /health endpoint on a schedule so the VM it
+# runs on never sits idle long enough to auto-sleep. Does not touch the app.
+#
+# Runs from GitHub's infrastructure, not any single Claude session — this is
+# intentional so the heartbeat doesn't depend on an ephemeral sandbox staying
+# alive. Free on public repos (unlimited Actions minutes).
+#
+# Setup: add a repository secret named BACKEND_HEALTH_URL with the full
+# health-check URL (Settings -> Secrets and variables -> Actions -> New
+# repository secret). GitHub masks secret values in logs automatically.
+
+on:
+  schedule:
+    # Every 15 minutes, well under the VM's ~60 min idle threshold even if a
+    # run gets delayed (scheduled workflows can lag under GitHub load).
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health endpoint
+        run: |
+          set -uo pipefail
+          URL="${BACKEND_HEALTH_URL:-}"
+          TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+          if [ -z "$URL" ]; then
+            echo "::error::[$TIMESTAMP] BACKEND_HEALTH_URL secret is not set. Add it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+          HTTP_CODE="$(curl -sS -o /tmp/health-response.json -w '%{http_code}' --max-time 15 "$URL" || echo '000')"
+
+          if [ "$HTTP_CODE" = "200" ] && grep -q '"status":"ok"' /tmp/health-response.json 2>/dev/null; then
+            echo "[$TIMESTAMP] OK - http=$HTTP_CODE body=$(cat /tmp/health-response.json)"
+          else
+            echo "::error::[$TIMESTAMP] Backend keep-alive ping FAILED - http=$HTTP_CODE. The VM may go to sleep if this keeps failing. Check the deployment."
+            echo "response body (if any): $(cat /tmp/health-response.json 2>/dev/null | head -c 500)"
+            exit 1
+          fi
+        env:
+          BACKEND_HEALTH_URL: ${{ secrets.BACKEND_HEALTH_URL }}
