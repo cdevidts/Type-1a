@@ -2,6 +2,7 @@ import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
+import { planMySugrImport } from '@type1a/domain';
 import {
   ActivityEventSchema,
   CGMReadingSchema,
@@ -170,7 +171,7 @@ export async function saveTherapyProfile(db: SQLiteDatabase, profile: TherapyPro
 export async function saveInsulinEvent(db: SQLiteDatabase, event: InsulinEvent): Promise<void> {
   const parsed = InsulinEventSchema.parse(event);
   await db.runAsync(
-    'INSERT INTO insulin_events (id, timestamp, type, units, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    'INSERT OR IGNORE INTO insulin_events (id, timestamp, type, units, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     parsed.id,
     parsed.timestamp,
     parsed.type,
@@ -185,7 +186,7 @@ export async function saveCarbEvent(
   input: { id: string; timestamp: string; carbsG: number; source: 'manual' | 'meal_confirmed' | 'imported'; createdAt: string },
 ): Promise<void> {
   await db.runAsync(
-    'INSERT INTO carb_events (id, timestamp, carbs_g, source, created_at) VALUES (?, ?, ?, ?, ?)',
+    'INSERT OR IGNORE INTO carb_events (id, timestamp, carbs_g, source, created_at) VALUES (?, ?, ?, ?, ?)',
     input.id,
     input.timestamp,
     input.carbsG,
@@ -264,7 +265,7 @@ export async function getCGMReadings(
 export async function saveActivityEvent(db: SQLiteDatabase, event: ActivityEvent): Promise<void> {
   const parsed = ActivityEventSchema.parse(event);
   await db.runAsync(
-    'INSERT INTO activity_events (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
+    'INSERT OR IGNORE INTO activity_events (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
     parsed.id,
     parsed.timestamp,
     JSON.stringify(parsed),
@@ -287,7 +288,7 @@ export async function getActivityEvents(db: SQLiteDatabase, from: Date, to: Date
 export async function saveNoteEvent(db: SQLiteDatabase, note: NoteEvent): Promise<void> {
   const parsed = NoteEventSchema.parse(note);
   await db.runAsync(
-    'INSERT INTO note_events (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
+    'INSERT OR IGNORE INTO note_events (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
     parsed.id,
     parsed.timestamp,
     JSON.stringify(parsed),
@@ -310,7 +311,7 @@ export async function getNoteEvents(db: SQLiteDatabase, from: Date, to: Date): P
 export async function saveVitalsEvent(db: SQLiteDatabase, vitals: VitalsEvent): Promise<void> {
   const parsed = VitalsEventSchema.parse(vitals);
   await db.runAsync(
-    'INSERT INTO vitals_events (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
+    'INSERT OR IGNORE INTO vitals_events (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
     parsed.id,
     parsed.timestamp,
     JSON.stringify(parsed),
@@ -333,7 +334,7 @@ export async function getVitalsEvents(db: SQLiteDatabase, from: Date, to: Date):
 export async function saveHbA1cResult(db: SQLiteDatabase, result: HbA1cLabResult): Promise<void> {
   const parsed = HbA1cLabResultSchema.parse(result);
   await db.runAsync(
-    'INSERT INTO hba1c_results (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
+    'INSERT OR IGNORE INTO hba1c_results (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
     parsed.id,
     parsed.timestamp,
     JSON.stringify(parsed),
@@ -351,6 +352,104 @@ export async function getHbA1cResults(db: SQLiteDatabase, from: Date, to: Date):
     const parsed = HbA1cLabResultSchema.safeParse(JSON.parse(row.payload));
     return parsed.success ? [parsed.data] : [];
   });
+}
+
+/**
+ * Writes a meal event only — no `meal_episodes` row. Used by the MySugr
+ * importer: episodes are a *live* workflow concept (wait for post-meal CGM
+ * + insulin data, then compute metrics and optionally fetch an AI
+ * insight), and every imported meal is already hours-to-months old, so
+ * running them all through that pipeline on the next refresh would burst
+ * dozens of AI calls at once for no benefit. Bulk historical data is for
+ * the timeline/chart/summary, not the live episode tracker.
+ */
+export async function saveImportedMealEvent(db: SQLiteDatabase, meal: MealEvent): Promise<void> {
+  const parsed = MealEventSchema.parse(meal);
+  await db.runAsync(
+    'INSERT OR IGNORE INTO meal_events (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
+    parsed.id,
+    parsed.timestamp,
+    JSON.stringify(parsed),
+    parsed.createdAt,
+  );
+}
+
+export interface MySugrImportOutcome {
+  rowsTotal: number;
+  rowsSkipped: number;
+  cgmReadings: number;
+  insulinEvents: number;
+  carbEvents: number;
+  mealEvents: number;
+  activityEvents: number;
+  noteEvents: number;
+  vitalsEvents: number;
+  hba1cResults: number;
+}
+
+/**
+ * Imports a MySugr CSV export into local history. Idempotent by design:
+ * every event gets a deterministic ID derived from its timestamp and kind
+ * (see packages/domain/src/mysugr-import.ts), and every write here uses
+ * `INSERT OR IGNORE` (or, for CGM readings, the already-idempotent
+ * `upsertCGMReadings`), so importing the same file twice is a safe no-op
+ * rather than a duplicate-key error or duplicated data.
+ */
+export async function importMySugrCsv(db: SQLiteDatabase, csvText: string): Promise<MySugrImportOutcome> {
+  const plan = planMySugrImport(csvText, new Date().toISOString());
+  const outcome: MySugrImportOutcome = {
+    rowsTotal: plan.rowsTotal,
+    rowsSkipped: plan.rowsSkipped,
+    cgmReadings: 0,
+    insulinEvents: 0,
+    carbEvents: 0,
+    mealEvents: 0,
+    activityEvents: 0,
+    noteEvents: 0,
+    vitalsEvents: 0,
+    hba1cResults: 0,
+  };
+
+  const cgmReadings = plan.events.flatMap((event) => (event.cgmReading ? [event.cgmReading] : []));
+  if (cgmReadings.length > 0) {
+    await upsertCGMReadings(db, cgmReadings);
+    outcome.cgmReadings = cgmReadings.length;
+  }
+
+  await db.withTransactionAsync(async () => {
+    for (const event of plan.events) {
+      for (const insulinEvent of event.insulinEvents) {
+        await saveInsulinEvent(db, insulinEvent);
+        outcome.insulinEvents += 1;
+      }
+      if (event.carbEvent !== undefined) {
+        await saveCarbEvent(db, event.carbEvent);
+        outcome.carbEvents += 1;
+      }
+      if (event.mealEvent !== undefined) {
+        await saveImportedMealEvent(db, event.mealEvent);
+        outcome.mealEvents += 1;
+      }
+      if (event.activityEvent !== undefined) {
+        await saveActivityEvent(db, event.activityEvent);
+        outcome.activityEvents += 1;
+      }
+      if (event.noteEvent !== undefined) {
+        await saveNoteEvent(db, event.noteEvent);
+        outcome.noteEvents += 1;
+      }
+      if (event.vitalsEvent !== undefined) {
+        await saveVitalsEvent(db, event.vitalsEvent);
+        outcome.vitalsEvents += 1;
+      }
+      if (event.hba1cResult !== undefined) {
+        await saveHbA1cResult(db, event.hba1cResult);
+        outcome.hba1cResults += 1;
+      }
+    }
+  });
+
+  return outcome;
 }
 
 export async function getRecentRapidInsulin(

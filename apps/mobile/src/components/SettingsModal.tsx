@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { File } from 'expo-file-system';
 import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import type { CGMProviderStatus, CGMReading, TherapyProfile } from '@type1a/schemas';
@@ -6,7 +7,25 @@ import type { CGMProviderStatus, CGMReading, TherapyProfile } from '@type1a/sche
 import { API_BASE_URL, connectFreestyleLibre } from '../api';
 import { enableQuickEntryNotification } from '../notifications';
 import { colors, radius, spacing } from '../theme';
+import type { MySugrImportOutcome } from '../db';
 import { ModalShell } from './ModalShell';
+
+function importSummaryText(outcome: MySugrImportOutcome): string {
+  const parts = [
+    outcome.cgmReadings > 0 ? `${outcome.cgmReadings} glucosas` : null,
+    outcome.insulinEvents > 0 ? `${outcome.insulinEvents} insulinas` : null,
+    outcome.carbEvents > 0 ? `${outcome.carbEvents} carbohidratos` : null,
+    outcome.mealEvents > 0 ? `${outcome.mealEvents} comidas` : null,
+    outcome.activityEvents > 0 ? `${outcome.activityEvents} actividades` : null,
+    outcome.noteEvents > 0 ? `${outcome.noteEvents} notas` : null,
+    outcome.vitalsEvents > 0 ? `${outcome.vitalsEvents} vitales` : null,
+    outcome.hba1cResults > 0 ? `${outcome.hba1cResults} HbA1c` : null,
+  ].filter((part): part is string => part !== null);
+  const skipped = outcome.rowsSkipped > 0 ? ` (${outcome.rowsSkipped} filas no se pudieron leer)` : '';
+  return parts.length === 0
+    ? `Se leyeron ${outcome.rowsTotal} filas, pero no había nada nuevo para importar${skipped}.`
+    : `Importado: ${parts.join(', ')}, de ${outcome.rowsTotal} filas${skipped}. Repetir con el mismo archivo no duplica datos.`;
+}
 
 export function SettingsModal({
   visible,
@@ -16,6 +35,7 @@ export function SettingsModal({
   profile,
   showGlucoseOnLockScreen,
   onPrivacyChange,
+  onImportMySugrCsv,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -24,6 +44,7 @@ export function SettingsModal({
   profile: TherapyProfile;
   showGlucoseOnLockScreen: boolean;
   onPrivacyChange: (show: boolean) => Promise<void>;
+  onImportMySugrCsv: (csvText: string) => Promise<MySugrImportOutcome>;
 }) {
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
@@ -45,6 +66,22 @@ export function SettingsModal({
       setMessage(`Junction respondió: ${state}. Revisa LibreView → Aplicaciones conectadas → LibreView para compartir con la práctica indicada.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo iniciar la conexión.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importCsv(): Promise<void> {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const picked = await File.pickFileAsync({ mimeTypes: ['text/csv', 'text/comma-separated-values', 'text/plain', '*/*'] });
+      if (picked.canceled) return;
+      const csvText = await picked.result.text();
+      const outcome = await onImportMySugrCsv(csvText);
+      setMessage(importSummaryText(outcome));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo importar el archivo.');
     } finally {
       setBusy(false);
     }
@@ -113,6 +150,12 @@ export function SettingsModal({
 
       <Text style={styles.sectionTitle}>Parámetros de corrección</Text>
       <Text style={styles.copy}>Objetivo {profile.targetGlucose} mg/dL · Factor {profile.correctionFactor} mg/dL/U · Incremento {profile.doseIncrement} U. Se editan dentro de “Corrección”.</Text>
+
+      <Text style={styles.sectionTitle}>Importar historial</Text>
+      <Text style={styles.copy}>Carga un CSV exportado desde MySugr (glucosa, insulina, carbohidratos, comidas, actividad, vitales, HbA1c). Se guarda como historial local; importar el mismo archivo dos veces no duplica datos.</Text>
+      <Pressable style={[styles.connectButton, busy && styles.disabled]} disabled={busy} onPress={() => { void importCsv(); }}>
+        <Text style={styles.connectText}>Elegir archivo CSV de MySugr</Text>
+      </Pressable>
 
       <Text style={styles.sectionTitle}>Diagnóstico</Text>
       <Text style={styles.diagnostic}>Backend: {API_BASE_URL}</Text>

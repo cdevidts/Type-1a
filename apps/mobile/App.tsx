@@ -39,6 +39,7 @@ import {
   getSetting,
   getTherapyProfile,
   getTimeline,
+  importMySugrCsv,
   initializeDatabase,
   saveCarbEvent,
   saveInsulinEvent,
@@ -334,6 +335,11 @@ function Type1AApp() {
         profile={profile}
         showGlucoseOnLockScreen={showGlucoseOnLockScreen}
         onPrivacyChange={updatePrivacy}
+        onImportMySugrCsv={async (csvText) => {
+          const outcome = await importMySugrCsv(db, csvText);
+          await loadLocalState();
+          return outcome;
+        }}
       />
       <InsulinAssociationModal
         pending={pendingAssociations[0] ?? null}

@@ -45,6 +45,15 @@ docs/
 - `meal.ts` — construcción de Meal Episodes y métricas +60/+120/+180, pico,
   delta, tiempo a pico.
 - `units.ts` — conversión mg/dL ↔ mmol/L.
+- `mysugr-import.ts` — parseo/mapeo puro (sin I/O) del CSV exportado de
+  MySugr: `parseMySugrCsv`, `parseMySugrTimestamp` (fecha/hora en español +
+  offset `GMT±HH:MM`, sin depender del huso horario del runtime),
+  `mapMySugrRowToEvents` (una fila → `CGMReading`/`InsulinEvent[]`/
+  `CarbEvent`/`MealEvent`/`ActivityEvent`/`NoteEvent`/`VitalsEvent`/
+  `HbA1cLabResult`, con IDs determinísticos por timestamp+tipo, no
+  aleatorios — así reimportar el mismo CSV es un no-op), `planMySugrImport`
+  (orquesta ambos, sigue sin I/O). Quien escribe a SQLite es
+  `apps/mobile/src/db.ts` (`importMySugrCsv`), no este archivo.
 - `ai-safety.ts` — `containsTherapyRecommendation()`: filtro regex (español)
   que **rechaza** cualquier salida de IA que suene a consejo de dosis. Este es
   el guardrail técnico detrás de la regla "Never let an LLM calculate, infer,
@@ -102,6 +111,13 @@ docs/
   `id/timestamp/payload JSON/created_at`, indexadas por `timestamp`, con un
   par `save*`/`get*` cada una que parsea con Zod y descarta filas inválidas
   en vez de tirar excepción (mismo patrón que `getCGMReadings`).
+  `importMySugrCsv()` (Fase 2) orquesta `planMySugrImport` de
+  `packages/domain` y escribe todo con `INSERT OR IGNORE` (idempotente por
+  los IDs determinísticos del importador). Los eventos importados usan
+  `saveImportedMealEvent` en vez de `saveMealWithEpisode` — a propósito no
+  crean fila en `meal_episodes`, para que el tracker de episodios en vivo
+  (`episodes.ts`) nunca los procese ni dispare llamadas de IA sobre
+  historial antiguo.
 - `src/episodes.ts` — lógica de asociación comida–insulina en cliente.
 - `src/notifications.ts` — notificaciones locales de episodios.
 - `src/components/` — `Timeline`, `GlucoseCard`, `GlucoseChart`,
