@@ -27,6 +27,14 @@ docs/
   `CGMTrendSchema`, `MealEpisodeMetricsSchema`, `InsulinEvent`, `MealEvent`,
   `GlucoseInsight`, etc. Si vas a cambiar la forma de un dato que cruza
   api ↔ mobile ↔ packages, empieza acá.
+- Tipos de evento agregados en la Fase 1 de `docs/ROADMAP_V0.2.md`:
+  `ActivityEventSchema` (actividad física), `NoteEventSchema` (nota suelta),
+  `VitalsEventSchema` (peso/presión/cetonas, exige al menos una medición),
+  `HbA1cLabResultSchema` (HbA1c **de laboratorio** — nunca confundir con una
+  HbA1c estimada calculada por la app). `TherapyProfileSchema` ganó
+  `carbRatio` (opcional, sigue siendo un valor que el usuario ingresa, nunca
+  inferido). Todo esto es solo modelo de datos — nada de esto todavía se usa
+  en `packages/domain` ni en ninguna pantalla.
 
 ## `packages/domain` — crítico de seguridad, sin IA ni red
 
@@ -89,7 +97,11 @@ docs/
 - `App.tsx`, `index.ts` — entry points.
 - `src/api.ts` — cliente HTTP hacia `apps/api` (usa `EXPO_PUBLIC_API_BASE_URL`).
 - `src/db.ts` — SQLite local (timeline de insulina, carbohidratos, comidas,
-  CGM cacheado).
+  CGM cacheado, y desde la Fase 1: actividad física, notas sueltas, vitales,
+  HbA1c de laboratorio). Todas las tablas nuevas siguen el mismo patrón:
+  `id/timestamp/payload JSON/created_at`, indexadas por `timestamp`, con un
+  par `save*`/`get*` cada una que parsea con Zod y descarta filas inválidas
+  en vez de tirar excepción (mismo patrón que `getCGMReadings`).
 - `src/episodes.ts` — lógica de asociación comida–insulina en cliente.
 - `src/notifications.ts` — notificaciones locales de episodios.
 - `src/components/` — `Timeline`, `GlucoseCard`, `GlucoseChart`,

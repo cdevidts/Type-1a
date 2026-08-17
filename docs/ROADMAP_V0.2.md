@@ -74,50 +74,34 @@ inicializa el formulario en ese momento. `latest`/`profile` siguen en las
 dependencias (se leen dentro del efecto), pero ya no disparan un reset por
 sí solos mientras el modal permanece abierto — ni por un refresh en
 segundo plano, ni por el propio `onSaveProfile` de "Guardar y calcular".
-`pnpm verify` pasa limpio; pendiente de probar en un build real (Fase 0
-sigue sin cerrarse del todo — falta confirmar en el dispositivo).
+**Confirmado en el dispositivo real por Verónica (2026-08-17): funciona.**
 
 ### Bug 2 — Análisis de foto de comida: HTTP 502 — ✅ RESUELTO (2026-08-17)
 
-Reproducido y medido directamente contra el backend en producción
-(`https://237e8b7f1.abacusai.cloud`):
-
-- `/health` y `/v1/cgm/status` → 200 OK, ~1s.
-- `/v1/ai/meal-analysis` con una imagen mínima de prueba → **502, en ~2
-  segundos**, cuerpo de texto plano `"error code: 502"` (no es JSON, no
-  tiene la forma de `ApiErrorSchema` que usa nuestro backend).
-
-Esto descarta que sea el timeout de 45s hacia Abacus RouteLLM
-(`AbacusRouteLLMClient`, `packages/ai/src/abacus.ts:69`) — 2 segundos es
-demasiado rápido para eso.
-
-**Causa raíz real** (diagnosticada por DeepAgent con acceso a los logs del
-servidor, y confirmada de forma independiente probando directo contra la
-API de Abacus RouteLLM con los schemas reales generados por el repo): el
-servicio nunca se cayó ni hubo problema de infraestructura — era un 502
-generado por **nuestro propio código**, reenviando un 400 real del
-proveedor. Abacus RouteLLM en modo `json_schema` estricto rechaza:
-- la clave `"$schema"` (la incluye `z.toJSONSchema` de Zod por defecto) —
-  rompe tanto `mealAnalysisJsonSchema` como `glucoseInsightJsonSchema`;
-- para el schema de comida específicamente, además `minItems`/`maxItems`
-  en el array `foods` — combinado con los objetos anidados, produce
-  "too many states for serving" según el proveedor. (`minimum`/`maximum`
-  numéricos, a pesar de mencionarse en el mensaje de error del proveedor,
-  **no** eran en realidad el problema — se confirmó probando cada
-  combinación por separado contra la API real.)
+**Causa raíz real** (no era infra, era el schema): Abacus RouteLLM rechaza
+en modo `json_schema` estricto la clave `$schema` (siempre) y, para el
+schema de `meal-analysis` específicamente, también `minItems`/`maxItems`
+en arrays anidados ("too many states for serving"). Verificado
+directamente contra la API real de Abacus, probando cada combinación de
+claves por separado — el schema de `glucose-insight` solo necesitaba sacar
+`$schema`; el de `meal-analysis` necesitaba además sacar `minItems`/
+`maxItems` (no `minimum`/`maximum`, que sí bastaban para el insight pero no
+alcanzaban solos para el meal-analysis).
 
 **Fix aplicado:** `packages/ai/src/abacus.ts` — nueva función
-`sanitizeForStrictJsonSchema()` que saca esas claves recursivamente del
-schema justo antes de mandarlo como `response_format.json_schema.schema`.
-Los schemas exportados de `packages/schemas` quedan intactos (siguen siendo
-JSON Schema completo y correcto); el recorte es solo para lo que le
-pedimos al proveedor que valide. **La validación real no se debilitó**:
-`MealAnalysisSchema.safeParse(...)` / `GlucoseInsightSchema.safeParse(...)`
-siguen aplicando los límites reales de Zod sobre la respuesta del modelo
-después de recibirla — si el modelo devuelve algo fuera de rango, se
-sigue rechazando igual que antes. Test nuevo en
-`packages/ai/test/abacus.test.ts` prueba ambas mitades. `pnpm verify`
-limpio; revisado por `domain-safety-reviewer`.
+`sanitizeForStrictJsonSchema()` que saca esas claves del schema saliente
+antes de mandarlo a Abacus, pero **solo en las posiciones reales de
+keyword** (no dentro de `properties`, donde las claves son nombres de
+campo de la aplicación, no keywords de JSON Schema — así un futuro campo
+llamado literalmente "maximum" no perdería su descripción sin que nadie lo
+note). La validación de la respuesta (`MealAnalysisSchema.safeParse` /
+`GlucoseInsightSchema.safeParse`, con los límites reales intactos) no
+cambió — sacar las claves del *hint* que le mandamos al modelo no debilita
+lo que nosotros aceptamos después. Revisado por `domain-safety-reviewer`
+dos veces (una por el fix, otra por el endurecimiento posterior).
+**Redeploy verificado en producción por DeepAgent con una foto de comida
+real: 200 OK end-to-end.** Confirmado también por Verónica en el
+dispositivo.
 
 ## Mapeo de datos de MySugr (para la importación de historial)
 
@@ -184,7 +168,7 @@ persistencia de datos de salud, o `packages/cgm`.
 | Fase | Contenido | Depende de |
 |---|---|---|
 | **0** | Fix bug modal de corrección (diagnosticado arriba). Diagnosticar bug 502 vía logs reales de DeepAgent y corregir. | — |
-| **1** | Fundación de datos: extender schemas (`carbRatio`, `note` en MealEvent, `purpose` en InsulinEvent, `source:'imported'` en CarbEvent, `ActivityEventSchema`, `NoteEventSchema`, `VitalsEventSchema`, `HbA1cLabResultSchema`) + tablas SQLite + funciones de lectura/escritura en `db.ts`, siguiendo el patrón existente (id, timestamp, payload JSON, índice por timestamp). | 0 |
+| **1** | ✅ **Completada (2026-08-17).** Fundación de datos: extender schemas (`carbRatio`, `note` en MealEvent, `purpose` en InsulinEvent, `source:'imported'` en CarbEvent, `ActivityEventSchema`, `NoteEventSchema`, `VitalsEventSchema`, `HbA1cLabResultSchema`) + tablas SQLite y funciones `save*`/`get*` en `db.ts`, siguiendo el patrón existente (id, timestamp, payload JSON, índice por timestamp). Primer archivo de test de `packages/schemas` (10 tests). Revisado por `domain-safety-reviewer` — sin hallazgos, todo confirmado inerte (nada de esto se usa aún en `packages/domain` ni en ninguna pantalla). No requiere build de APK (sin UI todavía). | 0 |
 | **2** | Importador del CSV de MySugr → historial local, usando los schemas de la Fase 1. Corre una vez, revisa duplicados por timestamp+valor. | 1 |
 | **3** | Rediseño del gráfico de glucosa (`GlucoseChart.tsx`): ejes con valores, más puntos visibles, no solo el último marcado, mejor uso del espacio. | — (independiente, se puede hacer en paralelo a 1-2) |
 | **4** | Configuración de terapia en `SettingsModal`: exponer `targetGlucose`, `correctionFactor`, `doseIncrement` y el nuevo `carbRatio` como editables ahí (hoy solo se editan dentro de Corrección). | 1 |

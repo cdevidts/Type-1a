@@ -56,6 +56,11 @@ export const TherapyProfileSchema = z.object({
   targetGlucose: z.number().positive().finite(),
   correctionFactor: z.number().positive().finite(),
   doseIncrement: z.number().positive().max(1).finite(),
+  // Grams of carbohydrate covered by one unit of rapid insulin. Optional —
+  // like every other therapy value, it is user-entered (never inferred)
+  // and features that need it (the combined meal+correction dose) must
+  // handle it being unset until the user configures it.
+  carbRatio: z.number().positive().finite().optional(),
   rapidInsulinName: z.string().trim().max(80).optional(),
   basalInsulinName: z.string().trim().max(80).optional(),
 });
@@ -67,6 +72,10 @@ export const InsulinEventSchema = z.object({
   type: z.enum(['rapid', 'basal']),
   units: z.number().positive().max(100).finite(),
   insulinName: z.string().trim().max(80).optional(),
+  // What a rapid dose was for, when known — purely descriptive bookkeeping
+  // (e.g. for CSV imports that separate meal vs. correction boluses); it
+  // never feeds back into any dose calculation.
+  purpose: z.enum(['meal', 'correction', 'combined']).optional(),
   source: z.enum(['manual', 'imported']),
   createdAt: IsoTimestampSchema,
 });
@@ -76,10 +85,68 @@ export const CarbEventSchema = z.object({
   id: z.string().min(1),
   timestamp: IsoTimestampSchema,
   carbsG: z.number().nonnegative().max(500).finite(),
-  source: z.enum(['manual', 'meal_confirmed']),
+  source: z.enum(['manual', 'meal_confirmed', 'imported']),
   createdAt: IsoTimestampSchema,
 });
 export type CarbEvent = z.infer<typeof CarbEventSchema>;
+
+export const ActivityEventSchema = z.object({
+  id: z.string().min(1),
+  timestamp: IsoTimestampSchema,
+  durationMinutes: z.number().positive().max(1440).finite().optional(),
+  /** 1 = cómoda, 2 = normal, 3 = exigente (matches the MySugr import scale). */
+  intensity: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  description: z.string().trim().max(300).optional(),
+  steps: z.number().int().nonnegative().max(100_000).optional(),
+  source: z.enum(['manual', 'imported']),
+  createdAt: IsoTimestampSchema,
+});
+export type ActivityEvent = z.infer<typeof ActivityEventSchema>;
+
+export const NoteEventSchema = z.object({
+  id: z.string().min(1),
+  timestamp: IsoTimestampSchema,
+  text: z.string().trim().min(1).max(500),
+  source: z.enum(['manual', 'imported']),
+  createdAt: IsoTimestampSchema,
+});
+export type NoteEvent = z.infer<typeof NoteEventSchema>;
+
+export const VitalsEventSchema = z
+  .object({
+    id: z.string().min(1),
+    timestamp: IsoTimestampSchema,
+    weightKg: z.number().positive().max(400).finite().optional(),
+    systolicBP: z.number().int().positive().max(300).optional(),
+    diastolicBP: z.number().int().positive().max(200).optional(),
+    ketonesMmolL: z.number().nonnegative().max(20).finite().optional(),
+    source: z.enum(['manual', 'imported']),
+    createdAt: IsoTimestampSchema,
+  })
+  .refine(
+    (vitals) =>
+      vitals.weightKg !== undefined
+      || vitals.systolicBP !== undefined
+      || vitals.diastolicBP !== undefined
+      || vitals.ketonesMmolL !== undefined,
+    { message: 'A vitals entry needs at least one measurement.' },
+  );
+export type VitalsEvent = z.infer<typeof VitalsEventSchema>;
+
+/**
+ * A lab-measured HbA1c value the user logs periodically (e.g. from a blood
+ * test). Deliberately separate from any HbA1c *estimate* the app computes
+ * from CGM data — one is a real clinical measurement, the other is our own
+ * derived calculation, and they must never be presented as the same thing.
+ */
+export const HbA1cLabResultSchema = z.object({
+  id: z.string().min(1),
+  timestamp: IsoTimestampSchema,
+  percentage: z.number().positive().max(20).finite(),
+  source: z.enum(['manual', 'imported']),
+  createdAt: IsoTimestampSchema,
+});
+export type HbA1cLabResult = z.infer<typeof HbA1cLabResultSchema>;
 
 export const FoodEstimateSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -120,6 +187,7 @@ export const MealEventSchema = z.object({
   id: z.string().min(1),
   timestamp: IsoTimestampSchema,
   imageUri: z.string().min(1).optional(),
+  note: z.string().trim().max(300).optional(),
   aiEstimatedCarbsG: z.number().nonnegative().max(500).finite().optional(),
   confirmedCarbsG: z.number().nonnegative().max(500).finite().optional(),
   proteinG: z.number().nonnegative().max(500).finite().optional(),

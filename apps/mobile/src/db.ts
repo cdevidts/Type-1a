@@ -3,18 +3,26 @@ import * as SecureStore from 'expo-secure-store';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import {
+  ActivityEventSchema,
   CGMReadingSchema,
   GlucoseInsightSchema,
+  HbA1cLabResultSchema,
   InsulinEventSchema,
   MealEpisodeMetricsSchema,
   MealEventSchema,
+  NoteEventSchema,
   TherapyProfileSchema,
+  VitalsEventSchema,
+  type ActivityEvent,
   type CGMReading,
   type GlucoseInsight,
+  type HbA1cLabResult,
   type InsulinEvent,
   type MealEpisodeMetrics,
   type MealEvent,
+  type NoteEvent,
   type TherapyProfile,
+  type VitalsEvent,
 } from '@type1a/schemas';
 
 import type { PendingInsulinAssociation, StoredMealEpisode, TimelineItem } from './types';
@@ -98,6 +106,34 @@ export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS activity_events (
+      id TEXT PRIMARY KEY,
+      timestamp TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS activity_events_timestamp ON activity_events(timestamp);
+    CREATE TABLE IF NOT EXISTS note_events (
+      id TEXT PRIMARY KEY,
+      timestamp TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS note_events_timestamp ON note_events(timestamp);
+    CREATE TABLE IF NOT EXISTS vitals_events (
+      id TEXT PRIMARY KEY,
+      timestamp TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS vitals_events_timestamp ON vitals_events(timestamp);
+    CREATE TABLE IF NOT EXISTS hba1c_results (
+      id TEXT PRIMARY KEY,
+      timestamp TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS hba1c_results_timestamp ON hba1c_results(timestamp);
   `);
 
   const episodeColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(meal_episodes)');
@@ -146,7 +182,7 @@ export async function saveInsulinEvent(db: SQLiteDatabase, event: InsulinEvent):
 
 export async function saveCarbEvent(
   db: SQLiteDatabase,
-  input: { id: string; timestamp: string; carbsG: number; source: 'manual' | 'meal_confirmed'; createdAt: string },
+  input: { id: string; timestamp: string; carbsG: number; source: 'manual' | 'meal_confirmed' | 'imported'; createdAt: string },
 ): Promise<void> {
   await db.runAsync(
     'INSERT INTO carb_events (id, timestamp, carbs_g, source, created_at) VALUES (?, ?, ?, ?, ?)',
@@ -221,6 +257,98 @@ export async function getCGMReadings(
   );
   return rows.flatMap((row) => {
     const parsed = CGMReadingSchema.safeParse(JSON.parse(row.payload));
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+export async function saveActivityEvent(db: SQLiteDatabase, event: ActivityEvent): Promise<void> {
+  const parsed = ActivityEventSchema.parse(event);
+  await db.runAsync(
+    'INSERT INTO activity_events (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
+    parsed.id,
+    parsed.timestamp,
+    JSON.stringify(parsed),
+    parsed.createdAt,
+  );
+}
+
+export async function getActivityEvents(db: SQLiteDatabase, from: Date, to: Date): Promise<ActivityEvent[]> {
+  const rows = await db.getAllAsync<{ payload: string }>(
+    'SELECT payload FROM activity_events WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp ASC',
+    from.toISOString(),
+    to.toISOString(),
+  );
+  return rows.flatMap((row) => {
+    const parsed = ActivityEventSchema.safeParse(JSON.parse(row.payload));
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+export async function saveNoteEvent(db: SQLiteDatabase, note: NoteEvent): Promise<void> {
+  const parsed = NoteEventSchema.parse(note);
+  await db.runAsync(
+    'INSERT INTO note_events (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
+    parsed.id,
+    parsed.timestamp,
+    JSON.stringify(parsed),
+    parsed.createdAt,
+  );
+}
+
+export async function getNoteEvents(db: SQLiteDatabase, from: Date, to: Date): Promise<NoteEvent[]> {
+  const rows = await db.getAllAsync<{ payload: string }>(
+    'SELECT payload FROM note_events WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp ASC',
+    from.toISOString(),
+    to.toISOString(),
+  );
+  return rows.flatMap((row) => {
+    const parsed = NoteEventSchema.safeParse(JSON.parse(row.payload));
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+export async function saveVitalsEvent(db: SQLiteDatabase, vitals: VitalsEvent): Promise<void> {
+  const parsed = VitalsEventSchema.parse(vitals);
+  await db.runAsync(
+    'INSERT INTO vitals_events (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
+    parsed.id,
+    parsed.timestamp,
+    JSON.stringify(parsed),
+    parsed.createdAt,
+  );
+}
+
+export async function getVitalsEvents(db: SQLiteDatabase, from: Date, to: Date): Promise<VitalsEvent[]> {
+  const rows = await db.getAllAsync<{ payload: string }>(
+    'SELECT payload FROM vitals_events WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp ASC',
+    from.toISOString(),
+    to.toISOString(),
+  );
+  return rows.flatMap((row) => {
+    const parsed = VitalsEventSchema.safeParse(JSON.parse(row.payload));
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+export async function saveHbA1cResult(db: SQLiteDatabase, result: HbA1cLabResult): Promise<void> {
+  const parsed = HbA1cLabResultSchema.parse(result);
+  await db.runAsync(
+    'INSERT INTO hba1c_results (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
+    parsed.id,
+    parsed.timestamp,
+    JSON.stringify(parsed),
+    parsed.createdAt,
+  );
+}
+
+export async function getHbA1cResults(db: SQLiteDatabase, from: Date, to: Date): Promise<HbA1cLabResult[]> {
+  const rows = await db.getAllAsync<{ payload: string }>(
+    'SELECT payload FROM hba1c_results WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp ASC',
+    from.toISOString(),
+    to.toISOString(),
+  );
+  return rows.flatMap((row) => {
+    const parsed = HbA1cLabResultSchema.safeParse(JSON.parse(row.payload));
     return parsed.success ? [parsed.data] : [];
   });
 }
