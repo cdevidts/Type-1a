@@ -52,6 +52,12 @@
       ],
       "expo-notifications",
       "expo-secure-store"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "189f9b72-73be-4a79-9d7a-33090236bb36"
+      }
+    },
+    "owner": "cdevidts"
   }
 }

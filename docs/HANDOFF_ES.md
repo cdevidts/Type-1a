@@ -4,7 +4,7 @@
 
 El repositorio contiene un MVP Android-first, local-first y compatible a nivel de bundle con iOS. Funciona sin credenciales externas para registrar datos manuales y usa CGM sintético, siempre rotulado, durante desarrollo.
 
-No se generó un APK firmado porque este entorno no tiene Android SDK, cuenta Expo ni credenciales de firma. `eas.json` deja preparado un perfil `preview` que genera APK cuando se autentique EAS.
+No se generó un APK firmado porque este entorno no tiene Android SDK, cuenta Expo ni credenciales de firma. `apps/mobile/eas.json` deja preparado un perfil `preview` que genera APK cuando se autentique EAS.
 
 ## Flujos implementados
 

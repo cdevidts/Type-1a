@@ -46,4 +46,4 @@ Implementation references are recorded in [docs/RESEARCH_SOURCES.md](docs/RESEAR
 
 ## Builds
 
-`eas.json` defines an internal Android APK profile. A signed binary requires an Expo account or a locally configured Android SDK and signing credentials. Secrets and signing files are intentionally absent from this repository.
+`apps/mobile/eas.json` defines an internal Android APK profile (the Expo project root is `apps/mobile`, not the repo root — EAS resolves config relative to it). A signed binary requires an Expo account; EAS generates and manages the signing keystore remotely on first build. Secrets and signing files are intentionally absent from this repository.
