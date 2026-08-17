@@ -68,6 +68,13 @@ fases, más los hallazgos de diagnóstico que lo sustentan.
   `liveReadings(readings)` al gráfico. **Moraleja: cuando encuentres un
   patrón repetido (`.at(-1)` sobre `CGMReading[]`), busca TODOS los
   lugares donde se repite, no solo el que reportó el bug original.**
+  **Cerrado y verificado por el reviewer en las tres superficies** (badge,
+  autofill de Corrección, gráfico). Nota para el futuro, no un gap activo
+  hoy: `CGMReading.origin` también acepta `'manual'`, y ni `liveReadings`
+  ni `latestLiveReading` lo excluyen — hoy no hay ningún código que cree
+  una lectura `origin:'manual'`, pero si se agrega una función de "ingreso
+  manual de glucosa" más adelante, hay que decidir explícitamente si eso
+  cuenta como "actual" o no, y probablemente extender el filtro.
 
 ## Bugs encontrados (van primero, antes que features nuevas)
 
@@ -188,7 +195,7 @@ persistencia de datos de salud, o `packages/cgm`.
 |---|---|---|
 | **0** | Fix bug modal de corrección (diagnosticado arriba). Diagnosticar bug 502 vía logs reales de DeepAgent y corregir. | — |
 | **1** | ✅ **Completada (2026-08-17).** Fundación de datos: extender schemas (`carbRatio`, `note` en MealEvent, `purpose` en InsulinEvent, `source:'imported'` en CarbEvent, `ActivityEventSchema`, `NoteEventSchema`, `VitalsEventSchema`, `HbA1cLabResultSchema`) + tablas SQLite y funciones `save*`/`get*` en `db.ts`, siguiendo el patrón existente (id, timestamp, payload JSON, índice por timestamp). Primer archivo de test de `packages/schemas` (10 tests). Revisado por `domain-safety-reviewer` — sin hallazgos, todo confirmado inerte (nada de esto se usa aún en `packages/domain` ni en ninguna pantalla). No requiere build de APK (sin UI todavía). | 0 |
-| **2** | ✅ **Código completado (2026-08-17), pendiente de correr en el dispositivo.** Importador del CSV de MySugr → historial local. Parseo/mapeo puro en `packages/domain/src/mysugr-import.ts` (17 tests, usando filas reales del CSV) + orquestador `importMySugrCsv()` en `db.ts` (idempotente vía IDs determinísticos — reimportar el mismo archivo no duplica). Botón nuevo en Ajustes ("Elegir archivo CSV de MySugr", usa `expo-file-system`'s `File.pickFileAsync`, 100% en el dispositivo, el CSV nunca sale del teléfono). Los eventos importados no crean `meal_episodes` (evita ráfagas de llamadas de IA sobre historial viejo). Falta: build de APK + que Verónica corra la importación real con su archivo y confirme los conteos. | 1 |
+| **2** | ✅ **Código completado y auditado (2026-08-17), pendiente de correr en el dispositivo.** Importador del CSV de MySugr → historial local. Parseo/mapeo puro en `packages/domain/src/mysugr-import.ts` (17 tests, usando filas reales del CSV) + orquestador `importMySugrCsv()` en `db.ts` (idempotente vía IDs determinísticos — reimportar el mismo archivo no duplica). Botón nuevo en Ajustes ("Elegir archivo CSV de MySugr", usa `expo-file-system`'s `File.pickFileAsync`, 100% en el dispositivo, el CSV nunca sale del teléfono). Los eventos importados no crean `meal_episodes` (evita ráfagas de llamadas de IA sobre historial viejo). El `domain-safety-reviewer` encontró y se corrigió en el camino un bug real (lectura importada mostrándose como "en vivo" — ver hallazgo arriba). Falta: que Verónica corra la importación real con su archivo en el APK nuevo y confirme los conteos. | 1 |
 | **3** | Rediseño del gráfico de glucosa (`GlucoseChart.tsx`): ejes con valores, más puntos visibles, no solo el último marcado, mejor uso del espacio. | — (independiente, se puede hacer en paralelo a 1-2) |
 | **4** | Configuración de terapia en `SettingsModal`: exponer `targetGlucose`, `correctionFactor`, `doseIncrement` y el nuevo `carbRatio` como editables ahí (hoy solo se editan dentro de Corrección). | 1 |
 | **5** | Flujo unificado de registro "+": un botón que junta foto (IA estima HdC), HdC confirmados, glucosa actual (auto desde CGM), y calcula la dosis total (bolo de comida por `carbRatio` + corrección por `correctionFactor`) en una función nueva y determinística de `packages/domain`. | 4 |
