@@ -10,6 +10,7 @@ import {
 import {
   CGMProviderError,
   JunctionCGMProvider,
+  LibreLinkUpCGMProvider,
   MockCGMProvider,
   type CGMProvider,
 } from '@type1a/cgm';
@@ -38,14 +39,17 @@ const JunctionLinkBodySchema = z.object({
 });
 
 class UnconfiguredCGMProvider implements CGMProvider {
-  public readonly name = 'junction-unconfigured';
+  public constructor(
+    public readonly name: string,
+    private readonly detail: string,
+  ) {}
   public async getLatestReading(): Promise<null> { return null; }
   public async getReadings(): Promise<[]> { return []; }
   public async getStatus() {
     return {
       state: 'not_connected' as const,
       provider: this.name,
-      detail: 'Junction está seleccionado, pero faltan credenciales del backend.',
+      detail: this.detail,
       checkedAt: new Date().toISOString(),
       isSynthetic: false,
     };
@@ -63,8 +67,27 @@ function createProvider(config: AppConfig): CGMProvider {
   if (config.CGM_PROVIDER === 'mock') {
     return new MockCGMProvider({ staleAfterMinutes: config.CGM_STALE_AFTER_MINUTES });
   }
+
+  if (config.CGM_PROVIDER === 'librelinkup') {
+    if (config.LIBRELINKUP_EMAIL === undefined || config.LIBRELINKUP_PASSWORD === undefined) {
+      return new UnconfiguredCGMProvider(
+        'librelinkup-unconfigured',
+        'LibreLinkUp está seleccionado, pero faltan credenciales del backend.',
+      );
+    }
+    return new LibreLinkUpCGMProvider({
+      email: config.LIBRELINKUP_EMAIL,
+      password: config.LIBRELINKUP_PASSWORD,
+      region: config.LIBRELINKUP_REGION,
+      staleAfterMinutes: config.CGM_STALE_AFTER_MINUTES,
+    });
+  }
+
   if (config.JUNCTION_API_KEY === undefined || config.JUNCTION_USER_ID === undefined) {
-    return new UnconfiguredCGMProvider();
+    return new UnconfiguredCGMProvider(
+      'junction-unconfigured',
+      'Junction está seleccionado, pero faltan credenciales del backend.',
+    );
   }
   return new JunctionCGMProvider({
     apiKey: config.JUNCTION_API_KEY,

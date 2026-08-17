@@ -9,7 +9,7 @@ const EnvironmentSchema = z.object({
   ABACUS_ROUTE_LLM_API_KEY: EmptyToUndefined,
   ABACUS_ROUTE_LLM_BASE_URL: z.url().default('https://routellm.abacus.ai/v1'),
   ABACUS_ROUTE_LLM_MODEL: z.string().min(1).default('route-llm'),
-  CGM_PROVIDER: z.enum(['mock', 'junction']).default('mock'),
+  CGM_PROVIDER: z.enum(['mock', 'junction', 'librelinkup']).default('mock'),
   CGM_STALE_AFTER_MINUTES: z.coerce.number().positive().max(120).default(15),
   JUNCTION_API_KEY: EmptyToUndefined,
   JUNCTION_USER_ID: EmptyToUndefined,
@@ -17,6 +17,13 @@ const EnvironmentSchema = z.object({
     .enum(['sandbox_eu', 'production_eu', 'sandbox_us', 'production_us'])
     .default('sandbox_eu'),
   JUNCTION_USER_TIMEZONE: z.string().min(1).default('America/Santiago'),
+  // LibreLinkUp is an unofficial, reverse-engineered API (no Abbott SDK exists).
+  // LIBRELINKUP_EMAIL/PASSWORD must be a follower account, not the patient's own login.
+  LIBRELINKUP_EMAIL: EmptyToUndefined,
+  LIBRELINKUP_PASSWORD: EmptyToUndefined,
+  LIBRELINKUP_REGION: z
+    .enum(['ae', 'ap', 'au', 'ca', 'de', 'eu', 'eu2', 'fr', 'jp', 'us', 'la', 'ru', 'cn'])
+    .default('la'),
 });
 
 export type AppConfig = z.infer<typeof EnvironmentSchema>;

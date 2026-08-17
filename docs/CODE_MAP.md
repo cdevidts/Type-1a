@@ -51,8 +51,14 @@ docs/
 - `mock.ts` — proveedor sintético, **visiblemente rotulado**, usado en
   desarrollo cuando no hay `JUNCTION_API_KEY`.
 - `junction.ts` — integración real vía Junction (`freestyle_libre`, LibreView
-  EU). Ver `docs/CGM_INTEGRATION_DECISION.md` antes de tocar esto — documenta
-  por qué se descartaron LibreLinkUp y Libre Data Share como runtime.
+  EU). Ver `docs/CGM_INTEGRATION_DECISION.md` antes de tocar esto.
+- `librelinkup.ts` — integración real vía la API no oficial de LibreLinkUp
+  (`api-{region}.libreview.io`, cuenta seguidora). Sin SDK público de Abbott,
+  así que esto es ingeniería inversa de comunidad (mismo patrón que
+  `nightscout-librelink-up`), no un contrato soportado — puede romperse si
+  Abbott cambia el API. Maneja login, redirect de región (`LIBRELINKUP_REGION`
+  es solo el punto de partida), y expiración de sesión. Ver
+  `docs/CGM_INTEGRATION_DECISION.md`.
 - `libreview-csv.ts` — parser de exportación CSV de LibreView, fallback
   histórico (no se presenta como dato en vivo).
 - `trend.ts` — normalización de tendencia (`rapid_up` … `rapid_down`).

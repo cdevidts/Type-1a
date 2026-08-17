@@ -37,3 +37,44 @@ For testing, Junction supports synthetic FreeStyle Libre data in sandbox. Demo u
 ## Non-decision
 
 This decision does not claim Abbott approval of Type 1A, nor does it make Type 1A a primary glucose alarm system. FreeStyle remains the authoritative alarm surface.
+
+## Addendum — 2026-08-17: LibreLinkUp added as the working path for a Chile account
+
+Junction's shared sandbox practice (`tryVital-sandbox`) rejected the tester's
+Chilean LibreView account when shared from the FreeStyle LibreLink app
+("región geográfica diferente o la ID del centro/consultorio es inválida"),
+and Junction's API confirmed the practice-share step (not the API call) is
+the actual prerequisite — so the block is upstream of anything this repo's
+code can influence. Root cause unconfirmed; Junction's own docs claim
+`tryVital-sandbox` works "in all supported regions" including Chile, so this
+may be a stale default practice ID rather than a real regional restriction.
+Unresolved — filed with Junction support instead of guessed around.
+
+Added `packages/cgm/src/librelinkup.ts` as a second real-data path:
+unofficial, reverse-engineered LibreLinkUp API (no Abbott SDK exists; the
+community reference is `timoschlueter/nightscout-librelink-up`). Confirmed
+working end-to-end against the tester's real account: region `la` (Latin
+America — `api-la.libreview.io`) is the correct one for a Chilean account,
+distinct from Junction's EU grouping. This is the reverse of the earlier
+assumption in this doc that Chile maps to Junction's EU region — that
+mapping is Junction-specific and does not carry over to LibreLinkUp's own
+region list (`ae, ap, au, ca, de, eu, eu2, fr, jp, us, la, ru, cn`).
+
+Requires a **follower account** (invited from the patient's own LibreLink
+app as a "Seguidor"), never the patient's own login — the same separation
+LibreView itself expects between a patient account and a sharing account.
+Follower credentials are stored the same way as any other provider secret:
+backend-only `.env`, never in `apps/mobile`.
+
+This does not replace the Junction path long-term — it's unofficial, Abbott
+could change or block the API without notice, and `docs/adr` should get an
+entry if this becomes the primary path rather than a stopgap. Revisit
+Junction once support confirms the correct practice ID; `JUNCTION_API_KEY`
+and `JUNCTION_USER_ID` stay configured in `.env` for that.
+
+Updated fallback ladder:
+
+1. LibreLinkUp (unofficial, working now for this Chilean account).
+2. Junction/LibreView practice connection (blocked, pending Junction support).
+3. Manual LibreView CSV import for historical data.
+4. Manual glucose entry when no cloud data is available.
