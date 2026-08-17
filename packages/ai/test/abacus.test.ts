@@ -52,6 +52,52 @@ describe('Abacus RouteLLM services', () => {
     expect(result.totals.carbsG).toBe(50);
   });
 
+  it('strips $schema/minItems/maxItems/minimum/maximum before sending, but still enforces bounds on the response', async () => {
+    let sentSchema: Record<string, unknown> = {};
+    const fetcher: typeof fetch = async (_input, init) => {
+      const parsedBody = JSON.parse(String(init?.body)) as {
+        response_format: { json_schema: { schema: Record<string, unknown> } };
+      };
+      sentSchema = parsedBody.response_format.json_schema.schema;
+      // Abacus RouteLLM rejects requests containing these keywords in
+      // strict mode; the response here is irrelevant to that check.
+      return routeResponse({
+        foods: [
+          {
+            name: 'arroz',
+            estimatedGrams: 9999, // out of Zod's bound (max 3000) on purpose
+            carbsG: 50,
+            proteinG: 4,
+            fatG: 1,
+            fiberG: 2,
+            caloriesKcal: 230,
+            confidence: 0.7,
+          },
+        ],
+        uncertaintyNotes: [],
+      });
+    };
+    const service = new AbacusMealVisionService(
+      new AbacusRouteLLMClient({ apiKey: 'server-secret', fetcher }),
+    );
+
+    // estimatedGrams=9999 is out of Zod's bound (max 3000) — even though
+    // the schema sent upstream no longer declares that bound, our own
+    // re-validation of the response still catches it.
+    await expect(
+      service.analyze({ imageBase64: 'aGVsbG8=', mimeType: 'image/jpeg' }),
+    ).rejects.toMatchObject({ code: 'invalid_output' });
+
+    // The schema actually sent upstream must not contain the unsupported
+    // keywords anywhere in its (nested) tree.
+    const sentSerialized = JSON.stringify(sentSchema);
+    expect(sentSerialized).not.toContain('$schema');
+    expect(sentSerialized).not.toContain('minItems');
+    expect(sentSerialized).not.toContain('maxItems');
+    expect(sentSerialized).not.toContain('"minimum"');
+    expect(sentSerialized).not.toContain('"maximum"');
+  });
+
   it('rejects therapeutic advice even if it matches the output schema', async () => {
     const fetcher: typeof fetch = async () =>
       routeResponse({

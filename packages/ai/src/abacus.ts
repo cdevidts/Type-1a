@@ -53,6 +53,34 @@ interface StructuredCompletionInput {
   schema: object;
 }
 
+// Abacus RouteLLM's strict json_schema structured output rejects standard
+// JSON Schema keywords our schemas legitimately emit: "$schema" itself
+// ("Extra inputs are not permitted"), and, for schemas with enough nested
+// numeric/array bounds, "minItems"/"maxItems"/"minimum"/"maximum" ("too
+// many states for serving"). Stripping them here only loosens what we ask
+// the *model* to constrain its output to — every response is still fully
+// re-validated against the real Zod schema (including those same bounds)
+// after parsing, so this never weakens what we accept.
+const UNSUPPORTED_STRICT_JSON_SCHEMA_KEYWORDS = new Set([
+  '$schema',
+  'minItems',
+  'maxItems',
+  'minimum',
+  'maximum',
+]);
+
+function sanitizeForStrictJsonSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(sanitizeForStrictJsonSchema);
+  if (schema !== null && typeof schema === 'object') {
+    return Object.fromEntries(
+      Object.entries(schema)
+        .filter(([key]) => !UNSUPPORTED_STRICT_JSON_SCHEMA_KEYWORDS.has(key))
+        .map(([key, value]) => [key, sanitizeForStrictJsonSchema(value)]),
+    );
+  }
+  return schema;
+}
+
 export class AbacusRouteLLMClient {
   private readonly baseUrl: string;
   private readonly model: string;
@@ -87,7 +115,7 @@ export class AbacusRouteLLMClient {
             json_schema: {
               name: input.schemaName,
               strict: true,
-              schema: input.schema,
+              schema: sanitizeForStrictJsonSchema(input.schema),
             },
           },
         }),

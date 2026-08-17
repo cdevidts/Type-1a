@@ -77,7 +77,7 @@ segundo plano, ni por el propio `onSaveProfile` de "Guardar y calcular".
 `pnpm verify` pasa limpio; pendiente de probar en un build real (Fase 0
 sigue sin cerrarse del todo — falta confirmar en el dispositivo).
 
-### Bug 2 — Análisis de foto de comida: HTTP 502
+### Bug 2 — Análisis de foto de comida: HTTP 502 — ✅ RESUELTO (2026-08-17)
 
 Reproducido y medido directamente contra el backend en producción
 (`https://237e8b7f1.abacusai.cloud`):
@@ -89,13 +89,35 @@ Reproducido y medido directamente contra el backend en producción
 
 Esto descarta que sea el timeout de 45s hacia Abacus RouteLLM
 (`AbacusRouteLLMClient`, `packages/ai/src/abacus.ts:69`) — 2 segundos es
-demasiado rápido para eso. La respuesta no-JSON en texto plano indica que
-**la petición nunca llega a nuestro código Fastify** — falla en una capa de
-infraestructura antes (proxy/edge frente a `*.abacusai.cloud`, o el proceso
-Node crasheado y aún no repuesto). No tengo acceso a shell/logs de esa VM
-(la desplegó DeepAgent, no yo) — diagnóstico completo requiere pedirle a
-DeepAgent `journalctl -u type1a-api -f` para ver el error real detrás del
-502 antes de proponer un fix de código.
+demasiado rápido para eso.
+
+**Causa raíz real** (diagnosticada por DeepAgent con acceso a los logs del
+servidor, y confirmada de forma independiente probando directo contra la
+API de Abacus RouteLLM con los schemas reales generados por el repo): el
+servicio nunca se cayó ni hubo problema de infraestructura — era un 502
+generado por **nuestro propio código**, reenviando un 400 real del
+proveedor. Abacus RouteLLM en modo `json_schema` estricto rechaza:
+- la clave `"$schema"` (la incluye `z.toJSONSchema` de Zod por defecto) —
+  rompe tanto `mealAnalysisJsonSchema` como `glucoseInsightJsonSchema`;
+- para el schema de comida específicamente, además `minItems`/`maxItems`
+  en el array `foods` — combinado con los objetos anidados, produce
+  "too many states for serving" según el proveedor. (`minimum`/`maximum`
+  numéricos, a pesar de mencionarse en el mensaje de error del proveedor,
+  **no** eran en realidad el problema — se confirmó probando cada
+  combinación por separado contra la API real.)
+
+**Fix aplicado:** `packages/ai/src/abacus.ts` — nueva función
+`sanitizeForStrictJsonSchema()` que saca esas claves recursivamente del
+schema justo antes de mandarlo como `response_format.json_schema.schema`.
+Los schemas exportados de `packages/schemas` quedan intactos (siguen siendo
+JSON Schema completo y correcto); el recorte es solo para lo que le
+pedimos al proveedor que valide. **La validación real no se debilitó**:
+`MealAnalysisSchema.safeParse(...)` / `GlucoseInsightSchema.safeParse(...)`
+siguen aplicando los límites reales de Zod sobre la respuesta del modelo
+después de recibirla — si el modelo devuelve algo fuera de rango, se
+sigue rechazando igual que antes. Test nuevo en
+`packages/ai/test/abacus.test.ts` prueba ambas mitades. `pnpm verify`
+limpio; revisado por `domain-safety-reviewer`.
 
 ## Mapeo de datos de MySugr (para la importación de historial)
 
