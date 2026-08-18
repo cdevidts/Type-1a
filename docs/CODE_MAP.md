@@ -39,7 +39,17 @@ docs/
 ## `packages/domain` — crítico de seguridad, sin IA ni red
 
 - `correction.ts` — cálculo determinístico de dosis de corrección a partir de
-  parámetros que el usuario ingresó (nunca inferidos).
+  parámetros que el usuario ingresó (nunca inferidos). Corrección sola:
+  el resultado se limita a 0 U cuando la glucosa está bajo el objetivo.
+- `bolus.ts` — `calculateMealBolus()`: bolo combinado comida + corrección
+  (`carbsG ÷ carbRatio` + `(glucosa − objetivo) ÷ factor`), redondeado al
+  incremento con el mismo `roundToIncrement` de `correction.ts`. Requiere
+  `carbRatio`: si el usuario no lo configuró, la UI **no** puede sustituirlo
+  por un valor propio — debe negarse a calcular el componente de comida.
+  Diferencia deliberada con `correction.ts`: aquí la corrección **sí** puede
+  ser negativa (glucosa bajo objetivo resta del bolo de comida) y solo el
+  total se limita a 0 — clampear cada componente por separado devolvería una
+  dosis *mayor* a alguien que ya está bajo. Sin IOB, igual que todo el MVP.
 - `freshness.ts` — decide si una lectura CGM está "stale"; `assessFreshness`
   se usa en `apps/api` antes de exponer una lectura como actual.
   `latestLiveReading()` decide cuál lectura cuenta como "actual" en la UI —
@@ -125,9 +135,13 @@ docs/
   historial antiguo.
 - `src/episodes.ts` — lógica de asociación comida–insulina en cliente.
 - `src/notifications.ts` — notificaciones locales de episodios.
-- `src/components/` — `Timeline`, `GlucoseCard`, `GlucoseChart`,
-  `CorrectionModal`, `MealModal`, `InsulinAssociationModal`,
-  `NumericEntryModal`, `SettingsModal`, `ModalShell` (shell común de modal).
+- `src/components/` — `Timeline`, `TimelineDetailModal`, `GlucoseCard`,
+  `GlucoseChart`, `EntryModal`, `CorrectionModal`, `MealModal`,
+  `InsulinAssociationModal`, `NumericEntryModal`, `SettingsModal`,
+  `ModalShell` (shell común de modal). `EntryModal` es la entrada
+  principal estilo MySugr (glucosa + comida + carbos + insulina + nota en
+  un solo registro, con calculadora de dosis); los demás modales de
+  registro quedan como atajos de un solo dato.
 - `src/theme.ts`, `src/format.ts`, `src/types.ts` — soporte de UI.
 - `AGENTS.md` propio — recuerda que Expo cambió de versión (SDK 57): leer
   docs versionados antes de escribir código Expo nuevo.
@@ -143,7 +157,8 @@ docs/
 
 | Vas a tocar... | Lee primero |
 |---|---|
-| Cálculo de corrección, IOB, dosis | `AGENTS.md` + `packages/domain/src/correction.ts` + su test |
+| Cálculo de corrección, IOB, dosis | `AGENTS.md` + `packages/domain/src/correction.ts` y `bolus.ts` + sus tests + `docs/ROADMAP_V0.2.md` § "El límite de seguridad que no se negocia" |
+| Registro combinado de eventos (una entrada, varios tipos) | `apps/mobile/src/components/EntryModal.tsx` + `saveUnifiedEntry()` en `apps/mobile/src/db.ts` |
 | Cualquier prompt o salida de IA | `AGENTS.md` § Safety boundaries + `packages/domain/src/ai-safety.ts` |
 | Un proveedor CGM nuevo o existente | `packages/cgm/src/provider.ts` + `docs/CGM_INTEGRATION_DECISION.md` |
 | Variables de entorno / secrets | `apps/api/src/config.ts` + `.env.example` + `AGENTS.md` § Privacy and secrets |

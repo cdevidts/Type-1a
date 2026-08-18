@@ -26,6 +26,7 @@ import type {
 
 import { fetchCGMReadings, fetchCGMStatus } from './src/api';
 import { CorrectionModal } from './src/components/CorrectionModal';
+import { EntryModal, type UnifiedEntryDraft } from './src/components/EntryModal';
 import { GlucoseCard } from './src/components/GlucoseCard';
 import { InsulinAssociationModal } from './src/components/InsulinAssociationModal';
 import { MealModal, type ConfirmedMealDraft } from './src/components/MealModal';
@@ -46,6 +47,7 @@ import {
   saveInsulinEvent,
   saveMealWithEpisode,
   saveTherapyProfile,
+  saveUnifiedEntry,
   setSetting,
   upsertCGMReadings,
 } from './src/db';
@@ -80,6 +82,7 @@ function Type1AApp() {
   const [pendingAssociations, setPendingAssociations] = useState<PendingInsulinAssociation[]>([]);
   const [quickRoute, setQuickRoute] = useState<QuickRoute | null>(null);
   const [mealOpen, setMealOpen] = useState(false);
+  const [entryOpen, setEntryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showGlucoseOnLockScreen, setShowGlucoseOnLockScreen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -239,6 +242,42 @@ function Type1AApp() {
     await loadLocalState();
   }
 
+  async function saveEntry(draft: UnifiedEntryDraft): Promise<void> {
+    const outcome = await saveUnifiedEntry(db, {
+      ...(draft.manualGlucose === undefined ? {} : { manualGlucose: draft.manualGlucose }),
+      ...(draft.description === undefined ? {} : { description: draft.description }),
+      ...(draft.carbsG === undefined ? {} : { carbsG: draft.carbsG }),
+      ...(draft.imageUri === undefined ? {} : { imageUri: draft.imageUri }),
+      ...(draft.rapidUnits === undefined ? {} : { rapidUnits: draft.rapidUnits }),
+      ...(draft.basalUnits === undefined ? {} : { basalUnits: draft.basalUnits }),
+      ...(draft.note === undefined ? {} : { note: draft.note }),
+      ...(draft.analysis === undefined
+        ? {}
+        : {
+            aiEstimatedCarbsG: draft.analysis.totals.carbsG,
+            proteinG: draft.analysis.totals.proteinG,
+            fatG: draft.analysis.totals.fatG,
+            fiberG: draft.analysis.totals.fiberG,
+            caloriesKcal: draft.analysis.totals.caloriesKcal,
+            aiAnalysisId: draft.analysis.analysisId,
+          }),
+    });
+    if (outcome.episodeId !== null) {
+      await scheduleEpisodeNotifications(outcome.episodeId, new Date().toISOString());
+    }
+    const saved = [
+      outcome.savedGlucose ? 'glucosa' : null,
+      draft.carbsG === undefined ? null : 'carbohidratos',
+      outcome.savedRapid ? 'rápida' : null,
+      outcome.savedBasal ? 'basal' : null,
+      outcome.savedNote ? 'nota' : null,
+    ].filter((part): part is string => part !== null);
+    setNotice(saved.length === 0
+      ? 'Entrada guardada.'
+      : `Entrada guardada: ${saved.join(', ')}.`);
+    await loadLocalState();
+  }
+
   async function updatePrivacy(show: boolean): Promise<void> {
     await setSetting(db, 'showGlucoseOnLockScreen', String(show));
     setShowGlucoseOnLockScreen(show);
@@ -283,10 +322,18 @@ function Type1AApp() {
 
         <GlucoseCard readings={readings} status={status} />
 
+        <Pressable style={({ pressed }) => [styles.entryButton, pressed && styles.pressed]} onPress={() => { setEntryOpen(true); }} accessibilityRole="button">
+          <Text style={styles.entryPlus}>+</Text>
+          <View style={styles.entryCopy}>
+            <Text style={styles.entryTitle}>Nueva entrada</Text>
+            <Text style={styles.entrySubtitle}>Glucosa, comida, carbohidratos e insulina en un solo registro</Text>
+          </View>
+        </Pressable>
+
         <View style={styles.quickHeader}>
           <View>
             <Text style={styles.sectionTitle}>Registro rápido</Text>
-            <Text style={styles.sectionSubtitle}>Guarda localmente en segundos</Text>
+            <Text style={styles.sectionSubtitle}>Atajos de un solo dato</Text>
           </View>
           {refreshing ? <Text style={styles.syncing}>Sincronizando…</Text> : null}
         </View>
@@ -331,6 +378,13 @@ function Type1AApp() {
           setProfile(nextProfile);
         }}
         onRegister={registerCorrection}
+      />
+      <EntryModal
+        visible={entryOpen}
+        latest={latest}
+        profile={profile}
+        onClose={() => { setEntryOpen(false); }}
+        onSave={saveEntry}
       />
       <MealModal visible={mealOpen} onClose={() => { setMealOpen(false); }} onConfirm={confirmMeal} />
       <SettingsModal
@@ -402,6 +456,11 @@ const styles = StyleSheet.create({
   noticeWarning: { backgroundColor: colors.warningSoft },
   noticeInfo: { backgroundColor: colors.tealSoft },
   noticeText: { color: colors.navy, fontSize: 12, lineHeight: 17, fontWeight: '600' },
+  entryButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.teal, borderRadius: radius.md, padding: spacing.lg, marginTop: spacing.xl },
+  entryPlus: { color: '#FFFFFF', fontSize: 38, fontWeight: '300', lineHeight: 42, marginRight: spacing.md },
+  entryCopy: { flex: 1 },
+  entryTitle: { color: '#FFFFFF', fontSize: 19, fontWeight: '800' },
+  entrySubtitle: { color: '#FFFFFF', fontSize: 12, lineHeight: 17, marginTop: 2, opacity: 0.9 },
   quickHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: spacing.xl, marginBottom: spacing.md },
   sectionTitle: { color: colors.ink, fontSize: 24, fontWeight: '800' },
   sectionSubtitle: { color: colors.muted, fontSize: 13, marginTop: 2 },

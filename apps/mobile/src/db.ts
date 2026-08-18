@@ -234,6 +234,132 @@ export async function saveMealWithEpisode(db: SQLiteDatabase, meal: MealEvent): 
   return episodeId;
 }
 
+export interface UnifiedEntryInput {
+  manualGlucose?: number;
+  description?: string;
+  carbsG?: number;
+  imageUri?: string;
+  aiEstimatedCarbsG?: number;
+  proteinG?: number;
+  fatG?: number;
+  fiberG?: number;
+  caloriesKcal?: number;
+  aiAnalysisId?: string;
+  rapidUnits?: number;
+  basalUnits?: number;
+  note?: string;
+}
+
+export interface UnifiedEntryOutcome {
+  /** Set when the entry created a meal episode worth scheduling follow-ups for. */
+  episodeId: string | null;
+  savedGlucose: boolean;
+  savedRapid: boolean;
+  savedBasal: boolean;
+  savedNote: boolean;
+}
+
+/**
+ * Writes one MySugr-style combined entry: a hand-measured glucose, a meal
+ * (with its confirmed carbs and any AI estimate kept separate), rapid and/or
+ * long-acting insulin, and a free-text note — all sharing a single timestamp
+ * so they read as one moment in the timeline instead of four unrelated rows.
+ *
+ * Each piece is optional; whatever the user left blank simply isn't written.
+ * The insulin units stored are exactly what the user typed — never a
+ * calculated suggestion, which the UI only ever offers as a value to copy.
+ */
+export async function saveUnifiedEntry(
+  db: SQLiteDatabase,
+  input: UnifiedEntryInput,
+): Promise<UnifiedEntryOutcome> {
+  const timestamp = new Date().toISOString();
+  const outcome: UnifiedEntryOutcome = {
+    episodeId: null,
+    savedGlucose: false,
+    savedRapid: false,
+    savedBasal: false,
+    savedNote: false,
+  };
+
+  if (input.manualGlucose !== undefined) {
+    // A value the user measured and typed. `origin: 'manual'` keeps it
+    // distinguishable from sensor data everywhere it is displayed, and
+    // sourceTimestamp/ingestedAt are both "now" because the measurement and
+    // its entry genuinely happened at the same time.
+    await upsertCGMReadings(db, [{
+      id: Crypto.randomUUID(),
+      glucose: input.manualGlucose,
+      unit: 'mg/dL',
+      timestamp,
+      trend: 'unknown',
+      trendSource: 'unknown',
+      source: 'entrada manual',
+      origin: 'manual',
+      sourceTimestamp: timestamp,
+      ingestedAt: timestamp,
+    }]);
+    outcome.savedGlucose = true;
+  }
+
+  const hasMeal = input.carbsG !== undefined || input.description !== undefined || input.imageUri !== undefined;
+  if (hasMeal) {
+    outcome.episodeId = await saveMealWithEpisode(db, {
+      id: Crypto.randomUUID(),
+      timestamp,
+      createdAt: timestamp,
+      ...(input.carbsG === undefined ? {} : { confirmedCarbsG: input.carbsG }),
+      ...(input.description === undefined ? {} : { note: input.description }),
+      ...(input.imageUri === undefined ? {} : { imageUri: input.imageUri }),
+      ...(input.aiEstimatedCarbsG === undefined ? {} : { aiEstimatedCarbsG: input.aiEstimatedCarbsG }),
+      ...(input.proteinG === undefined ? {} : { proteinG: input.proteinG }),
+      ...(input.fatG === undefined ? {} : { fatG: input.fatG }),
+      ...(input.fiberG === undefined ? {} : { fiberG: input.fiberG }),
+      ...(input.caloriesKcal === undefined ? {} : { caloriesKcal: input.caloriesKcal }),
+      ...(input.aiAnalysisId === undefined ? {} : { aiAnalysisId: input.aiAnalysisId }),
+    });
+  }
+
+  if (input.rapidUnits !== undefined) {
+    await saveInsulinEvent(db, {
+      id: Crypto.randomUUID(),
+      timestamp,
+      type: 'rapid',
+      units: input.rapidUnits,
+      source: 'manual',
+      createdAt: timestamp,
+      // Descriptive bookkeeping only — `purpose` never feeds a calculation.
+      purpose: hasMeal ? (outcome.savedGlucose ? 'combined' : 'meal') : 'correction',
+    });
+    outcome.savedRapid = true;
+  }
+
+  if (input.basalUnits !== undefined) {
+    await saveInsulinEvent(db, {
+      id: Crypto.randomUUID(),
+      timestamp,
+      type: 'basal',
+      units: input.basalUnits,
+      source: 'manual',
+      createdAt: timestamp,
+    });
+    outcome.savedBasal = true;
+  }
+
+  if (input.note !== undefined) {
+    await saveNoteEvent(db, {
+      id: Crypto.randomUUID(),
+      timestamp,
+      text: input.note,
+      source: 'manual',
+      createdAt: timestamp,
+    });
+    outcome.savedNote = true;
+  }
+
+  return outcome;
+}
+
 export async function upsertCGMReadings(db: SQLiteDatabase, readings: readonly CGMReading[]): Promise<void> {
   if (readings.length === 0) return;
   await db.withTransactionAsync(async () => {
