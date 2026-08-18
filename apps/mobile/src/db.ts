@@ -1086,8 +1086,17 @@ const MinuteOffsetsSchema = z.array(z.number().int().min(1).max(720)).min(1);
 export async function getMealAlarmOffsets(db: SQLiteDatabase): Promise<number[]> {
   const stored = await getSetting(db, MEAL_ALARM_OFFSETS_KEY);
   if (stored === null) return [...DEFAULT_MEAL_ALARM_OFFSETS_MINUTES];
-  const parsed = MinuteOffsetsSchema.safeParse(JSON.parse(stored));
-  return parsed.success ? parsed.data : [...DEFAULT_MEAL_ALARM_OFFSETS_MINUTES];
+  // A corrupted local setting must degrade to the known-good default, same
+  // as AGENTS.md requires for a failed external provider — not throw and
+  // take the rest of loadLocalState's Promise.all down with it. JSON.parse
+  // itself can throw on malformed (not just wrongly-shaped) stored text, so
+  // this needs a try/catch, not just safeParse on the parsed result.
+  try {
+    const parsed = MinuteOffsetsSchema.safeParse(JSON.parse(stored));
+    return parsed.success ? parsed.data : [...DEFAULT_MEAL_ALARM_OFFSETS_MINUTES];
+  } catch {
+    return [...DEFAULT_MEAL_ALARM_OFFSETS_MINUTES];
+  }
 }
 
 export async function saveMealAlarmOffsets(db: SQLiteDatabase, offsets: readonly number[]): Promise<void> {
