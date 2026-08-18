@@ -11,9 +11,6 @@ import { formatDayTime, parseNonNegativeNumber, parsePositiveNumber } from '../f
 import { colors, radius, spacing } from '../theme';
 import { ModalShell } from './ModalShell';
 
-/** Mirrors the threshold `calculateMealBolus` flags, for the correction-only path. */
-const HYPOGLYCEMIA_THRESHOLD = 70;
-
 const HYPO_WARNING = 'Estás en hipoglucemia. Trata la hipoglucemia primero y calcula la dosis después de recuperarte — este número no reemplaza esa decisión.';
 
 /**
@@ -329,7 +326,10 @@ export function EntryModal({
       belowTargetNote: result.isBelowTarget
         ? 'Glucosa bajo el objetivo: el resultado se limita a 0 U.'
         : null,
-      hypoWarning: currentGlucose < HYPOGLYCEMIA_THRESHOLD ? HYPO_WARNING : null,
+      // Straight from the domain result — the cutoff lives in
+      // packages/domain so this path and the meal-bolus path above can't
+      // drift into disagreeing about whether the user is low.
+      hypoWarning: result.isHypoglycemic ? HYPO_WARNING : null,
       parameterSummary: `Objetivo ${profile.targetGlucose} · factor ${profile.correctionFactor} · incremento ${profile.doseIncrement} U`,
     });
     setCorrectionIncluded(true);

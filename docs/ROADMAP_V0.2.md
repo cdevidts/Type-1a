@@ -240,6 +240,14 @@ solo a medias, lo cual es su propia lección:
   atraso. Regla: al agregar un estado visual nuevo a un indicador de
   seguridad, revisar que no *reemplace* a otro que ya estaba.
 
+**Violación abierta conocida (pendiente, no la arregla la Fase 5)**: la
+notificación fija de pantalla bloqueada (`apps/mobile/src/notifications.ts`)
+muestra `${glucosa} ${flecha} mg/dL` sin marcar procedencia ni antigüedad, y
+al ser fija nunca se refresca — una lectura sintética, manual o de hace
+horas queda ahí pareciendo actual. Es la superficie de glucosa peor rotulada
+que queda en la app. Arreglar junto con la Fase 7 (muestreo en segundo
+plano), que es cuando esa notificación pasa a actualizarse de verdad.
+
 Otras dos que valen como patrón: `saveUnifiedEntry` escribía 4-5 filas sin
 transacción (un rechazo de schema a mitad dejaba una entrada a medias que al
 reintentar se duplicaba, porque cada intento genera IDs nuevos — SQLite no

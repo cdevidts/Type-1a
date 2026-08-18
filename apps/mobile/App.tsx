@@ -402,6 +402,7 @@ function Type1AApp() {
         status={status}
         latest={latest}
         profile={profile}
+        therapyConfigured={therapyConfigured}
         showGlucoseOnLockScreen={showGlucoseOnLockScreen}
         onPrivacyChange={updatePrivacy}
         onImportMySugrCsv={async (csvText) => {

@@ -121,14 +121,24 @@ export function CorrectionModal({
     // Validate the snapshot that filled the field, not whatever `latest` has
     // refreshed to since — otherwise a newer reading can vouch for an older
     // number still sitting in the input.
-    if (prefilled !== null && currentGlucose === prefilled.glucose) {
+    // Invariant: `prefilled` is cleared on any edit of the glucose field, so
+    // a non-null `prefilled` means the field still holds exactly that
+    // reading. Don't reintroduce a value comparison here — if the banner is
+    // ever kept visible after an edit, comparing by value would let a
+    // hand-typed number inherit the prefill's freshness verdict.
+    if (prefilled !== null) {
       if (assessFreshness(prefilled.sourceTimestamp).state !== 'connected') {
         setPrefilled(null);
         setCurrent('');
+        // Drop the previous result too: leaving it on screen would put a
+        // live "registrar N U" button directly under the message saying the
+        // reading it came from is no longer valid.
+        setResult(null);
         setError('La lectura dejó de estar vigente. Ingresa una glucosa actual manualmente.');
         return;
       }
       if (prefilled.isSynthetic) {
+        setResult(null);
         setError('La glucosa precargada es sintética (modo demo). Escribe una medición real antes de calcular.');
         return;
       }
@@ -153,6 +163,17 @@ export function CorrectionModal({
 
   async function register(): Promise<void> {
     if (result === null || result.roundedUnits <= 0) return;
+    // A computed result doesn't expire on its own, and this button writes an
+    // insulin event directly. The sheet can sit open for an hour (phone
+    // locked, user interrupted), so re-check the reading the dose was built
+    // from at the moment of the tap, not just when it was calculated.
+    if (prefilled !== null && assessFreshness(prefilled.sourceTimestamp).state !== 'connected') {
+      setPrefilled(null);
+      setCurrent('');
+      setResult(null);
+      setError('La lectura que originó esta dosis ya no está vigente. Ingresa una glucosa actual y vuelve a calcular.');
+      return;
+    }
     setBusy(true);
     try {
       await onRegister(result.roundedUnits);

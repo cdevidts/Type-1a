@@ -31,6 +31,8 @@ function TherapyField({
           onChangeText={onChange}
           keyboardType="decimal-pad"
           style={styles.therapyFieldInput}
+          placeholder="—"
+          placeholderTextColor={colors.muted}
           selectTextOnFocus
         />
         <Text style={styles.therapyFieldUnit}>{unit}</Text>
@@ -62,6 +64,7 @@ export function SettingsModal({
   status,
   latest,
   profile,
+  therapyConfigured,
   showGlucoseOnLockScreen,
   onPrivacyChange,
   onImportMySugrCsv,
@@ -72,6 +75,8 @@ export function SettingsModal({
   status: CGMProviderStatus | null;
   latest: CGMReading | null;
   profile: TherapyProfile;
+  /** False while `profile` still holds the placeholders shipped with the app. */
+  therapyConfigured: boolean;
   showGlucoseOnLockScreen: boolean;
   onPrivacyChange: (show: boolean) => Promise<void>;
   onImportMySugrCsv: (csvText: string) => Promise<MySugrImportOutcome>;
@@ -81,9 +86,16 @@ export function SettingsModal({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const [targetInput, setTargetInput] = useState(String(profile.targetGlucose));
-  const [factorInput, setFactorInput] = useState(String(profile.correctionFactor));
-  const [incrementInput, setIncrementInput] = useState(String(profile.doseIncrement));
+  // Until the profile has actually been configured, these fields start
+  // EMPTY rather than pre-filled with the app's placeholder numbers.
+  // Pre-filling them would let someone come here to set only the carb ratio
+  // (which is what the entry sheet sends them here to do), tap Guardar, and
+  // unknowingly record 110/45 as their clinical parameters — the app would
+  // then print them back as "Objetivo 110 · factor 45" as if they'd chosen
+  // them. A wrong correction factor doubles or halves every correction.
+  const [targetInput, setTargetInput] = useState(therapyConfigured ? String(profile.targetGlucose) : '');
+  const [factorInput, setFactorInput] = useState(therapyConfigured ? String(profile.correctionFactor) : '');
+  const [incrementInput, setIncrementInput] = useState(therapyConfigured ? String(profile.doseIncrement) : '');
   const [carbRatioInput, setCarbRatioInput] = useState(profile.carbRatio === undefined ? '' : String(profile.carbRatio));
   const [therapyBusy, setTherapyBusy] = useState(false);
   const [therapyMessage, setTherapyMessage] = useState<string | null>(null);
@@ -101,14 +113,14 @@ export function SettingsModal({
   const wasVisibleRef = useRef(false);
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
-      setTargetInput(String(profile.targetGlucose));
-      setFactorInput(String(profile.correctionFactor));
-      setIncrementInput(String(profile.doseIncrement));
+      setTargetInput(therapyConfigured ? String(profile.targetGlucose) : '');
+      setFactorInput(therapyConfigured ? String(profile.correctionFactor) : '');
+      setIncrementInput(therapyConfigured ? String(profile.doseIncrement) : '');
       setCarbRatioInput(profile.carbRatio === undefined ? '' : String(profile.carbRatio));
       setTherapyMessage(null);
     }
     wasVisibleRef.current = visible;
-  }, [visible, profile]);
+  }, [visible, profile, therapyConfigured]);
 
   async function saveTherapy(): Promise<void> {
     const targetGlucose = parsePositiveNumber(targetInput);
@@ -234,6 +246,14 @@ export function SettingsModal({
 
       <Text style={styles.sectionTitle}>Parámetros de terapia</Text>
       <Text style={styles.copy}>Estos valores los define tu equipo clínico — Type 1A nunca los calcula ni los sugiere. También puedes editar objetivo/factor/incremento dentro de “Corrección”; es el mismo valor guardado en ambos lados.</Text>
+      {therapyConfigured ? null : (
+        <View style={styles.unconfiguredBox}>
+          <Text style={styles.unconfiguredText}>
+            Todavía no has confirmado tus parámetros. Los campos están vacíos a propósito: la app no propone valores de terapia.
+            Las calculadoras de dosis quedan bloqueadas hasta que completes objetivo, factor e incremento con lo que te indicó tu equipo clínico.
+          </Text>
+        </View>
+      )}
       <View style={styles.row}>
         <TherapyField label="Objetivo" unit="mg/dL" value={targetInput} onChange={setTargetInput} />
         <TherapyField label="Factor corrección" unit="mg/dL/U" value={factorInput} onChange={setFactorInput} />
@@ -294,4 +314,6 @@ const styles = StyleSheet.create({
   therapyFieldInput: { flex: 1, color: colors.ink, fontSize: 15, paddingVertical: spacing.md },
   therapyFieldUnit: { color: colors.muted, fontSize: 12 },
   hint: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: spacing.sm },
+  unconfiguredBox: { backgroundColor: colors.warningSoft, borderRadius: radius.sm, padding: spacing.md, marginTop: spacing.sm },
+  unconfiguredText: { color: colors.warning, fontSize: 12, lineHeight: 18, fontWeight: '600' },
 });

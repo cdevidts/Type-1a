@@ -73,6 +73,14 @@ describe('meal + correction bolus calculator', () => {
     expect(low.totalRawUnits).toBeCloseTo(6 + (58 - 110) / 45, 10);
   });
 
+  it('puts the hypoglycemia boundary at strictly under 70', () => {
+    expect(calculateMealBolus({ ...BASE, carbsG: 30, currentGlucose: 69.9 }).isHypoglycemic).toBe(true);
+    expect(calculateMealBolus({ ...BASE, carbsG: 30, currentGlucose: 70 }).isHypoglycemic).toBe(false);
+    expect(calculateCorrection({
+      targetGlucose: 110, correctionFactor: 45, doseIncrement: 0.5, currentGlucose: 70,
+    }).isHypoglycemic).toBe(false);
+  });
+
   it('never reports hypoglycemia when no glucose was supplied', () => {
     expect(calculateMealBolus({ ...BASE, carbsG: 60 }).isHypoglycemic).toBe(false);
   });
