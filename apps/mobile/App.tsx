@@ -90,7 +90,12 @@ function Type1AApp() {
 
   const loadLocalState = useCallback(async (): Promise<void> => {
     const to = new Date();
-    const from = new Date(to.getTime() - 3 * 60 * 60_000);
+    // 30 days, not 3 hours: the chart is now a scrollable multi-day trend
+    // (swipe back to see older/imported history), not just "right now".
+    // The live/current badge and correction auto-fill are unaffected —
+    // latestLiveReading() finds the true latest live point regardless of
+    // how wide this window is.
+    const from = new Date(to.getTime() - 30 * 24 * 60 * 60_000);
     const [cached, nextTimeline, nextProfile, rapid, privacy, pending] = await Promise.all([
       getCGMReadings(db, from, to),
       getTimeline(db),
@@ -340,6 +345,10 @@ function Type1AApp() {
           const outcome = await importMySugrCsv(db, csvText);
           await loadLocalState();
           return outcome;
+        }}
+        onSaveProfile={async (nextProfile) => {
+          await saveTherapyProfile(db, nextProfile);
+          setProfile(nextProfile);
         }}
       />
       <InsulinAssociationModal

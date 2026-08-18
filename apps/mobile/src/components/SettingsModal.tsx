@@ -1,14 +1,43 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { File } from 'expo-file-system';
 import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import type { CGMProviderStatus, CGMReading, TherapyProfile } from '@type1a/schemas';
 
 import { API_BASE_URL, connectFreestyleLibre } from '../api';
+import type { MySugrImportOutcome } from '../db';
+import { parsePositiveNumber } from '../format';
 import { enableQuickEntryNotification } from '../notifications';
 import { colors, radius, spacing } from '../theme';
-import type { MySugrImportOutcome } from '../db';
 import { ModalShell } from './ModalShell';
+
+function TherapyField({
+  label,
+  value,
+  unit,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  unit: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <View style={styles.therapyField}>
+      <Text style={styles.therapyFieldLabel}>{label}</Text>
+      <View style={styles.therapyFieldInputWrap}>
+        <TextInput
+          value={value}
+          onChangeText={onChange}
+          keyboardType="decimal-pad"
+          style={styles.therapyFieldInput}
+          selectTextOnFocus
+        />
+        <Text style={styles.therapyFieldUnit}>{unit}</Text>
+      </View>
+    </View>
+  );
+}
 
 function importSummaryText(outcome: MySugrImportOutcome): string {
   const parts = [
@@ -36,6 +65,7 @@ export function SettingsModal({
   showGlucoseOnLockScreen,
   onPrivacyChange,
   onImportMySugrCsv,
+  onSaveProfile,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -45,14 +75,68 @@ export function SettingsModal({
   showGlucoseOnLockScreen: boolean;
   onPrivacyChange: (show: boolean) => Promise<void>;
   onImportMySugrCsv: (csvText: string) => Promise<MySugrImportOutcome>;
+  onSaveProfile: (profile: TherapyProfile) => Promise<void>;
 }) {
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
+  const [targetInput, setTargetInput] = useState(String(profile.targetGlucose));
+  const [factorInput, setFactorInput] = useState(String(profile.correctionFactor));
+  const [incrementInput, setIncrementInput] = useState(String(profile.doseIncrement));
+  const [carbRatioInput, setCarbRatioInput] = useState(profile.carbRatio === undefined ? '' : String(profile.carbRatio));
+  const [therapyBusy, setTherapyBusy] = useState(false);
+  const [therapyMessage, setTherapyMessage] = useState<string | null>(null);
+
   useEffect(() => {
     if (visible) setMessage(null);
   }, [visible]);
+
+  // Same fix as CorrectionModal's earlier bug: only re-initialize these
+  // fields on the true "modal just opened" transition, not on every
+  // background refresh that hands us a new (but possibly unchanged)
+  // `profile` object — otherwise in-progress edits or a just-saved value
+  // could get silently wiped by an unrelated refresh while the modal sits
+  // open.
+  const wasVisibleRef = useRef(false);
+  useEffect(() => {
+    if (visible && !wasVisibleRef.current) {
+      setTargetInput(String(profile.targetGlucose));
+      setFactorInput(String(profile.correctionFactor));
+      setIncrementInput(String(profile.doseIncrement));
+      setCarbRatioInput(profile.carbRatio === undefined ? '' : String(profile.carbRatio));
+      setTherapyMessage(null);
+    }
+    wasVisibleRef.current = visible;
+  }, [visible, profile]);
+
+  async function saveTherapy(): Promise<void> {
+    const targetGlucose = parsePositiveNumber(targetInput);
+    const correctionFactor = parsePositiveNumber(factorInput);
+    const doseIncrement = parsePositiveNumber(incrementInput);
+    const carbRatio = carbRatioInput.trim() === '' ? undefined : parsePositiveNumber(carbRatioInput);
+    if (
+      targetGlucose === null || correctionFactor === null || doseIncrement === null
+      || doseIncrement > 1 || (carbRatioInput.trim() !== '' && carbRatio === null)
+    ) {
+      setTherapyMessage('Revisa objetivo, factor e incremento (máximo 1 U). Carbs por unidad es opcional, pero si lo llenas debe ser un número positivo.');
+      return;
+    }
+    setTherapyBusy(true);
+    setTherapyMessage(null);
+    try {
+      // carbRatio is explicitly `number | undefined` here (never `null` —
+      // that case already returned above), so this correctly clears a
+      // previously-set value when the field is emptied, not just "leaves
+      // the old value alone".
+      await onSaveProfile({ ...profile, targetGlucose, correctionFactor, doseIncrement, carbRatio: carbRatio ?? undefined });
+      setTherapyMessage('Parámetros guardados.');
+    } catch {
+      setTherapyMessage('No se pudieron guardar los parámetros.');
+    } finally {
+      setTherapyBusy(false);
+    }
+  }
 
   async function link(): Promise<void> {
     if (!/^\S+@\S+\.\S+$/u.test(email.trim())) {
@@ -148,8 +232,21 @@ export function SettingsModal({
         <Text style={styles.notificationText}>Activar notificación de acceso rápido</Text>
       </Pressable>
 
-      <Text style={styles.sectionTitle}>Parámetros de corrección</Text>
-      <Text style={styles.copy}>Objetivo {profile.targetGlucose} mg/dL · Factor {profile.correctionFactor} mg/dL/U · Incremento {profile.doseIncrement} U. Se editan dentro de “Corrección”.</Text>
+      <Text style={styles.sectionTitle}>Parámetros de terapia</Text>
+      <Text style={styles.copy}>Estos valores los define tu equipo clínico — Type 1A nunca los calcula ni los sugiere. También puedes editar objetivo/factor/incremento dentro de “Corrección”; es el mismo valor guardado en ambos lados.</Text>
+      <View style={styles.row}>
+        <TherapyField label="Objetivo" unit="mg/dL" value={targetInput} onChange={setTargetInput} />
+        <TherapyField label="Factor corrección" unit="mg/dL/U" value={factorInput} onChange={setFactorInput} />
+      </View>
+      <View style={styles.row}>
+        <TherapyField label="Incremento pluma" unit="U" value={incrementInput} onChange={setIncrementInput} />
+        <TherapyField label="Carbs por unidad" unit="g/U" value={carbRatioInput} onChange={setCarbRatioInput} />
+      </View>
+      <Text style={styles.hint}>"Carbs por unidad" es opcional — déjalo vacío si aún no lo tienes definido con tu equipo clínico. Se usa para el registro combinado de comida + corrección.</Text>
+      <Pressable style={[styles.connectButton, therapyBusy && styles.disabled]} disabled={therapyBusy} onPress={() => { void saveTherapy(); }}>
+        <Text style={styles.connectText}>Guardar parámetros de terapia</Text>
+      </Pressable>
+      {therapyMessage === null ? null : <Text style={styles.message}>{therapyMessage}</Text>}
 
       <Text style={styles.sectionTitle}>Importar historial</Text>
       <Text style={styles.copy}>Carga un CSV exportado desde MySugr (glucosa, insulina, carbohidratos, comidas, actividad, vitales, HbA1c). Se guarda como historial local; importar el mismo archivo dos veces no duplica datos.</Text>
@@ -190,4 +287,11 @@ const styles = StyleSheet.create({
   diagnostic: { color: colors.muted, fontSize: 12, marginTop: 5 },
   message: { color: colors.warning, backgroundColor: colors.warningSoft, borderRadius: radius.sm, padding: spacing.md, fontSize: 13, lineHeight: 19, marginTop: spacing.xl },
   disabled: { opacity: 0.55 },
+  row: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  therapyField: { flex: 1 },
+  therapyFieldLabel: { color: colors.muted, fontSize: 12, fontWeight: '700', marginBottom: 4 },
+  therapyFieldInputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.sm, borderColor: colors.line, borderWidth: 1, paddingHorizontal: spacing.md },
+  therapyFieldInput: { flex: 1, color: colors.ink, fontSize: 15, paddingVertical: spacing.md },
+  therapyFieldUnit: { color: colors.muted, fontSize: 12 },
+  hint: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: spacing.sm },
 });

@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { assessFreshness, latestLiveReading, liveReadings } from '@type1a/domain';
+import { assessFreshness, latestLiveReading } from '@type1a/domain';
 import type { CGMProviderStatus, CGMReading } from '@type1a/schemas';
 
 import { formatClock, relativeAge, trendArrow } from '../format';
@@ -59,7 +59,17 @@ export function GlucoseCard({
         </>
       )}
 
-      <GlucoseChart readings={liveReadings(readings)} />
+      {/*
+        Full readings, including imported history — this is a multi-day
+        scrollable trend chart, not a "current status" indicator, so
+        showing imported points in their correct historical position is
+        accurate, not a live/imported mixup. GlucoseChart itself uses
+        latestLiveReading to decide which point (if any) gets the
+        "current/Ahora" emphasis, and visually distinguishes imported
+        points (hollow marker) from live ones (filled) — imported data is
+        never drawn as if it were the current reading.
+      */}
+      <GlucoseChart readings={readings} />
       <Text style={styles.disclaimer}>No sustituye las alarmas ni la app oficial de FreeStyle.</Text>
     </View>
   );
