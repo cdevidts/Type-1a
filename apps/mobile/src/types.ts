@@ -4,6 +4,7 @@ import type {
   InsulinEvent,
   MealEpisodeMetrics,
   MealEvent,
+  NoteEvent,
 } from '@type1a/schemas';
 
 export type QuickRoute = 'carbs' | 'rapid' | 'basal' | 'correction';
@@ -57,7 +58,39 @@ export type TimelineItem =
       // may look like a live reading anywhere in the app, Timeline included.
       tone: 'teal' | 'warning' | 'muted';
       raw: CGMReading;
+    }
+  | {
+      id: string;
+      kind: 'note';
+      timestamp: string;
+      title: string;
+      detail: string;
+      tone: 'navy';
+      raw: NoteEvent;
+    }
+  | {
+      // A packaged "Nueva entrada" save — glucose, carbs/comida, rápida,
+      // basal, nota, all written together and shown/edited as one thing.
+      // `id` is the shared entry_group_id, not any single row's id.
+      id: string;
+      kind: 'entry';
+      timestamp: string;
+      title: string;
+      detail: string;
+      tone: 'teal';
+      raw: TimelineEntryGroupRaw;
     };
+
+export interface TimelineEntryGroupRaw {
+  entryGroupId: string;
+  glucose?: number;
+  description?: string;
+  carbsG?: number;
+  aiEstimatedCarbsG?: number;
+  rapidUnits?: number;
+  basalUnits?: number;
+  note?: string;
+}
 
 export interface StoredMealEpisode {
   id: string;
@@ -84,7 +117,21 @@ export type TimelineEditPayload =
   | { kind: 'insulin'; type: 'rapid' | 'basal'; units: number; insulinName?: string }
   | { kind: 'carbs'; carbsG: number }
   | { kind: 'meal'; note: string }
-  | { kind: 'glucose'; glucose: number };
+  | { kind: 'glucose'; glucose: number }
+  | { kind: 'note'; text: string }
+  // Whatever a field omits gets deleted from the group, not left alone —
+  // this is a full replace of the packaged entry's contents, matching what
+  // the edit form shows (every field, blank ones included).
+  | {
+      kind: 'entry';
+      manualGlucose?: number;
+      carbsG?: number;
+      description?: string;
+      rapidUnits?: number;
+      basalUnits?: number;
+      note?: string;
+      rapidIncludesCorrection?: boolean;
+    };
 
 export interface PendingInsulinAssociation {
   episodeId: string;

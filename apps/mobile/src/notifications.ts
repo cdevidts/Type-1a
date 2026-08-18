@@ -11,6 +11,8 @@ export const QUICK_CATEGORY = 'type1a-quick-entry';
 export const ACTION_CARBS = 'quick-carbs';
 export const ACTION_RAPID = 'quick-rapid';
 export const ACTION_CORRECTION = 'quick-correction';
+/** Handled entirely in the background by backgroundSync.ts's notification-response task — never routed to a QuickRoute. */
+export const ACTION_REFRESH = 'quick-refresh';
 
 /** app_settings key: whether the sticky quick-entry notification (and the
  * background sync that keeps it fresh) is turned on. Read by
@@ -59,6 +61,13 @@ export async function configureNotifications(): Promise<void> {
       buttonTitle: 'Corrección',
       options: { isAuthenticationRequired: true, opensAppToForeground: true },
     },
+    {
+      identifier: ACTION_REFRESH,
+      buttonTitle: 'Actualizar',
+      // The whole point: pull fresh CGM data and repost this notification
+      // without opening the app. Handled headlessly in backgroundSync.ts.
+      options: { opensAppToForeground: false },
+    },
   ]);
 }
 
@@ -104,7 +113,7 @@ export async function postQuickEntryNotification(
   await Notifications.scheduleNotificationAsync({
     content: {
       title: `Type 1A · ${glucoseText}`,
-      body: `Actualizado ${formatClock(new Date().toISOString())}. Se refresca solo cada ~15 min si Android lo permite. Toca para abrir.`,
+      body: `Actualizado ${formatClock(new Date().toISOString())}. Se refresca solo cada ~15 min si Android lo permite, o toca "Actualizar" para forzarlo ahora.`,
       categoryIdentifier: QUICK_CATEGORY,
       data: { url: 'type1a://quick/carbs' },
       sticky: true,

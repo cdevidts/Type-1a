@@ -45,6 +45,8 @@ import {
   deleteInsulinEvent,
   deleteMealEpisode,
   deleteMealEvent,
+  deleteNoteEvent,
+  deleteUnifiedEntryGroup,
   DEFAULT_CORRECTION_REMINDER_OFFSET_MINUTES,
   DEFAULT_MEAL_ALARM_OFFSETS_MINUTES,
   getCorrectionReminderSettings,
@@ -69,11 +71,14 @@ import {
   updateInsulinEvent,
   updateManualCGMReading,
   updateMealNote,
+  updateNoteEvent,
+  updateUnifiedEntryGroup,
   upsertCGMReadings,
   type CorrectionReminderSettings,
 } from './src/db';
 import { processReadyEpisodes } from './src/episodes';
 import {
+  ACTION_REFRESH,
   configureNotifications,
   enableQuickEntryNotification,
   QUICK_ENTRY_ENABLED_KEY,
@@ -212,6 +217,15 @@ function Type1AApp() {
     void Linking.getInitialURL().then((url) => { if (url !== null) handleUrl(url); });
     const urlSubscription = Linking.addEventListener('url', ({ url }) => { handleUrl(url); });
     const notificationSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      // Handled headlessly by backgroundSync.ts even when the app never
+      // opens; this only fires if the app happened to already be alive in
+      // the background when the tap landed. Either way, opening a quick-
+      // entry route (the fallback below, keyed off the notification's own
+      // tap-to-open URL) would be the wrong reaction to "Actualizar".
+      if (response.actionIdentifier === ACTION_REFRESH) {
+        void refresh();
+        return;
+      }
       const actionRoute = quickRouteFromNotificationAction(response.actionIdentifier);
       if (actionRoute !== null) {
         setQuickRoute(actionRoute);
@@ -356,8 +370,21 @@ function Type1AApp() {
       await updateCarbEvent(db, item.id, payload.carbsG);
     } else if (payload.kind === 'meal') {
       await updateMealNote(db, item.id, payload.note);
-    } else {
+    } else if (payload.kind === 'glucose') {
       await updateManualCGMReading(db, item.id, payload.glucose);
+    } else if (payload.kind === 'note') {
+      await updateNoteEvent(db, item.id, payload.text);
+    } else {
+      await updateUnifiedEntryGroup(db, item.id, {
+        timestamp: item.timestamp,
+        rapidIncludesCorrection: payload.rapidIncludesCorrection === true,
+        ...(payload.manualGlucose === undefined ? {} : { manualGlucose: payload.manualGlucose }),
+        ...(payload.carbsG === undefined ? {} : { carbsG: payload.carbsG }),
+        ...(payload.description === undefined ? {} : { description: payload.description }),
+        ...(payload.rapidUnits === undefined ? {} : { rapidUnits: payload.rapidUnits }),
+        ...(payload.basalUnits === undefined ? {} : { basalUnits: payload.basalUnits }),
+        ...(payload.note === undefined ? {} : { note: payload.note }),
+      });
     }
     await loadLocalState();
   }
@@ -371,8 +398,12 @@ function Type1AApp() {
       await deleteMealEvent(db, item.id);
     } else if (item.kind === 'glucose') {
       await deleteCGMReading(db, item.id);
-    } else {
+    } else if (item.kind === 'episode') {
       await deleteMealEpisode(db, item.id);
+    } else if (item.kind === 'note') {
+      await deleteNoteEvent(db, item.id);
+    } else {
+      await deleteUnifiedEntryGroup(db, item.id);
     }
     await loadLocalState();
   }

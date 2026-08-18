@@ -108,6 +108,13 @@ export function EntryModal({
 }) {
   const [glucose, setGlucose] = useState('');
   const [prefilled, setPrefilled] = useState<PrefilledReading | null>(null);
+  // Snapshot of the sensor prefill taken at open time, kept around even
+  // after the user switches to "Capilar" (which nulls `prefilled`) so
+  // switching back to "Sensor" can restore it without waiting for another
+  // refresh. Distinct from `prefilled`, which the freshness/save logic
+  // treats as "what's currently active" — this is just "what's available".
+  const [originalPrefill, setOriginalPrefill] = useState<PrefilledReading | null>(null);
+  const [glucoseSource, setGlucoseSource] = useState<'sensor' | 'capillary'>('capillary');
   const [description, setDescription] = useState('');
   const [carbs, setCarbs] = useState('');
   const [rapid, setRapid] = useState('');
@@ -132,15 +139,27 @@ export function EntryModal({
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
       const canUseReading = latest !== null && assessFreshness(latest.sourceTimestamp).state === 'connected';
-      setGlucose(canUseReading ? String(latest.glucose) : '');
-      setPrefilled(canUseReading && latest !== null
+      const snapshot = canUseReading && latest !== null
         ? {
             glucose: latest.glucose,
             sourceTimestamp: latest.sourceTimestamp,
             isSensor: isSensorReading(latest),
             isSynthetic: latest.origin === 'synthetic',
           }
-        : null);
+        : null;
+      // Only default to the "Sensor" tab, and only auto-fill the number,
+      // when the prefill genuinely came off the sensor (or the synthetic
+      // provider standing in for it in demo mode — same "Sensor" tab, its
+      // own warning text below) — the most recent *live* reading can itself
+      // be a manual one (manual counts as live, see isSensorReading's doc
+      // comment). Starting "Capilar" blank rather than silently carrying
+      // over an old manual value keeps this from looking like a fresh
+      // measurement when it isn't one.
+      const canUseAsSensor = snapshot !== null && (snapshot.isSensor || snapshot.isSynthetic);
+      setGlucose(canUseAsSensor && latest !== null ? String(latest.glucose) : '');
+      setPrefilled(canUseAsSensor ? snapshot : null);
+      setOriginalPrefill(canUseAsSensor ? snapshot : null);
+      setGlucoseSource(canUseAsSensor ? 'sensor' : 'capillary');
       setDescription('');
       setCarbs('');
       setRapid('');
@@ -182,6 +201,21 @@ export function EntryModal({
   function invalidateSuggestion(): void {
     setSuggestion(null);
     if (rapidFromCalculator) setRapidStale(true);
+  }
+
+  function selectSensorSource(): void {
+    if (originalPrefill === null) return;
+    setGlucoseSource('sensor');
+    setGlucose(String(originalPrefill.glucose));
+    setPrefilled(originalPrefill);
+    invalidateSuggestion();
+  }
+
+  function selectCapillarySource(): void {
+    setGlucoseSource('capillary');
+    setGlucose('');
+    setPrefilled(null);
+    invalidateSuggestion();
   }
 
   async function captureAndAnalyze(): Promise<void> {
@@ -282,6 +316,7 @@ export function EntryModal({
       if (assessFreshness(prefilled.sourceTimestamp).state !== 'connected') {
         setPrefilled(null);
         setGlucose('');
+        setGlucoseSource('capillary');
         invalidateSuggestion();
         setMessage('La lectura precargada dejó de estar vigente. Escribe una glucosa actual.');
         return;
@@ -378,6 +413,7 @@ export function EntryModal({
       if (doseSourceExpired) {
         setPrefilled(null);
         setGlucose('');
+        setGlucoseSource('capillary');
         setSuggestion(null);
         setDoseNeedsReconfirm(true);
       }
@@ -445,24 +481,46 @@ export function EntryModal({
       </View>
 
       <Text style={styles.sectionTitle}>Glucosa</Text>
-      {prefilled === null ? (
-        <Text style={styles.staleText}>Sin lectura vigente para precargar. Escríbela si te mediste.</Text>
+      <View style={styles.segmented}>
+        <Pressable
+          style={[styles.segment, glucoseSource === 'sensor' && styles.segmentActive]}
+          onPress={selectSensorSource}
+          disabled={originalPrefill === null}
+        >
+          <Text style={[
+            styles.segmentText,
+            glucoseSource === 'sensor' && styles.segmentTextActive,
+            originalPrefill === null && styles.segmentTextDisabled,
+          ]}
+          >
+            Sensor
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.segment, glucoseSource === 'capillary' && styles.segmentActive]}
+          onPress={selectCapillarySource}
+        >
+          <Text style={[styles.segmentText, glucoseSource === 'capillary' && styles.segmentTextActive]}>
+            Capilar (punción)
+          </Text>
+        </Pressable>
+      </View>
+      {glucoseSource === 'capillary' ? (
+        <Text style={styles.manualText}>Escribe el valor de tu medidor de glicemia capilar.</Text>
+      ) : prefilled === null ? (
+        <Text style={styles.staleText}>Sin lectura vigente para precargar. Escríbela si te mediste, o cambia a "Capilar".</Text>
       ) : prefilled.isSynthetic ? (
         <Text style={styles.syntheticText}>
           Precargada con un valor SINTÉTICO (modo demo) · {formatDayTime(prefilled.sourceTimestamp)}. No sirve para dosificar.
         </Text>
-      ) : prefilled.isSensor ? (
-        <Text style={styles.liveText}>Precargada desde el sensor · {formatDayTime(prefilled.sourceTimestamp)}</Text>
       ) : (
-        <Text style={styles.manualText}>
-          Precargada desde tu última medición manual · {formatDayTime(prefilled.sourceTimestamp)} (no viene del sensor)
-        </Text>
+        <Text style={styles.liveText}>Precargada desde el sensor · {formatDayTime(prefilled.sourceTimestamp)}</Text>
       )}
       <Field
         label="Glucemia"
         value={glucose}
         unit="mg/dL"
-        onChange={(value) => { setGlucose(value); setPrefilled(null); invalidateSuggestion(); }}
+        onChange={(value) => { setGlucose(value); setPrefilled(null); setGlucoseSource('capillary'); invalidateSuggestion(); }}
       />
 
       <Text style={styles.sectionTitle}>Comida</Text>
@@ -588,6 +646,12 @@ const styles = StyleSheet.create({
   timeLabel: { color: colors.muted, fontSize: 13 },
   timeValue: { color: colors.ink, fontSize: 14, fontWeight: '700' },
   sectionTitle: { color: colors.ink, fontSize: 17, fontWeight: '800', marginTop: spacing.xl },
+  segmented: { flexDirection: 'row', backgroundColor: colors.surface, borderRadius: radius.sm, borderColor: colors.line, borderWidth: 1, marginTop: spacing.sm, overflow: 'hidden' },
+  segment: { flex: 1, paddingVertical: spacing.md, alignItems: 'center', justifyContent: 'center', minHeight: 44 },
+  segmentActive: { backgroundColor: colors.teal },
+  segmentText: { color: colors.navy, fontSize: 13, fontWeight: '700' },
+  segmentTextActive: { color: '#FFFFFF' },
+  segmentTextDisabled: { color: colors.muted },
   liveText: { color: colors.green, fontSize: 12, marginTop: 4 },
   staleText: { color: colors.red, fontSize: 12, lineHeight: 17, marginTop: 4 },
   manualText: { color: colors.navy, fontSize: 12, lineHeight: 17, marginTop: 4 },

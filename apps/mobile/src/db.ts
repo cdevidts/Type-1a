@@ -147,6 +147,20 @@ export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
     await db.execAsync('ALTER TABLE meal_episodes ADD COLUMN insulin_context_confirmed INTEGER NOT NULL DEFAULT 0;');
   }
 
+  // entry_group_id (nullable): ties together everything written by one
+  // "Nueva entrada" save — glucose, the meal/carbs, rapid, basal, note —
+  // so they can be shown and edited as one packaged thing instead of N
+  // unrelated rows. NULL for anything written outside that flow (the
+  // one-datum quick actions, MySugr imports) — those stay standalone
+  // Timeline items exactly as before. See saveUnifiedEntry/getTimeline.
+  for (const table of ['insulin_events', 'carb_events', 'cgm_readings', 'note_events', 'meal_events']) {
+    const columns = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
+    if (!columns.some((column) => column.name === 'entry_group_id')) {
+      await db.execAsync(`ALTER TABLE ${table} ADD COLUMN entry_group_id TEXT;`);
+      await db.execAsync(`CREATE INDEX IF NOT EXISTS ${table}_entry_group_id ON ${table}(entry_group_id);`);
+    }
+  }
+
   await db.runAsync(
     'INSERT OR IGNORE INTO therapy_profile (id, payload, updated_at) VALUES (1, ?, ?)',
     JSON.stringify(DEFAULT_PROFILE),
@@ -199,22 +213,28 @@ export async function saveTherapyProfile(
   });
 }
 
-export async function saveInsulinEvent(db: SQLiteDatabase, event: InsulinEvent): Promise<void> {
+export async function saveInsulinEvent(
+  db: SQLiteDatabase,
+  event: InsulinEvent,
+  entryGroupId?: string,
+): Promise<void> {
   const parsed = InsulinEventSchema.parse(event);
   await db.runAsync(
-    'INSERT OR IGNORE INTO insulin_events (id, timestamp, type, units, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    'INSERT OR IGNORE INTO insulin_events (id, timestamp, type, units, payload, created_at, entry_group_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
     parsed.id,
     parsed.timestamp,
     parsed.type,
     parsed.units,
     JSON.stringify(parsed),
     parsed.createdAt,
+    entryGroupId ?? null,
   );
 }
 
 export async function saveCarbEvent(
   db: SQLiteDatabase,
   input: { id: string; timestamp: string; carbsG: number; source: 'manual' | 'meal_confirmed' | 'imported'; createdAt: string },
+  entryGroupId?: string,
 ): Promise<void> {
   // Validate explicitly rather than relying only on the SQL CHECK
   // constraint: now that this is INSERT OR IGNORE (for idempotent
@@ -222,12 +242,13 @@ export async function saveCarbEvent(
   // instead of surfacing to the caller.
   const parsed = CarbEventSchema.parse(input);
   await db.runAsync(
-    'INSERT OR IGNORE INTO carb_events (id, timestamp, carbs_g, source, created_at) VALUES (?, ?, ?, ?, ?)',
+    'INSERT OR IGNORE INTO carb_events (id, timestamp, carbs_g, source, created_at, entry_group_id) VALUES (?, ?, ?, ?, ?, ?)',
     parsed.id,
     parsed.timestamp,
     parsed.carbsG,
     parsed.source,
     parsed.createdAt,
+    entryGroupId ?? null,
   );
 }
 
@@ -315,22 +336,81 @@ export async function updateMealNote(db: SQLiteDatabase, id: string, note: strin
   await db.runAsync('UPDATE meal_events SET payload = ? WHERE id = ?', JSON.stringify(next), id);
 }
 
-export async function deleteMealEvent(db: SQLiteDatabase, id: string): Promise<void> {
-  const row = await db.getFirstAsync<{ timestamp: string }>('SELECT timestamp FROM meal_events WHERE id = ?', id);
+/**
+ * Like `updateMealNote`, but also updates `confirmedCarbsG` — for editing a
+ * packaged "Nueva entrada" group (`updateUnifiedEntryGroup`), where carbs
+ * and note are meant to be edited together in one form, not through two
+ * separate Timeline items. Propagates to the linked `carb_events` row
+ * (`source: 'meal_confirmed'`, matched by timestamp — same convention
+ * `deleteMealEvent` already uses) so the two copies of "confirmed carbs"
+ * can't fork apart, same reasoning as `updateCarbEvent`'s propagation the
+ * other direction.
+ */
+/** Non-transactional core — see `writeMealWithEpisode` for why this exists. */
+async function updateMealCarbsAndNoteRows(
+  db: SQLiteDatabase,
+  id: string,
+  updates: { confirmedCarbsG?: number | undefined; note?: string | undefined },
+): Promise<void> {
+  const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM meal_events WHERE id = ?', id);
+  if (row === null) return;
+  const existing = MealEventSchema.parse(JSON.parse(row.payload));
+  const next = MealEventSchema.parse({
+    ...existing,
+    confirmedCarbsG: updates.confirmedCarbsG,
+    note: updates.note,
+  });
+  await db.runAsync('UPDATE meal_events SET payload = ? WHERE id = ?', JSON.stringify(next), id);
+  const carbRow = await db.getFirstAsync<{ id: string }>(
+    "SELECT id FROM carb_events WHERE timestamp = ? AND source = 'meal_confirmed'",
+    existing.timestamp,
+  );
+  if (next.confirmedCarbsG === undefined) {
+    if (carbRow !== null) await db.runAsync('DELETE FROM carb_events WHERE id = ?', carbRow.id);
+  } else if (carbRow === null) {
+    await saveCarbEvent(db, {
+      id: Crypto.randomUUID(),
+      timestamp: existing.timestamp,
+      carbsG: next.confirmedCarbsG,
+      source: 'meal_confirmed',
+      createdAt: existing.createdAt,
+    });
+  } else {
+    await db.runAsync('UPDATE carb_events SET carbs_g = ? WHERE id = ?', next.confirmedCarbsG, carbRow.id);
+  }
+}
+
+export async function updateMealCarbsAndNote(
+  db: SQLiteDatabase,
+  id: string,
+  updates: { confirmedCarbsG?: number | undefined; note?: string | undefined },
+): Promise<void> {
   await db.withTransactionAsync(async () => {
-    // ON DELETE CASCADE on meal_episodes.meal_id takes care of the episode.
-    await db.runAsync('DELETE FROM meal_events WHERE id = ?', id);
-    if (row !== null) {
-      // The carb_events row created alongside this meal (writeMealWithEpisode)
-      // has no foreign key back to it — matched by timestamp + source
-      // instead, since they're always written with the same timestamp.
-      // Left behind, it would read as a standalone "Carbohidratos
-      // confirmados" entry for a meal that no longer exists.
-      await db.runAsync(
-        "DELETE FROM carb_events WHERE timestamp = ? AND source = 'meal_confirmed'",
-        row.timestamp,
-      );
-    }
+    await updateMealCarbsAndNoteRows(db, id, updates);
+  });
+}
+
+/** Non-transactional core — see `writeMealWithEpisode` for why this exists. */
+async function deleteMealEventRows(db: SQLiteDatabase, id: string): Promise<void> {
+  const row = await db.getFirstAsync<{ timestamp: string }>('SELECT timestamp FROM meal_events WHERE id = ?', id);
+  // ON DELETE CASCADE on meal_episodes.meal_id takes care of the episode.
+  await db.runAsync('DELETE FROM meal_events WHERE id = ?', id);
+  if (row !== null) {
+    // The carb_events row created alongside this meal (writeMealWithEpisode)
+    // has no foreign key back to it — matched by timestamp + source
+    // instead, since they're always written with the same timestamp.
+    // Left behind, it would read as a standalone "Carbohidratos
+    // confirmados" entry for a meal that no longer exists.
+    await db.runAsync(
+      "DELETE FROM carb_events WHERE timestamp = ? AND source = 'meal_confirmed'",
+      row.timestamp,
+    );
+  }
+}
+
+export async function deleteMealEvent(db: SQLiteDatabase, id: string): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    await deleteMealEventRows(db, id);
   });
 }
 
@@ -365,15 +445,16 @@ export async function deleteCGMReading(db: SQLiteDatabase, id: string): Promise<
  * inside one (`saveUnifiedEntry`) must use this and let the outer
  * transaction cover it.
  */
-async function writeMealWithEpisode(db: SQLiteDatabase, meal: MealEvent): Promise<string> {
+async function writeMealWithEpisode(db: SQLiteDatabase, meal: MealEvent, entryGroupId?: string): Promise<string> {
   const parsed = MealEventSchema.parse(meal);
   const episodeId = Crypto.randomUUID();
   await db.runAsync(
-    'INSERT INTO meal_events (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
+    'INSERT INTO meal_events (id, timestamp, payload, created_at, entry_group_id) VALUES (?, ?, ?, ?, ?)',
     parsed.id,
     parsed.timestamp,
     JSON.stringify(parsed),
     parsed.createdAt,
+    entryGroupId ?? null,
   );
   await db.runAsync(
     `INSERT INTO meal_episodes
@@ -391,7 +472,7 @@ async function writeMealWithEpisode(db: SQLiteDatabase, meal: MealEvent): Promis
       carbsG: parsed.confirmedCarbsG,
       source: 'meal_confirmed',
       createdAt: parsed.createdAt,
-    });
+    }, entryGroupId);
   }
   return episodeId;
 }
@@ -480,6 +561,15 @@ export async function saveUnifiedEntry(
 
   const hasMeal = input.carbsG !== undefined || input.description !== undefined || input.imageUri !== undefined;
 
+  // Every row this save produces shares one id, so the pieces can be shown
+  // and edited later as the single packaged thing they were entered as —
+  // see getTimeline()'s grouping and updateUnifiedEntryGroup/
+  // deleteUnifiedEntryGroup. A glucose-only save still gets a group id even
+  // though there's nothing to group it WITH yet; if the entry is later
+  // edited to add carbs or a dose, they join this same id instead of the
+  // edit silently starting a second, disconnected group.
+  const entryGroupId = Crypto.randomUUID();
+
   await db.withTransactionAsync(async () => {
     if (input.manualGlucose !== undefined) {
       // A value the user measured and typed. `origin: 'manual'` keeps it
@@ -497,7 +587,7 @@ export async function saveUnifiedEntry(
         origin: 'manual',
         sourceTimestamp: timestamp,
         ingestedAt: timestamp,
-      });
+      }, entryGroupId);
       outcome.savedGlucose = true;
     }
 
@@ -515,7 +605,7 @@ export async function saveUnifiedEntry(
         ...(input.fiberG === undefined ? {} : { fiberG: input.fiberG }),
         ...(input.caloriesKcal === undefined ? {} : { caloriesKcal: input.caloriesKcal }),
         ...(input.aiAnalysisId === undefined ? {} : { aiAnalysisId: input.aiAnalysisId }),
-      });
+      }, entryGroupId);
     }
 
     if (input.rapidUnits !== undefined) {
@@ -532,7 +622,7 @@ export async function saveUnifiedEntry(
         source: 'manual',
         createdAt: timestamp,
         purpose: hasMeal ? (includesCorrection ? 'combined' : 'meal') : 'correction',
-      });
+      }, entryGroupId);
       outcome.savedRapid = true;
     }
 
@@ -544,7 +634,7 @@ export async function saveUnifiedEntry(
         units: input.basalUnits,
         source: 'manual',
         createdAt: timestamp,
-      });
+      }, entryGroupId);
       outcome.savedBasal = true;
     }
 
@@ -555,7 +645,7 @@ export async function saveUnifiedEntry(
         text: input.note,
         source: 'manual',
         createdAt: timestamp,
-      });
+      }, entryGroupId);
       outcome.savedNote = true;
     }
   });
@@ -563,16 +653,179 @@ export async function saveUnifiedEntry(
   return outcome;
 }
 
+/**
+ * Edits a packaged "Nueva entrada" group as one operation: whichever pieces
+ * `input` supplies get updated in place (preserving their row/episode
+ * identity — so editing a note doesn't reset an already-`complete` episode
+ * back to `collecting`), whichever it omits get deleted, and whichever are
+ * newly present (a field that was empty when the entry was first saved) get
+ * created and tagged with this same `entryGroupId`. Mirrors
+ * `saveUnifiedEntry`'s validation and `purpose` bookkeeping exactly, since
+ * this is the same data shape mid-edit rather than freshly created.
+ */
+export async function updateUnifiedEntryGroup(
+  db: SQLiteDatabase,
+  entryGroupId: string,
+  input: UnifiedEntryInput,
+): Promise<UnifiedEntryOutcome> {
+  const timestamp = input.timestamp;
+  if (input.rapidUnits !== undefined) InsulinUnitsSchema.parse(input.rapidUnits);
+  if (input.basalUnits !== undefined) InsulinUnitsSchema.parse(input.basalUnits);
+  if (input.carbsG !== undefined) CarbGramsSchema.parse(input.carbsG);
+  if (input.manualGlucose !== undefined) GlucoseValueSchema.parse(input.manualGlucose);
+
+  const hasMeal = input.carbsG !== undefined || input.description !== undefined;
+  const outcome: UnifiedEntryOutcome = {
+    episodeId: null,
+    savedGlucose: false,
+    savedRapid: false,
+    savedBasal: false,
+    savedNote: false,
+  };
+
+  await db.withTransactionAsync(async () => {
+    const existingGlucose = await db.getFirstAsync<{ id: string }>(
+      'SELECT id FROM cgm_readings WHERE entry_group_id = ?',
+      entryGroupId,
+    );
+    if (input.manualGlucose !== undefined) {
+      if (existingGlucose === null) {
+        await writeCGMReading(db, {
+          id: Crypto.randomUUID(),
+          glucose: input.manualGlucose,
+          unit: 'mg/dL',
+          timestamp,
+          trend: 'unknown',
+          trendSource: 'unknown',
+          source: 'entrada manual',
+          origin: 'manual',
+          sourceTimestamp: timestamp,
+          ingestedAt: timestamp,
+        }, entryGroupId);
+      } else {
+        await updateManualCGMReading(db, existingGlucose.id, input.manualGlucose);
+      }
+      outcome.savedGlucose = true;
+    } else if (existingGlucose !== null) {
+      await deleteCGMReading(db, existingGlucose.id);
+    }
+
+    const existingMeal = await db.getFirstAsync<{ id: string }>(
+      'SELECT id FROM meal_events WHERE entry_group_id = ?',
+      entryGroupId,
+    );
+    if (hasMeal) {
+      if (existingMeal === null) {
+        outcome.episodeId = await writeMealWithEpisode(db, {
+          id: Crypto.randomUUID(),
+          timestamp,
+          createdAt: timestamp,
+          ...(input.carbsG === undefined ? {} : { confirmedCarbsG: input.carbsG }),
+          ...(input.description === undefined ? {} : { note: input.description }),
+        }, entryGroupId);
+      } else {
+        await updateMealCarbsAndNoteRows(db, existingMeal.id, {
+          confirmedCarbsG: input.carbsG,
+          note: input.description,
+        });
+      }
+    } else if (existingMeal !== null) {
+      await deleteMealEventRows(db, existingMeal.id);
+    }
+
+    const existingRapid = await db.getFirstAsync<{ id: string }>(
+      "SELECT id FROM insulin_events WHERE entry_group_id = ? AND type = 'rapid'",
+      entryGroupId,
+    );
+    if (input.rapidUnits !== undefined) {
+      const includesCorrection = input.rapidIncludesCorrection === true;
+      if (existingRapid === null) {
+        await saveInsulinEvent(db, {
+          id: Crypto.randomUUID(),
+          timestamp,
+          type: 'rapid',
+          units: input.rapidUnits,
+          source: 'manual',
+          createdAt: timestamp,
+          purpose: hasMeal ? (includesCorrection ? 'combined' : 'meal') : 'correction',
+        }, entryGroupId);
+      } else {
+        await updateInsulinEvent(db, existingRapid.id, { type: 'rapid', units: input.rapidUnits });
+      }
+      outcome.savedRapid = true;
+    } else if (existingRapid !== null) {
+      await deleteInsulinEvent(db, existingRapid.id);
+    }
+
+    const existingBasal = await db.getFirstAsync<{ id: string }>(
+      "SELECT id FROM insulin_events WHERE entry_group_id = ? AND type = 'basal'",
+      entryGroupId,
+    );
+    if (input.basalUnits !== undefined) {
+      if (existingBasal === null) {
+        await saveInsulinEvent(db, {
+          id: Crypto.randomUUID(),
+          timestamp,
+          type: 'basal',
+          units: input.basalUnits,
+          source: 'manual',
+          createdAt: timestamp,
+        }, entryGroupId);
+      } else {
+        await updateInsulinEvent(db, existingBasal.id, { type: 'basal', units: input.basalUnits });
+      }
+      outcome.savedBasal = true;
+    } else if (existingBasal !== null) {
+      await deleteInsulinEvent(db, existingBasal.id);
+    }
+
+    const existingNote = await db.getFirstAsync<{ id: string }>(
+      'SELECT id FROM note_events WHERE entry_group_id = ?',
+      entryGroupId,
+    );
+    if (input.note !== undefined) {
+      if (existingNote === null) {
+        await saveNoteEvent(db, {
+          id: Crypto.randomUUID(),
+          timestamp,
+          text: input.note,
+          source: 'manual',
+          createdAt: timestamp,
+        }, entryGroupId);
+      } else {
+        await updateNoteEvent(db, existingNote.id, input.note);
+      }
+      outcome.savedNote = true;
+    } else if (existingNote !== null) {
+      await deleteNoteEvent(db, existingNote.id);
+    }
+  });
+
+  return outcome;
+}
+
+/** Deletes every row tagged with this group — the whole packaged entry, not one field of it. */
+export async function deleteUnifiedEntryGroup(db: SQLiteDatabase, entryGroupId: string): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    const meal = await db.getFirstAsync<{ id: string }>('SELECT id FROM meal_events WHERE entry_group_id = ?', entryGroupId);
+    if (meal !== null) await deleteMealEventRows(db, meal.id); // cascades the episode, cleans up the linked carb_events row
+    await db.runAsync('DELETE FROM cgm_readings WHERE entry_group_id = ?', entryGroupId);
+    await db.runAsync('DELETE FROM insulin_events WHERE entry_group_id = ?', entryGroupId);
+    await db.runAsync('DELETE FROM note_events WHERE entry_group_id = ?', entryGroupId);
+  });
+}
+
 /** Non-transactional core — see `writeMealWithEpisode` for why this exists. */
-async function writeCGMReading(db: SQLiteDatabase, reading: CGMReading): Promise<void> {
+async function writeCGMReading(db: SQLiteDatabase, reading: CGMReading, entryGroupId?: string): Promise<void> {
   const parsed = CGMReadingSchema.parse(reading);
   await db.runAsync(
     `INSERT OR REPLACE INTO cgm_readings
-      (id, source_timestamp, payload, ingested_at) VALUES (?, ?, ?, ?)`,
+      (id, source_timestamp, payload, ingested_at, entry_group_id) VALUES (?, ?, ?, ?, ?)`,
     parsed.id,
     parsed.sourceTimestamp,
     JSON.stringify(parsed),
     parsed.ingestedAt,
+    entryGroupId ?? null,
   );
 }
 
@@ -625,15 +878,28 @@ export async function getActivityEvents(db: SQLiteDatabase, from: Date, to: Date
   });
 }
 
-export async function saveNoteEvent(db: SQLiteDatabase, note: NoteEvent): Promise<void> {
+export async function saveNoteEvent(db: SQLiteDatabase, note: NoteEvent, entryGroupId?: string): Promise<void> {
   const parsed = NoteEventSchema.parse(note);
   await db.runAsync(
-    'INSERT OR IGNORE INTO note_events (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
+    'INSERT OR IGNORE INTO note_events (id, timestamp, payload, created_at, entry_group_id) VALUES (?, ?, ?, ?, ?)',
     parsed.id,
     parsed.timestamp,
     JSON.stringify(parsed),
     parsed.createdAt,
+    entryGroupId ?? null,
   );
+}
+
+export async function updateNoteEvent(db: SQLiteDatabase, id: string, text: string): Promise<void> {
+  const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM note_events WHERE id = ?', id);
+  if (row === null) return;
+  const existing = NoteEventSchema.parse(JSON.parse(row.payload));
+  const next = NoteEventSchema.parse({ ...existing, text });
+  await db.runAsync('UPDATE note_events SET payload = ? WHERE id = ?', JSON.stringify(next), id);
+}
+
+export async function deleteNoteEvent(db: SQLiteDatabase, id: string): Promise<void> {
+  await db.runAsync('DELETE FROM note_events WHERE id = ?', id);
 }
 
 export async function getNoteEvents(db: SQLiteDatabase, from: Date, to: Date): Promise<NoteEvent[]> {
@@ -940,18 +1206,27 @@ export async function updateEpisode(
   );
 }
 
+interface EntryGroupAccumulator {
+  timestamp: string;
+  glucose?: CGMReading;
+  meal?: MealEvent;
+  rapid?: InsulinEvent;
+  basal?: InsulinEvent;
+  note?: NoteEvent;
+}
+
 export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<TimelineItem[]> {
-  const [insulinRows, carbRows, mealRows, episodeRows, glucoseRows] = await Promise.all([
-    db.getAllAsync<{ payload: string }>(
-      'SELECT payload FROM insulin_events ORDER BY timestamp DESC LIMIT ?',
+  const [insulinRows, carbRows, mealRows, episodeRows, glucoseRows, noteRows] = await Promise.all([
+    db.getAllAsync<{ payload: string; entry_group_id: string | null }>(
+      'SELECT payload, entry_group_id FROM insulin_events ORDER BY timestamp DESC LIMIT ?',
       limit,
     ),
-    db.getAllAsync<{ id: string; timestamp: string; carbs_g: number; source: 'manual' | 'meal_confirmed' | 'imported' }>(
-      'SELECT id, timestamp, carbs_g, source FROM carb_events ORDER BY timestamp DESC LIMIT ?',
+    db.getAllAsync<{ id: string; timestamp: string; carbs_g: number; source: 'manual' | 'meal_confirmed' | 'imported'; entry_group_id: string | null }>(
+      'SELECT id, timestamp, carbs_g, source, entry_group_id FROM carb_events ORDER BY timestamp DESC LIMIT ?',
       limit,
     ),
-    db.getAllAsync<{ payload: string }>(
-      'SELECT payload FROM meal_events ORDER BY timestamp DESC LIMIT ?',
+    db.getAllAsync<{ payload: string; entry_group_id: string | null }>(
+      'SELECT payload, entry_group_id FROM meal_events ORDER BY timestamp DESC LIMIT ?',
       limit,
     ),
     db.getAllAsync<{
@@ -970,28 +1245,56 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
     // history is common this LIMIT-then-merge-then-slice approach will let
     // glucose crowd out everything else in the combined list. Fine as an
     // interim fix to make imported/live glucose visible at all.
-    db.getAllAsync<{ payload: string }>(
-      'SELECT payload FROM cgm_readings ORDER BY source_timestamp DESC LIMIT ?',
+    db.getAllAsync<{ payload: string; entry_group_id: string | null }>(
+      'SELECT payload, entry_group_id FROM cgm_readings ORDER BY source_timestamp DESC LIMIT ?',
+      limit,
+    ),
+    db.getAllAsync<{ payload: string; entry_group_id: string | null }>(
+      'SELECT payload, entry_group_id FROM note_events ORDER BY timestamp DESC LIMIT ?',
       limit,
     ),
   ]);
 
   const items: TimelineItem[] = [];
+  // Rows sharing a non-null entry_group_id all came from one "Nueva
+  // entrada" save (see saveUnifiedEntry) and are shown/edited as one
+  // packaged item instead of N separate ones — Verónica's explicit request:
+  // "lo guardado en una misma instancia, tiene que quedar empaquetado
+  // junto." Ungrouped rows (quick actions, MySugr imports, anything from
+  // before this existed) keep showing individually, exactly as before.
+  const groups = new Map<string, EntryGroupAccumulator>();
+  function groupFor(entryGroupId: string, timestamp: string): EntryGroupAccumulator {
+    const existing = groups.get(entryGroupId);
+    if (existing !== undefined) return existing;
+    const created: EntryGroupAccumulator = { timestamp };
+    groups.set(entryGroupId, created);
+    return created;
+  }
+
   for (const row of insulinRows) {
     const event = InsulinEventSchema.safeParse(JSON.parse(row.payload));
-    if (event.success) {
-      items.push({
-        id: event.data.id,
-        kind: 'insulin',
-        timestamp: event.data.timestamp,
-        title: event.data.type === 'rapid' ? 'Insulina rápida' : 'Insulina basal',
-        detail: `${event.data.units} U`,
-        tone: event.data.type === 'rapid' ? 'blue' : 'navy',
-        raw: event.data,
-      });
+    if (!event.success) continue;
+    if (row.entry_group_id !== null) {
+      const group = groupFor(row.entry_group_id, event.data.timestamp);
+      if (event.data.type === 'rapid') group.rapid = event.data; else group.basal = event.data;
+      continue;
     }
+    items.push({
+      id: event.data.id,
+      kind: 'insulin',
+      timestamp: event.data.timestamp,
+      title: event.data.type === 'rapid' ? 'Insulina rápida' : 'Insulina basal',
+      detail: `${event.data.units} U`,
+      tone: event.data.type === 'rapid' ? 'blue' : 'navy',
+      raw: event.data,
+    });
   }
   for (const row of carbRows) {
+    // A `meal_confirmed` row belonging to a group is the same fact as its
+    // group's meal.confirmedCarbsG (writeMealWithEpisode keeps them in
+    // sync) — showing both would be exactly the un-packaged duplication
+    // this feature exists to remove.
+    if (row.entry_group_id !== null) continue;
     items.push({
       id: row.id,
       kind: 'carbs',
@@ -1004,46 +1307,69 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
   }
   for (const row of mealRows) {
     const meal = MealEventSchema.safeParse(JSON.parse(row.payload));
-    if (meal.success) {
-      items.push({
-        id: meal.data.id,
-        kind: 'meal',
-        timestamp: meal.data.timestamp,
-        title: 'Comida registrada',
-        detail: meal.data.confirmedCarbsG === undefined
-          ? 'Sin carbohidratos confirmados'
-          : `${meal.data.confirmedCarbsG} g confirmados`,
-        tone: 'orange',
-        raw: meal.data,
-      });
+    if (!meal.success) continue;
+    if (row.entry_group_id !== null) {
+      groupFor(row.entry_group_id, meal.data.timestamp).meal = meal.data;
+      continue;
     }
+    items.push({
+      id: meal.data.id,
+      kind: 'meal',
+      timestamp: meal.data.timestamp,
+      title: 'Comida registrada',
+      detail: meal.data.confirmedCarbsG === undefined
+        ? 'Sin carbohidratos confirmados'
+        : `${meal.data.confirmedCarbsG} g confirmados`,
+      tone: 'orange',
+      raw: meal.data,
+    });
   }
   for (const row of glucoseRows) {
     const reading = CGMReadingSchema.safeParse(JSON.parse(row.payload));
-    if (reading.success) {
-      // Anything that isn't real sensor data says so, in the list itself —
-      // a manual fingerstick and a sensor reading must not look identical.
-      const originSuffix = reading.data.origin === 'imported'
-        ? ' · importado'
-        : reading.data.origin === 'synthetic'
-          ? ' · sintético'
-          : reading.data.origin === 'manual'
-            ? ' · manual'
-            : '';
-      items.push({
-        id: reading.data.id,
-        kind: 'glucose',
-        timestamp: reading.data.sourceTimestamp,
-        title: 'Glucosa',
-        detail: `${reading.data.glucose} mg/dL${originSuffix}`,
-        tone: reading.data.origin === 'synthetic'
-          ? 'warning'
-          : reading.data.origin === 'imported' || reading.data.origin === 'manual'
-            ? 'muted'
-            : 'teal',
-        raw: reading.data,
-      });
+    if (!reading.success) continue;
+    if (row.entry_group_id !== null) {
+      groupFor(row.entry_group_id, reading.data.sourceTimestamp).glucose = reading.data;
+      continue;
     }
+    // Anything that isn't real sensor data says so, in the list itself —
+    // a manual fingerstick and a sensor reading must not look identical.
+    const originSuffix = reading.data.origin === 'imported'
+      ? ' · importado'
+      : reading.data.origin === 'synthetic'
+        ? ' · sintético'
+        : reading.data.origin === 'manual'
+          ? ' · manual'
+          : '';
+    items.push({
+      id: reading.data.id,
+      kind: 'glucose',
+      timestamp: reading.data.sourceTimestamp,
+      title: 'Glucosa',
+      detail: `${reading.data.glucose} mg/dL${originSuffix}`,
+      tone: reading.data.origin === 'synthetic'
+        ? 'warning'
+        : reading.data.origin === 'imported' || reading.data.origin === 'manual'
+          ? 'muted'
+          : 'teal',
+      raw: reading.data,
+    });
+  }
+  for (const row of noteRows) {
+    const note = NoteEventSchema.safeParse(JSON.parse(row.payload));
+    if (!note.success) continue;
+    if (row.entry_group_id !== null) {
+      groupFor(row.entry_group_id, note.data.timestamp).note = note.data;
+      continue;
+    }
+    items.push({
+      id: note.data.id,
+      kind: 'note',
+      timestamp: note.data.timestamp,
+      title: 'Nota',
+      detail: note.data.text,
+      tone: 'navy',
+      raw: note.data,
+    });
   }
   for (const row of episodeRows) {
     const parsed = parseOptionalEpisodePayloads(row.metrics_json, row.insight_json);
@@ -1056,6 +1382,38 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
       detail: peak === undefined ? 'Faltan lecturas CGM' : `Pico ${peak} mg/dL`,
       tone: row.status === 'complete' ? 'green' : 'navy',
       ...parsed,
+    });
+  }
+
+  for (const [entryGroupId, group] of groups) {
+    const parts = [
+      // Grouped glucose is always origin:'manual' (the only two write sites
+      // for a grouped reading hardcode it) — stating that here matches the
+      // app's rule that every glucose display names its provenance, same
+      // as the standalone 'glucose' Timeline item's ' · manual' suffix.
+      group.glucose === undefined ? null : `${group.glucose.glucose} mg/dL (manual)`,
+      group.meal?.confirmedCarbsG === undefined ? null : `${group.meal.confirmedCarbsG} g`,
+      group.rapid === undefined ? null : `${group.rapid.units} U rápida`,
+      group.basal === undefined ? null : `${group.basal.units} U basal`,
+      group.note === undefined ? null : 'nota',
+    ].filter((part): part is string => part !== null);
+    items.push({
+      id: entryGroupId,
+      kind: 'entry',
+      timestamp: group.timestamp,
+      title: 'Entrada registrada',
+      detail: parts.length === 0 ? 'Entrada vacía' : parts.join(' · '),
+      tone: 'teal',
+      raw: {
+        entryGroupId,
+        ...(group.glucose === undefined ? {} : { glucose: group.glucose.glucose }),
+        ...(group.meal?.note === undefined ? {} : { description: group.meal.note }),
+        ...(group.meal?.confirmedCarbsG === undefined ? {} : { carbsG: group.meal.confirmedCarbsG }),
+        ...(group.meal?.aiEstimatedCarbsG === undefined ? {} : { aiEstimatedCarbsG: group.meal.aiEstimatedCarbsG }),
+        ...(group.rapid === undefined ? {} : { rapidUnits: group.rapid.units }),
+        ...(group.basal === undefined ? {} : { basalUnits: group.basal.units }),
+        ...(group.note === undefined ? {} : { note: group.note.text }),
+      },
     });
   }
 

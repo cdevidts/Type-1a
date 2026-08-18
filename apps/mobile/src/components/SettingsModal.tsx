@@ -236,7 +236,7 @@ export function SettingsModal({
     try {
       const enabled = await onEnableQuickEntry();
       setMessage(enabled
-        ? 'Acceso rápido activado. Se refresca solo cada ~15 min si Android lo permite; basal queda al tocar la app.'
+        ? 'Acceso rápido activado. Se refresca solo cada ~15 min si Android lo permite, o toca "Actualizar" en la notificación para forzarlo; basal queda al tocar la app.'
         : 'No se otorgó permiso de notificaciones.');
     } finally {
       setBusy(false);

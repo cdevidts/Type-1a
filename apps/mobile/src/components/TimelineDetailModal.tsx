@@ -79,6 +79,22 @@ function rowsFor(item: TimelineItem): { label: string; value: string }[] {
         ...(item.metrics?.rapidInsulinUnits === undefined ? [] : [{ label: 'Insulina rápida', value: `${item.metrics.rapidInsulinUnits} U` }]),
         { label: 'Hora de la comida', value: formatDayTime(item.timestamp) },
       ];
+    case 'note':
+      return [
+        { label: 'Nota', value: item.raw.text },
+        { label: 'Hora', value: formatDayTime(item.raw.timestamp) },
+      ];
+    case 'entry':
+      return [
+        ...(item.raw.glucose === undefined ? [] : [{ label: 'Glicemia capilar', value: `${item.raw.glucose} mg/dL` }]),
+        ...(item.raw.carbsG === undefined ? [] : [{ label: 'Carbohidratos', value: `${item.raw.carbsG} g` }]),
+        ...(item.raw.aiEstimatedCarbsG === undefined ? [] : [{ label: 'Estimado por IA', value: `${item.raw.aiEstimatedCarbsG} g` }]),
+        ...(item.raw.description === undefined || item.raw.description === '' ? [] : [{ label: 'Comida', value: item.raw.description }]),
+        ...(item.raw.rapidUnits === undefined ? [] : [{ label: 'Insulina rápida', value: `${item.raw.rapidUnits} U` }]),
+        ...(item.raw.basalUnits === undefined ? [] : [{ label: 'Insulina basal', value: `${item.raw.basalUnits} U` }]),
+        ...(item.raw.note === undefined || item.raw.note === '' ? [] : [{ label: 'Nota', value: item.raw.note }]),
+        { label: 'Hora', value: formatDayTime(item.timestamp) },
+      ];
   }
 }
 
@@ -94,7 +110,9 @@ function isEditable(item: TimelineItem): boolean {
 }
 
 function deleteLabel(item: TimelineItem): string {
-  return item.kind === 'episode' ? 'Eliminar seguimiento' : 'Eliminar registro';
+  if (item.kind === 'episode') return 'Eliminar seguimiento';
+  if (item.kind === 'entry') return 'Eliminar entrada completa';
+  return 'Eliminar registro';
 }
 
 function deleteConfirmMessage(item: TimelineItem): string {
@@ -103,6 +121,9 @@ function deleteConfirmMessage(item: TimelineItem): string {
   }
   if (item.kind === 'meal') {
     return 'Se borra esta comida y el seguimiento post-comida asociado. Los carbohidratos confirmados también se borran.';
+  }
+  if (item.kind === 'entry') {
+    return 'Se borra todo lo guardado junto en esta entrada: glicemia, carbohidratos, insulina y nota.';
   }
   return 'Esta acción no se puede deshacer.';
 }
@@ -129,6 +150,14 @@ export function TimelineDetailModal({
   const [note, setNote] = useState('');
   const [glucose, setGlucose] = useState('');
 
+  // Only the packaged "entry" kind needs all five of these at once.
+  const [entryGlucose, setEntryGlucose] = useState('');
+  const [entryCarbsG, setEntryCarbsG] = useState('');
+  const [entryDescription, setEntryDescription] = useState('');
+  const [entryRapidUnits, setEntryRapidUnits] = useState('');
+  const [entryBasalUnits, setEntryBasalUnits] = useState('');
+  const [entryNote, setEntryNote] = useState('');
+
   // Re-seed the edit fields (and drop any in-progress edit/error) every time
   // a different item is opened. Keyed on the item's identity, not on
   // `editing`, so switching items always starts from view mode.
@@ -146,6 +175,15 @@ export function TimelineDetailModal({
       setNote(item.raw.note ?? '');
     } else if (item.kind === 'glucose') {
       setGlucose(String(item.raw.glucose));
+    } else if (item.kind === 'note') {
+      setNote(item.raw.text);
+    } else if (item.kind === 'entry') {
+      setEntryGlucose(item.raw.glucose === undefined ? '' : String(item.raw.glucose));
+      setEntryCarbsG(item.raw.carbsG === undefined ? '' : String(item.raw.carbsG));
+      setEntryDescription(item.raw.description ?? '');
+      setEntryRapidUnits(item.raw.rapidUnits === undefined ? '' : String(item.raw.rapidUnits));
+      setEntryBasalUnits(item.raw.basalUnits === undefined ? '' : String(item.raw.basalUnits));
+      setEntryNote(item.raw.note ?? '');
     }
   }, [item]);
 
@@ -182,6 +220,49 @@ export function TimelineDetailModal({
         return;
       }
       payload = { kind: 'glucose', glucose: parsed };
+    } else if (item.kind === 'note') {
+      const text = note.trim();
+      if (text === '') {
+        setError('La nota no puede quedar vacía. Para borrarla, usa Eliminar.');
+        return;
+      }
+      payload = { kind: 'note', text };
+    } else if (item.kind === 'entry') {
+      const glucoseValue = entryGlucose.trim() === '' ? undefined : parsePositiveNumber(entryGlucose);
+      if (glucoseValue === null) {
+        setError('La glicemia capilar debe ser un número positivo.');
+        return;
+      }
+      const carbsValue = entryCarbsG.trim() === '' ? undefined : parseNonNegativeNumber(entryCarbsG);
+      if (carbsValue === null || (carbsValue !== undefined && carbsValue > 500)) {
+        setError('Los carbohidratos deben ser un número entre 0 y 500 g.');
+        return;
+      }
+      const rapidValue = entryRapidUnits.trim() === '' ? undefined : parsePositiveNumber(entryRapidUnits);
+      if (rapidValue === null || (rapidValue !== undefined && rapidValue > 100)) {
+        setError('La insulina rápida debe ser un número positivo, 100 U o menos.');
+        return;
+      }
+      const basalValue = entryBasalUnits.trim() === '' ? undefined : parsePositiveNumber(entryBasalUnits);
+      if (basalValue === null || (basalValue !== undefined && basalValue > 100)) {
+        setError('La insulina basal debe ser un número positivo, 100 U o menos.');
+        return;
+      }
+      const hasSomething = glucoseValue !== undefined || carbsValue !== undefined || entryDescription.trim() !== ''
+        || rapidValue !== undefined || basalValue !== undefined || entryNote.trim() !== '';
+      if (!hasSomething) {
+        setError('Completa al menos un campo, o usa Eliminar entrada completa.');
+        return;
+      }
+      payload = {
+        kind: 'entry',
+        ...(glucoseValue === undefined ? {} : { manualGlucose: glucoseValue }),
+        ...(carbsValue === undefined ? {} : { carbsG: carbsValue }),
+        ...(entryDescription.trim() === '' ? {} : { description: entryDescription.trim() }),
+        ...(rapidValue === undefined ? {} : { rapidUnits: rapidValue }),
+        ...(basalValue === undefined ? {} : { basalUnits: basalValue }),
+        ...(entryNote.trim() === '' ? {} : { note: entryNote.trim() }),
+      };
     } else {
       return;
     }
@@ -281,6 +362,72 @@ export function TimelineDetailModal({
               </View>
             </>
           ) : null}
+          {item.kind === 'note' ? (
+            <>
+              <Text style={styles.fieldLabel}>Nota</Text>
+              <TextInput
+                value={note}
+                onChangeText={setNote}
+                style={[styles.textInput, styles.textArea]}
+                placeholderTextColor={colors.muted}
+                multiline
+              />
+            </>
+          ) : null}
+          {item.kind === 'entry' ? (
+            <>
+              <Text style={styles.hint}>
+                Esta entrada se guardó junto: edita lo que corresponda y guarda — lo que dejes vacío se borra de la entrada.
+              </Text>
+              <Text style={styles.fieldLabel}>Glicemia capilar</Text>
+              <View style={styles.inputWrap}>
+                <TextInput value={entryGlucose} onChangeText={setEntryGlucose} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
+                <Text style={styles.inputUnit}>mg/dL</Text>
+              </View>
+              <Text style={styles.fieldLabel}>Carbohidratos</Text>
+              <View style={styles.inputWrap}>
+                <TextInput value={entryCarbsG} onChangeText={setEntryCarbsG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
+                <Text style={styles.inputUnit}>g</Text>
+              </View>
+              {item.raw.aiEstimatedCarbsG === undefined ? null : (
+                <Text style={styles.hint}>Estimado por IA al crear la entrada: {item.raw.aiEstimatedCarbsG} g (no editable).</Text>
+              )}
+              <Text style={styles.fieldLabel}>Comida</Text>
+              <TextInput
+                value={entryDescription}
+                onChangeText={setEntryDescription}
+                style={[styles.textInput, styles.textArea]}
+                placeholder="¿Qué comiste?"
+                placeholderTextColor={colors.muted}
+                multiline
+              />
+              <View style={styles.fieldRow}>
+                <View style={styles.fieldRowItem}>
+                  <Text style={styles.fieldLabel}>Rápida</Text>
+                  <View style={styles.inputWrap}>
+                    <TextInput value={entryRapidUnits} onChangeText={setEntryRapidUnits} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
+                    <Text style={styles.inputUnit}>U</Text>
+                  </View>
+                </View>
+                <View style={styles.fieldRowItem}>
+                  <Text style={styles.fieldLabel}>Basal</Text>
+                  <View style={styles.inputWrap}>
+                    <TextInput value={entryBasalUnits} onChangeText={setEntryBasalUnits} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
+                    <Text style={styles.inputUnit}>U</Text>
+                  </View>
+                </View>
+              </View>
+              <Text style={styles.fieldLabel}>Nota</Text>
+              <TextInput
+                value={entryNote}
+                onChangeText={setEntryNote}
+                style={[styles.textInput, styles.textArea]}
+                placeholder="Contexto, ejercicio, cómo te sentías…"
+                placeholderTextColor={colors.muted}
+                multiline
+              />
+            </>
+          ) : null}
 
           {error === null ? null : <Text style={styles.error}>{error}</Text>}
           <View style={styles.actionRow}>
@@ -350,6 +497,8 @@ const styles = StyleSheet.create({
   insightBullet: { color: colors.navy, fontSize: 12, lineHeight: 17, marginTop: 6 },
   insightLimitations: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: 8 },
   fieldLabel: { color: colors.navy, fontSize: 12, fontWeight: '800', marginTop: spacing.lg },
+  fieldRow: { flexDirection: 'row', gap: spacing.md },
+  fieldRowItem: { flex: 1 },
   hint: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: spacing.md },
   inputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.sm, borderColor: colors.line, borderWidth: 1, marginTop: 6, paddingHorizontal: spacing.md },
   input: { color: colors.ink, fontSize: 20, fontWeight: '700', flex: 1, paddingVertical: spacing.md, minHeight: 44 },

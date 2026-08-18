@@ -364,6 +364,71 @@ en paralelo a la Fase 6 en vez de esperar:
   (outline, no sólido) junto al de foto — según `docs/UX_GUIDELINES.md`,
   no debe competir visualmente con la acción primaria de la pantalla.
 
+## Mejoras fuera de la numeración (2026-08-18, cont.) — entradas empaquetadas
+
+Verónica probó todo lo de arriba y pidió un cambio de modelo de datos, no
+solo de UI — cita textual: *"lo guardado en una misma instancia, tiene que
+quedar empaquetado junto"*. Antes, una sola sesión de "Nueva entrada" (+)
+con glucosa + carbohidratos + insulina + nota producía N filas
+independientes en el Timeline, cada una editable por separado — exactamente
+lo que reclamó. Además pidió un selector explícito Sensor/Capilar en el
+campo de glucosa (no sabía que sobrescribir el valor precargado ya se
+guardaba distinto a una lectura del sensor), y un botón "Actualizar" en la
+notificación fija para forzar el refresco sin depender solo del ciclo de
+~15 min ni abrir la app.
+
+- **Entradas empaquetadas (`entry_group_id`).** `initializeDatabase`
+  agrega una columna nullable `entry_group_id` a `insulin_events`,
+  `carb_events`, `cgm_readings`, `note_events` y `meal_events` (mismo
+  patrón de migración que ya se usaba para las columnas de
+  `meal_episodes`). `saveUnifiedEntry` genera un id una vez por guardado y
+  lo tagea en cada fila que escribe — incluso una entrada de solo-glucosa,
+  para que si más adelante se le agregan carbohidratos vía edición, se
+  unan al mismo grupo en vez de arrancar uno nuevo desconectado.
+  `getTimeline()` agrupa cualquier fila con `entry_group_id` no nulo en un
+  solo `TimelineItem` (`kind: 'entry'`) con un resumen combinado (ej. "180
+  mg/dL · 45 g · 2 U rápida"); las filas sin grupo (atajos de un dato,
+  importaciones) se siguen mostrando sueltas exactamente como antes — nada
+  de lo viejo cambia de comportamiento. `updateUnifiedEntryGroup()` edita
+  el paquete completo como una unidad: cada campo presente en el formulario
+  se actualiza **en el lugar** (no se borra y recrea — así no se resetea a
+  `collecting` un episodio que ya estaba `complete` solo porque se corrigió
+  la nota), cada campo que el formulario deja vacío se borra del grupo, y
+  cada campo nuevo se inserta y se tagea con el mismo id.
+  `deleteUnifiedEntryGroup()` borra el paquete entero de una vez. Nueva
+  `updateMealCarbsAndNoteRows` (a diferencia de la `updateMealNote` ya
+  existente, que a propósito solo toca la nota) edita carbohidratos y nota
+  juntos para el caso de una entrada empaquetada, propagando el cambio a la
+  fila `carb_events` vinculada con la misma técnica ya usada para el bug de
+  `updateCarbEvent`. **Nota de proceso**: como esta ronda tocó tantas
+  funciones con `db.withTransactionAsync`, varias ya tenían el bug de
+  transacción anidada que este proyecto viene encontrando repetido — se
+  volvió a extraer el núcleo no-transaccional (`deleteMealEventRows`,
+  `updateMealCarbsAndNoteRows` interno) antes de usarlas desde dentro de
+  `updateUnifiedEntryGroup`/`deleteUnifiedEntryGroup`. **Lección para el
+  futuro, ya van tres veces**: cualquier función `save*`/`update*`/`delete*`
+  nueva que pueda necesitar llamarse desde otra operación compuesta debe
+  nacer con su núcleo no-transaccional separado desde el principio, no
+  agregarlo reactivamente cuando aparece el primer caso de uso anidado.
+- **Selector Sensor/Capilar explícito en `EntryModal`.** El campo de
+  glucosa ya guardaba un valor tipeado a mano como `origin:'manual'`
+  (distinto de una lectura de sensor), pero no había ninguna UI que lo
+  hiciera evidente. Ahora hay un control de dos segmentos; "Sensor" solo
+  está habilitado cuando la última lectura viva es genuinamente del sensor
+  (o sintética en modo demo — comparten pestaña, con su propio aviso). Si
+  la última lectura viva resulta ser una medición manual previa (las
+  manuales también cuentan como "vivas"), el campo arranca en blanco en vez
+  de precargar ese valor viejo disfrazado de nuevo.
+- **Botón "Actualizar" en la notificación fija.** Nueva acción de
+  notificación `ACTION_REFRESH` con `opensAppToForeground: false`, manejada
+  por una tarea headless separada (`Notifications.registerTaskAsync`, no
+  `expo-background-task`) definida en `backgroundSync.ts` junto a la tarea
+  periódica — ambas comparten ahora el mismo `runCgmSync()`. Según la
+  documentación de Expo, en Android esto corre en respuesta al toque de la
+  acción aunque la app esté en segundo plano o cerrada del todo, sin
+  necesidad de traerla al frente — mismas limitaciones de mejor esfuerzo
+  que el resto de lo de segundo plano (Doze, ahorro de batería).
+
 ## Verificación por fase
 
 - `pnpm verify` (lint + typecheck + test) antes de cerrar cualquier fase.

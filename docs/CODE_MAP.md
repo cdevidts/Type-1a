@@ -151,6 +151,19 @@ docs/
   `getCorrectionReminderSettings`/`saveCorrectionReminderSettings` (Fase 6)
   guardan la config de alarmas en `app_settings`, con *fallback* al default
   conocido si el JSON guardado es inválido — nunca tiran excepción.
+  `entry_group_id` (columna nullable en insulin/carb/cgm/note/meal, no en
+  `packages/schemas` — es un concepto de UI, no del evento en sí): tagea
+  todo lo escrito por un mismo guardado de "Nueva entrada", para que
+  `getTimeline()` lo agrupe en un solo `TimelineItem` (`kind: 'entry'`) en
+  vez de mostrarlo como filas sueltas. `getUnifiedEntryGroup`/
+  `updateUnifiedEntryGroup`/`deleteUnifiedEntryGroup` leen/editan/borran el
+  paquete completo como una unidad — edición en el lugar cuando la fila ya
+  existe (no borra-y-recrea, para no resetear un episodio `complete` a
+  `collecting`), inserta si es nueva, borra si el formulario la dejó vacía.
+  Toda función `save*`/`update*`/`delete*` que envuelve su propia
+  transacción tiene (o debería tener) un núcleo `*Rows` no-transaccional
+  para poder llamarse desde estas — patrón repetido varias veces esta
+  sesión, ver `docs/ROADMAP_V0.2.md`.
 - `src/episodes.ts` — lógica de asociación comida–insulina en cliente.
   **Gap conocido**: si se edita/elimina una lectura CGM o una dosis de
   insulina que ya alimentó las métricas de un episodio `complete`, esas
@@ -163,8 +176,11 @@ docs/
   apilar una segunda dosis con un solo toque), y la notificación fija de
   acceso rápido (`postQuickEntryNotification`, reutilizada por
   `backgroundSync.ts`).
-- `src/backgroundSync.ts` — tarea real de `expo-background-task` (Fase 7,
-  primera implementación). Abre SQLite por su cuenta (no vía
+- `src/backgroundSync.ts` — dos tareas headless que comparten `runCgmSync()`:
+  la periódica (`expo-background-task`, Fase 7, ~15 min mejor esfuerzo) y la
+  del botón "Actualizar" de la notificación fija
+  (`Notifications.registerTaskAsync`, dispara con `opensAppToForeground:
+  false` aunque la app esté cerrada). Abre SQLite por su cuenta (no vía
   `SQLiteProvider`) porque corre headless; riesgo de dos conexiones
   SQLCipher concurrentes anotado en `docs/ROADMAP_V0.2.md`, no confirmado
   en dispositivo aún.
