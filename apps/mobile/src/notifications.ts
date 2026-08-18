@@ -2,7 +2,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 import { assessFreshness } from '@type1a/domain';
-import type { CGMReading } from '@type1a/schemas';
+import type { CGMProviderStatus, CGMReading } from '@type1a/schemas';
 
 import { formatClock, trendArrow } from './format';
 import type { QuickRoute } from './types';
@@ -11,6 +11,12 @@ export const QUICK_CATEGORY = 'type1a-quick-entry';
 export const ACTION_CARBS = 'quick-carbs';
 export const ACTION_RAPID = 'quick-rapid';
 export const ACTION_CORRECTION = 'quick-correction';
+
+/** app_settings key: whether the sticky quick-entry notification (and the
+ * background sync that keeps it fresh) is turned on. Read by
+ * `backgroundSync.ts`, which has no React context to read component state
+ * from. */
+export const QUICK_ENTRY_ENABLED_KEY = 'quickEntryNotificationEnabled';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -58,36 +64,42 @@ export function quickRouteFromNotificationAction(identifier: string): QuickRoute
   return null;
 }
 
-export async function enableQuickEntryNotification(
+/**
+ * Reposts the sticky quick-entry notification with fresh content. Called
+ * both from the UI (first activation) and headlessly from
+ * `backgroundSync.ts` (periodic refresh) — that's why it never assumes a
+ * live component tree and takes everything it needs as arguments.
+ *
+ * The value is still a snapshot the instant this runs, not a live feed —
+ * background runs are best-effort and can land anywhere from ~15 minutes to
+ * hours apart (see backgroundSync.ts). Stamping the reading's own clock
+ * time, and marking anything that isn't real sensor data or has gone stale,
+ * keeps a snapshot from reading as "current" between refreshes.
+ */
+export async function postQuickEntryNotification(
   reading: CGMReading | null,
   showGlucose: boolean,
-): Promise<boolean> {
-  const permission = await Notifications.requestPermissionsAsync();
-  if (!permission.granted) return false;
+  status?: CGMProviderStatus,
+): Promise<void> {
   await configureNotifications();
-  // This notification is sticky and never refreshes, so the number frozen
-  // into it stops being current the moment it's posted. Stamping it with the
-  // reading's own clock time — and marking anything that isn't real sensor
-  // data — keeps it from reading as a live value. The real fix (a
-  // notification that actually updates) belongs to Fase 7; see
-  // docs/ROADMAP_V0.2.md.
   const marks = reading === null ? [] : [
     reading.origin === 'synthetic' ? 'sintético'
       : reading.origin === 'manual' ? 'manual'
         : reading.origin === 'imported' ? 'importado'
           : null,
-    // This is the one reading path that isn't already freshness-checked
-    // upstream: the notification can be enabled while `latest` is already
-    // old, and being sticky it would then pin that value indefinitely.
     assessFreshness(reading.sourceTimestamp).state !== 'connected' ? 'desactualizado' : null,
   ].filter((mark): mark is string => mark !== null);
-  const glucoseText = showGlucose && reading !== null
-    ? `${reading.glucose} ${trendArrow[reading.trend]} mg/dL · ${formatClock(reading.sourceTimestamp)}${marks.length === 0 ? '' : ` (${marks.join(', ')})`}`
-    : 'Glucosa oculta';
+  const glucoseText = !showGlucose
+    ? 'Glucosa oculta'
+    : reading !== null
+      ? `${reading.glucose} ${trendArrow[reading.trend]} mg/dL · ${formatClock(reading.sourceTimestamp)}${marks.length === 0 ? '' : ` (${marks.join(', ')})`}`
+      : status?.state === 'offline'
+        ? 'Backend sin conexión'
+        : 'Sin lectura reciente';
   await Notifications.scheduleNotificationAsync({
     content: {
       title: `Type 1A · ${glucoseText}`,
-      body: 'Valor del momento en que se activó, no se actualiza solo. Toca para abrir.',
+      body: `Actualizado ${formatClock(new Date().toISOString())}. Se refresca solo cada ~15 min si Android lo permite. Toca para abrir.`,
       categoryIdentifier: QUICK_CATEGORY,
       data: { url: 'type1a://quick/carbs' },
       sticky: true,
@@ -96,6 +108,15 @@ export async function enableQuickEntryNotification(
     },
     trigger: Platform.OS === 'android' ? { channelId: 'quick-entry' } : null,
   });
+}
+
+export async function enableQuickEntryNotification(
+  reading: CGMReading | null,
+  showGlucose: boolean,
+): Promise<boolean> {
+  const permission = await Notifications.requestPermissionsAsync();
+  if (!permission.granted) return false;
+  await postQuickEntryNotification(reading, showGlucose);
   return true;
 }
 

@@ -13,6 +13,14 @@ Esas reglas de seguridad y arquitectura aplican a todo el repo y no son
 negociables — en particular todo lo relacionado a dosis de insulina, IOB,
 y qué puede o no decir la IA.
 
+Antes de construir o tocar cualquier pantalla de `apps/mobile`, lee también
+[`docs/UX_GUIDELINES.md`](docs/UX_GUIDELINES.md) (checklist al inicio del
+documento). Pedido explícito de Verónica (2026-08-18): la app tiene que
+empezar a ser cómoda, no solo funcional — este documento traduce las Apple
+Human Interface Guidelines y buenas prácticas de apps de salud a reglas
+concretas contra el código real del repo. No es opcional para features de UI
+nuevas ni para revisiones de pantallas existentes.
+
 ## Cómo navegar el repo
 
 Este es un monorepo pnpm (`apps/api`, `apps/mobile`, `packages/domain`,
@@ -33,6 +41,8 @@ Otros documentos de contexto en `docs/`:
   LibreLinkUp/Libre Data Share.
 - `HANDOFF_ES.md` — estado de entrega en español.
 - `RESEARCH_SOURCES.md` — fuentes usadas para las decisiones de arriba.
+- `UX_GUIDELINES.md` — reglas de diseño/interacción (HIG + apps de salud)
+  aplicadas a los componentes reales de `apps/mobile/src/components/`.
 - `adr/` — decisiones de arquitectura (local-first, límite de IA).
 
 ## Comandos de desarrollo

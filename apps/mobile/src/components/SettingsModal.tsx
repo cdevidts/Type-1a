@@ -2,12 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { File } from 'expo-file-system';
 import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
-import type { CGMProviderStatus, CGMReading, TherapyProfile } from '@type1a/schemas';
+import type { CGMProviderStatus, TherapyProfile } from '@type1a/schemas';
 
 import { API_BASE_URL, connectFreestyleLibre } from '../api';
 import type { MySugrImportOutcome } from '../db';
 import { parsePositiveNumber } from '../format';
-import { enableQuickEntryNotification } from '../notifications';
 import { colors, radius, spacing } from '../theme';
 import { ModalShell } from './ModalShell';
 
@@ -62,18 +61,17 @@ export function SettingsModal({
   visible,
   onClose,
   status,
-  latest,
   profile,
   therapyConfigured,
   showGlucoseOnLockScreen,
   onPrivacyChange,
   onImportMySugrCsv,
   onSaveProfile,
+  onEnableQuickEntry,
 }: {
   visible: boolean;
   onClose: () => void;
   status: CGMProviderStatus | null;
-  latest: CGMReading | null;
   profile: TherapyProfile;
   /** False while `profile` still holds the placeholders shipped with the app. */
   therapyConfigured: boolean;
@@ -81,6 +79,8 @@ export function SettingsModal({
   onPrivacyChange: (show: boolean) => Promise<void>;
   onImportMySugrCsv: (csvText: string) => Promise<MySugrImportOutcome>;
   onSaveProfile: (profile: TherapyProfile) => Promise<void>;
+  /** Requests notification permission, posts the sticky notification, and — on success — persists it as enabled and starts the background refresh. */
+  onEnableQuickEntry: () => Promise<boolean>;
 }) {
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
@@ -186,9 +186,9 @@ export function SettingsModal({
   async function notifications(): Promise<void> {
     setBusy(true);
     try {
-      const enabled = await enableQuickEntryNotification(latest, showGlucoseOnLockScreen);
+      const enabled = await onEnableQuickEntry();
       setMessage(enabled
-        ? 'Acceso rápido activado. Android muestra hasta tres acciones; basal queda al tocar la app.'
+        ? 'Acceso rápido activado. Se refresca solo cada ~15 min si Android lo permite; basal queda al tocar la app.'
         : 'No se otorgó permiso de notificaciones.');
     } finally {
       setBusy(false);

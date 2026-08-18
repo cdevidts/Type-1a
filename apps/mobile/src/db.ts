@@ -230,6 +230,110 @@ export async function saveCarbEvent(
   );
 }
 
+export async function updateInsulinEvent(
+  db: SQLiteDatabase,
+  id: string,
+  updates: { type: 'rapid' | 'basal'; units: number; insulinName?: string },
+): Promise<void> {
+  const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM insulin_events WHERE id = ?', id);
+  if (row === null) return;
+  const existing = InsulinEventSchema.parse(JSON.parse(row.payload));
+  const next = InsulinEventSchema.parse({
+    ...existing,
+    type: updates.type,
+    units: updates.units,
+    // Assigned unconditionally, not conditionally spread: passing
+    // `undefined` here must actually clear a previously-set name, not leave
+    // `existing.insulinName` untouched.
+    insulinName: updates.insulinName,
+  });
+  await db.runAsync(
+    'UPDATE insulin_events SET type = ?, units = ?, payload = ? WHERE id = ?',
+    next.type,
+    next.units,
+    JSON.stringify(next),
+    id,
+  );
+}
+
+export async function deleteInsulinEvent(db: SQLiteDatabase, id: string): Promise<void> {
+  await db.runAsync('DELETE FROM insulin_events WHERE id = ?', id);
+}
+
+export async function updateCarbEvent(db: SQLiteDatabase, id: string, carbsG: number): Promise<void> {
+  // Re-validate rather than trusting the caller — same reasoning as
+  // saveCarbEvent: this bypasses the SQL CHECK constraint's ability to
+  // surface a rejection since UPDATE, like INSERT OR IGNORE, doesn't throw
+  // in a way the caller can rely on.
+  CarbEventSchema.shape.carbsG.parse(carbsG);
+  await db.runAsync('UPDATE carb_events SET carbs_g = ? WHERE id = ?', carbsG, id);
+}
+
+export async function deleteCarbEvent(db: SQLiteDatabase, id: string): Promise<void> {
+  await db.runAsync('DELETE FROM carb_events WHERE id = ?', id);
+}
+
+export async function updateMealNote(db: SQLiteDatabase, id: string, note: string): Promise<void> {
+  // Only the note is editable here. `confirmedCarbsG` is intentionally NOT
+  // touched from this path — it's shown on this same Timeline item, but it
+  // lives as its own carb_events row (see writeMealWithEpisode) with its own
+  // id, and that row is what the separate "Carbohidratos confirmados"
+  // Timeline item edits. Editing carbs from two different places against
+  // the same underlying row would need a sync step this schema doesn't
+  // support cleanly; keeping one editable path per row avoids it entirely.
+  // AI-estimated fields (aiEstimatedCarbsG, macros) stay immutable — they
+  // are a record of what the AI actually said, not a value to correct.
+  const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM meal_events WHERE id = ?', id);
+  if (row === null) return;
+  const existing = MealEventSchema.parse(JSON.parse(row.payload));
+  const next = MealEventSchema.parse({ ...existing, note });
+  await db.runAsync('UPDATE meal_events SET payload = ? WHERE id = ?', JSON.stringify(next), id);
+}
+
+export async function deleteMealEvent(db: SQLiteDatabase, id: string): Promise<void> {
+  const row = await db.getFirstAsync<{ timestamp: string }>('SELECT timestamp FROM meal_events WHERE id = ?', id);
+  await db.withTransactionAsync(async () => {
+    // ON DELETE CASCADE on meal_episodes.meal_id takes care of the episode.
+    await db.runAsync('DELETE FROM meal_events WHERE id = ?', id);
+    if (row !== null) {
+      // The carb_events row created alongside this meal (writeMealWithEpisode)
+      // has no foreign key back to it — matched by timestamp + source
+      // instead, since they're always written with the same timestamp.
+      // Left behind, it would read as a standalone "Carbohidratos
+      // confirmados" entry for a meal that no longer exists.
+      await db.runAsync(
+        "DELETE FROM carb_events WHERE timestamp = ? AND source = 'meal_confirmed'",
+        row.timestamp,
+      );
+    }
+  });
+}
+
+export async function deleteMealEpisode(db: SQLiteDatabase, id: string): Promise<void> {
+  // Deletes only the episode's tracking (status/metrics/insight) — the meal
+  // event and its confirmed carbs stay. This is "stop following up on this
+  // meal", not "undo logging it"; use deleteMealEvent for the latter.
+  await db.runAsync('DELETE FROM meal_episodes WHERE id = ?', id);
+}
+
+export async function updateManualCGMReading(db: SQLiteDatabase, id: string, glucose: number): Promise<void> {
+  const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM cgm_readings WHERE id = ?', id);
+  if (row === null) return;
+  const existing = CGMReadingSchema.parse(JSON.parse(row.payload));
+  // A sensor, imported, or synthetic reading is a record of what that
+  // source actually reported — correcting it in place would misrepresent
+  // history. Only a hand-typed value is the user's own data to fix.
+  if (existing.origin !== 'manual') {
+    throw new Error('Solo se pueden editar lecturas manuales.');
+  }
+  const next = CGMReadingSchema.parse({ ...existing, glucose });
+  await db.runAsync('UPDATE cgm_readings SET payload = ? WHERE id = ?', JSON.stringify(next), id);
+}
+
+export async function deleteCGMReading(db: SQLiteDatabase, id: string): Promise<void> {
+  await db.runAsync('DELETE FROM cgm_readings WHERE id = ?', id);
+}
+
 /**
  * The writes behind `saveMealWithEpisode`, without opening a transaction of
  * their own — SQLite has no nested transactions, so a caller that is already

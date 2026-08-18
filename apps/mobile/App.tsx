@@ -25,6 +25,10 @@ import type {
 } from '@type1a/schemas';
 
 import { fetchCGMReadings, fetchCGMStatus } from './src/api';
+// Side-effect import: registers the background-task handler at module load,
+// which is required even on the headless launch Android uses to run it with
+// no UI on screen — see backgroundSync.ts.
+import { registerBackgroundSync } from './src/backgroundSync';
 import { CorrectionModal } from './src/components/CorrectionModal';
 import { EntryModal, type UnifiedEntryDraft } from './src/components/EntryModal';
 import { GlucoseCard } from './src/components/GlucoseCard';
@@ -55,6 +59,8 @@ import {
 import { processReadyEpisodes } from './src/episodes';
 import {
   configureNotifications,
+  enableQuickEntryNotification,
+  QUICK_ENTRY_ENABLED_KEY,
   quickRouteFromNotificationAction,
   scheduleEpisodeNotifications,
 } from './src/notifications';
@@ -159,11 +165,18 @@ function Type1AApp() {
   useEffect(() => {
     void configureNotifications();
     void refresh();
+    // Self-heal the background-task registration: it's persisted at the OS
+    // level, but re-checking on launch covers a reinstall, an OS update that
+    // cleared WorkManager state, or a previous registration that silently
+    // failed. registerBackgroundSync() is a no-op if already registered.
+    void getSetting(db, QUICK_ENTRY_ENABLED_KEY).then((enabled) => {
+      if (enabled === 'true') void registerBackgroundSync();
+    });
     const appStateSubscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') void refresh();
     });
     return () => { appStateSubscription.remove(); };
-  }, [refresh]);
+  }, [db, refresh]);
 
   useEffect(() => {
     function handleUrl(url: string): void {
@@ -289,6 +302,18 @@ function Type1AApp() {
     setShowGlucoseOnLockScreen(show);
   }
 
+  async function activateQuickEntry(): Promise<boolean> {
+    const enabled = await enableQuickEntryNotification(latest, showGlucoseOnLockScreen);
+    if (enabled) {
+      // Persisted so backgroundSync.ts (no React context) knows whether to
+      // repost the notification, and so app relaunches can self-heal the
+      // task registration in the effect above.
+      await setSetting(db, QUICK_ENTRY_ENABLED_KEY, 'true');
+      await registerBackgroundSync();
+    }
+    return enabled;
+  }
+
   async function confirmInsulinAssociation(episodeId: string, insulinEventId: string | null): Promise<void> {
     await confirmEpisodeInsulinContext(db, episodeId, insulinEventId);
     await processReadyEpisodes(db);
@@ -400,7 +425,6 @@ function Type1AApp() {
         visible={settingsOpen}
         onClose={() => { setSettingsOpen(false); }}
         status={status}
-        latest={latest}
         profile={profile}
         therapyConfigured={therapyConfigured}
         showGlucoseOnLockScreen={showGlucoseOnLockScreen}
@@ -418,6 +442,7 @@ function Type1AApp() {
           setProfile(nextProfile);
           setTherapyConfigured(true);
         }}
+        onEnableQuickEntry={activateQuickEntry}
       />
       <InsulinAssociationModal
         pending={pendingAssociations[0] ?? null}

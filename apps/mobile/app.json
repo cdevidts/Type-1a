@@ -52,7 +52,8 @@
       ],
       "expo-notifications",
       "expo-secure-store",
-      "expo-file-system"
+      "expo-file-system",
+      "expo-background-task"
     ],
     "extra": {
       "eas": {
