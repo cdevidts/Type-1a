@@ -1,6 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
+import { assessFreshness } from '@type1a/domain';
 import type { CGMReading } from '@type1a/schemas';
 
 import { formatClock, trendArrow } from './format';
@@ -70,11 +71,18 @@ export async function enableQuickEntryNotification(
   // data — keeps it from reading as a live value. The real fix (a
   // notification that actually updates) belongs to Fase 7; see
   // docs/ROADMAP_V0.2.md.
-  const originMark = reading === null || reading.origin === 'real'
-    ? ''
-    : reading.origin === 'synthetic' ? ' (sintético)' : ' (manual)';
+  const marks = reading === null ? [] : [
+    reading.origin === 'synthetic' ? 'sintético'
+      : reading.origin === 'manual' ? 'manual'
+        : reading.origin === 'imported' ? 'importado'
+          : null,
+    // This is the one reading path that isn't already freshness-checked
+    // upstream: the notification can be enabled while `latest` is already
+    // old, and being sticky it would then pin that value indefinitely.
+    assessFreshness(reading.sourceTimestamp).state !== 'connected' ? 'desactualizado' : null,
+  ].filter((mark): mark is string => mark !== null);
   const glucoseText = showGlucose && reading !== null
-    ? `${reading.glucose} ${trendArrow[reading.trend]} mg/dL · ${formatClock(reading.sourceTimestamp)}${originMark}`
+    ? `${reading.glucose} ${trendArrow[reading.trend]} mg/dL · ${formatClock(reading.sourceTimestamp)}${marks.length === 0 ? '' : ` (${marks.join(', ')})`}`
     : 'Glucosa oculta';
   await Notifications.scheduleNotificationAsync({
     content: {

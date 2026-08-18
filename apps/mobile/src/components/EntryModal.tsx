@@ -119,6 +119,8 @@ export function EntryModal({
   const [correctionIncluded, setCorrectionIncluded] = useState(false);
   const [rapidFromCalculator, setRapidFromCalculator] = useState(false);
   const [rapidStale, setRapidStale] = useState(false);
+  /** Set when a calculated dose outlived the reading it came from; cleared only by retyping the units or recalculating. */
+  const [doseNeedsReconfirm, setDoseNeedsReconfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [openedAt, setOpenedAt] = useState<string>(() => new Date().toISOString());
@@ -150,6 +152,7 @@ export function EntryModal({
       setCorrectionIncluded(false);
       setRapidFromCalculator(false);
       setRapidStale(false);
+      setDoseNeedsReconfirm(false);
       setMessage(null);
       setOpenedAt(new Date().toISOString());
     }
@@ -342,13 +345,22 @@ export function EntryModal({
     // save time, and only for a number that came from the calculator — a
     // hand-typed dose is the user's own decision and isn't ours to expire.
     // Nothing typed is discarded: she can retype the units and save.
-    if (rapidFromCalculator && prefilled !== null
-      && assessFreshness(prefilled.sourceTimestamp).state !== 'connected') {
-      setPrefilled(null);
-      setGlucose('');
-      setSuggestion(null);
-      setRapidStale(true);
-      setMessage('La glucosa que originó esta dosis ya no está vigente. Escribe una glucosa actual y vuelve a calcular, o escribe a mano las unidades que te vas a poner.');
+    const doseSourceExpired = rapidFromCalculator && prefilled !== null
+      && assessFreshness(prefilled.sourceTimestamp).state !== 'connected';
+    // `doseNeedsReconfirm` outlives the branch below on purpose. Clearing
+    // `prefilled` there would otherwise make this same condition false on a
+    // second tap, so tapping Guardar again would write the very dose we just
+    // refused. Requiring a keystroke on the units instead of a repeat tap
+    // keeps it possible to log insulin she actually injected — refusing to
+    // record real insulin is its own hazard — while making it a decision.
+    if (doseSourceExpired || doseNeedsReconfirm) {
+      if (doseSourceExpired) {
+        setPrefilled(null);
+        setGlucose('');
+        setSuggestion(null);
+        setDoseNeedsReconfirm(true);
+      }
+      setMessage('La glucosa que originó esta dosis ya no está vigente. Escribe una glucosa actual y vuelve a calcular, o confirma a mano las unidades que te vas a poner (toca el campo Rápida y reescribe el número).');
       return;
     }
     const carbsG = carbs.trim() === '' ? undefined : parseNonNegativeNumber(carbs);
@@ -491,6 +503,7 @@ export function EntryModal({
                   setRapid(String(suggestion.units));
                   setRapidFromCalculator(true);
                   setRapidStale(false);
+                  setDoseNeedsReconfirm(false);
                 }}
               >
                 <Text style={styles.useText}>Usar {suggestion.units} U como rápida</Text>
@@ -507,11 +520,20 @@ export function EntryModal({
           label="Rápida"
           value={rapid}
           unit="U"
-          onChange={(value) => { setRapid(value); setRapidFromCalculator(false); setRapidStale(false); }}
+          onChange={(value) => {
+            setRapid(value);
+            setRapidFromCalculator(false);
+            setRapidStale(false);
+            setDoseNeedsReconfirm(false);
+          }}
         />
         <Field label="Acción prolongada" value={basal} unit="U" onChange={setBasal} />
       </View>
-      {rapidStale ? (
+      {doseNeedsReconfirm ? (
+        <Text style={styles.staleDose}>
+          Esta dosis se calculó con una glucosa que ya no está vigente. Vuelve a calcular, o reescribe el número aquí para confirmar que es el que te vas a poner.
+        </Text>
+      ) : rapidStale ? (
         <Text style={styles.staleDose}>
           Cambiaste los carbohidratos o la glucosa después de copiar esta dosis. Vuelve a calcular o escribe el valor que te vas a poner.
         </Text>
