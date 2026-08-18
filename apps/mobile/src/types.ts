@@ -75,6 +75,17 @@ export interface MealWithEpisode {
   episode: StoredMealEpisode;
 }
 
+/**
+ * What a Timeline edit form can submit, one variant per editable kind.
+ * `episode` has none — its metrics/insight are computed, not user-entered,
+ * so it's delete-only (see TimelineDetailModal / deleteMealEpisode).
+ */
+export type TimelineEditPayload =
+  | { kind: 'insulin'; type: 'rapid' | 'basal'; units: number; insulinName?: string }
+  | { kind: 'carbs'; carbsG: number }
+  | { kind: 'meal'; note: string }
+  | { kind: 'glucose'; glucose: number };
+
 export interface PendingInsulinAssociation {
   episodeId: string;
   mealTimestamp: string;

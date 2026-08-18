@@ -1,6 +1,7 @@
 import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { z } from 'zod';
 
 import { planMySugrImport } from '@type1a/domain';
 import {
@@ -266,7 +267,31 @@ export async function updateCarbEvent(db: SQLiteDatabase, id: string, carbsG: nu
   // surface a rejection since UPDATE, like INSERT OR IGNORE, doesn't throw
   // in a way the caller can rely on.
   CarbEventSchema.shape.carbsG.parse(carbsG);
-  await db.runAsync('UPDATE carb_events SET carbs_g = ? WHERE id = ?', carbsG, id);
+  const row = await db.getFirstAsync<{ timestamp: string; source: string }>(
+    'SELECT timestamp, source FROM carb_events WHERE id = ?',
+    id,
+  );
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('UPDATE carb_events SET carbs_g = ? WHERE id = ?', carbsG, id);
+    // A `meal_confirmed` row is a second copy of the same fact as
+    // `meal_events.payload.confirmedCarbsG` (see writeMealWithEpisode) —
+    // without this, editing this row would fork the two apart, and
+    // everything else that reads "confirmed carbs" for the meal
+    // (episode metrics, the AI insight, the insulin-association prompt,
+    // the "Comida registrada" Timeline item) would keep showing the old
+    // number while this one shows the correction.
+    if (row !== null && row.source === 'meal_confirmed') {
+      const meal = await db.getFirstAsync<{ id: string; payload: string }>(
+        "SELECT id, payload FROM meal_events WHERE timestamp = ?",
+        row.timestamp,
+      );
+      if (meal !== null) {
+        const existing = MealEventSchema.parse(JSON.parse(meal.payload));
+        const next = MealEventSchema.parse({ ...existing, confirmedCarbsG: carbsG });
+        await db.runAsync('UPDATE meal_events SET payload = ? WHERE id = ?', JSON.stringify(next), meal.id);
+      }
+    }
+  });
 }
 
 export async function deleteCarbEvent(db: SQLiteDatabase, id: string): Promise<void> {
@@ -1046,4 +1071,55 @@ export async function getSetting(db: SQLiteDatabase, key: string): Promise<strin
 
 export async function setSetting(db: SQLiteDatabase, key: string, value: string): Promise<void> {
   await db.runAsync('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', key, value);
+}
+
+const MEAL_ALARM_OFFSETS_KEY = 'mealAlarmOffsetsMinutes';
+const CORRECTION_REMINDER_ENABLED_KEY = 'correctionReminderEnabled';
+const CORRECTION_REMINDER_OFFSET_KEY = 'correctionReminderOffsetMinutes';
+
+/** Matches the offsets `scheduleEpisodeNotifications` used before they were configurable. */
+export const DEFAULT_MEAL_ALARM_OFFSETS_MINUTES = [60, 120, 180] as const;
+export const DEFAULT_CORRECTION_REMINDER_OFFSET_MINUTES = 60;
+
+const MinuteOffsetsSchema = z.array(z.number().int().min(1).max(720)).min(1);
+
+export async function getMealAlarmOffsets(db: SQLiteDatabase): Promise<number[]> {
+  const stored = await getSetting(db, MEAL_ALARM_OFFSETS_KEY);
+  if (stored === null) return [...DEFAULT_MEAL_ALARM_OFFSETS_MINUTES];
+  const parsed = MinuteOffsetsSchema.safeParse(JSON.parse(stored));
+  return parsed.success ? parsed.data : [...DEFAULT_MEAL_ALARM_OFFSETS_MINUTES];
+}
+
+export async function saveMealAlarmOffsets(db: SQLiteDatabase, offsets: readonly number[]): Promise<void> {
+  await setSetting(db, MEAL_ALARM_OFFSETS_KEY, JSON.stringify(MinuteOffsetsSchema.parse(offsets)));
+}
+
+export interface CorrectionReminderSettings {
+  enabled: boolean;
+  offsetMinutes: number;
+}
+
+export async function getCorrectionReminderSettings(db: SQLiteDatabase): Promise<CorrectionReminderSettings> {
+  const [enabled, offset] = await Promise.all([
+    getSetting(db, CORRECTION_REMINDER_ENABLED_KEY),
+    getSetting(db, CORRECTION_REMINDER_OFFSET_KEY),
+  ]);
+  const parsedOffset = offset === null ? null : Number(offset);
+  return {
+    enabled: enabled === 'true',
+    offsetMinutes: parsedOffset !== null && Number.isInteger(parsedOffset) && parsedOffset >= 1 && parsedOffset <= 720
+      ? parsedOffset
+      : DEFAULT_CORRECTION_REMINDER_OFFSET_MINUTES,
+  };
+}
+
+export async function saveCorrectionReminderSettings(
+  db: SQLiteDatabase,
+  settings: CorrectionReminderSettings,
+): Promise<void> {
+  const offsetMinutes = z.number().int().min(1).max(720).parse(settings.offsetMinutes);
+  await db.withTransactionAsync(async () => {
+    await setSetting(db, CORRECTION_REMINDER_ENABLED_KEY, String(settings.enabled));
+    await setSetting(db, CORRECTION_REMINDER_OFFSET_KEY, String(offsetMinutes));
+  });
 }

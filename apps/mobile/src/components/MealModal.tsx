@@ -5,7 +5,7 @@ import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-nativ
 
 import type { MealAnalysisResult } from '@type1a/schemas';
 
-import { analyzeMealImage, MobileApiError } from '../api';
+import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api';
 import { parseNonNegativeNumber } from '../format';
 import { colors, radius, spacing } from '../theme';
 import { ModalShell } from './ModalShell';
@@ -88,6 +88,27 @@ export function MealModal({
     }
   }
 
+  async function analyzeFromDescription(): Promise<void> {
+    setMessage(null);
+    if (description.trim() === '') {
+      setMessage('Escribe qué comiste antes de estimar por texto.');
+      return;
+    }
+    setBusy(true);
+    setAnalysis(null);
+    try {
+      const nextAnalysis = await analyzeMealDescription(description.trim());
+      setAnalysis(nextAnalysis);
+      setMessage('Estimación lista a partir del texto (sin foto, así que la incertidumbre es mayor). Escribe tú los carbohidratos que confirmas.');
+    } catch (error) {
+      setMessage(error instanceof MobileApiError
+        ? `${error.message} Continúa con el ingreso manual.`
+        : 'No se pudo estimar desde el texto. Continúa con el ingreso manual.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function confirm(): Promise<void> {
     const parsed = parseNonNegativeNumber(confirmedCarbs);
     if (parsed === null || parsed > 500) {
@@ -131,6 +152,9 @@ export function MealModal({
       <Pressable style={[styles.cameraButton, busy && styles.disabled]} disabled={busy} onPress={() => { void captureAndAnalyze(); }}>
         <Text style={styles.cameraIcon}>◎</Text>
         <Text style={styles.cameraText}>{busy ? 'Procesando imagen…' : 'Tomar foto y estimar'}</Text>
+      </Pressable>
+      <Pressable style={[styles.textEstimateButton, busy && styles.disabled]} disabled={busy} onPress={() => { void analyzeFromDescription(); }}>
+        <Text style={styles.textEstimateText}>Estimar por texto, sin foto</Text>
       </Pressable>
 
       {imageUri === null ? null : <Image source={{ uri: imageUri }} style={styles.preview} resizeMode="cover" />}
@@ -193,6 +217,8 @@ const styles = StyleSheet.create({
   cameraButton: { backgroundColor: colors.navy, borderRadius: radius.md, padding: spacing.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: spacing.lg },
   cameraIcon: { color: '#FFFFFF', fontSize: 24, marginRight: spacing.sm },
   cameraText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
+  textEstimateButton: { borderColor: colors.navy, borderWidth: 1, borderRadius: radius.md, padding: spacing.md, alignItems: 'center', marginTop: spacing.sm, minHeight: 44, justifyContent: 'center' },
+  textEstimateText: { color: colors.navy, fontSize: 13, fontWeight: '700' },
   preview: { width: '100%', height: 220, borderRadius: radius.md, marginTop: spacing.md },
   manualBox: { backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.line, padding: spacing.md, marginTop: spacing.md },
   manualTitle: { color: colors.ink, fontSize: 14, fontWeight: '700' },

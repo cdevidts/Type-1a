@@ -27,11 +27,18 @@ const ReadingsQuerySchema = z.object({
   to: z.iso.datetime({ offset: true }),
 });
 
-const MealAnalysisBodySchema = z.object({
-  imageBase64: z.string().min(16).max(10_000_000),
-  mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']),
-  description: z.string().trim().max(500).optional(),
-});
+const MealAnalysisBodySchema = z.union([
+  z.object({
+    imageBase64: z.string().min(16).max(10_000_000),
+    mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']),
+    description: z.string().trim().max(500).optional(),
+  }),
+  // Text-only path: no photo, just a description. `description` is required
+  // here since it's the only signal the model has.
+  z.object({
+    description: z.string().trim().min(1).max(500),
+  }),
+]);
 
 const JunctionLinkBodySchema = z.object({
   email: z.email(),
@@ -170,12 +177,16 @@ export async function buildApp(config: AppConfig, dependencies: AppDependencies 
       return reply.status(503).send({ error: { code: 'ai_not_configured', message: 'El análisis IA no está configurado; usa el ingreso manual.', retryable: false } });
     }
     const body = MealAnalysisBodySchema.safeParse(request.body);
-    if (!body.success) return reply.status(400).send({ error: { code: 'invalid_image', message: 'La imagen o su descripción no son válidas.', retryable: false } });
-    return mealVision.analyze({
-      imageBase64: body.data.imageBase64,
-      mimeType: body.data.mimeType,
-      ...(body.data.description === undefined ? {} : { description: body.data.description }),
-    });
+    if (!body.success) return reply.status(400).send({ error: { code: 'invalid_meal_input', message: 'Falta una imagen válida o una descripción de texto.', retryable: false } });
+    return mealVision.analyze(
+      'imageBase64' in body.data
+        ? {
+            imageBase64: body.data.imageBase64,
+            mimeType: body.data.mimeType,
+            ...(body.data.description === undefined ? {} : { description: body.data.description }),
+          }
+        : { description: body.data.description },
+    );
   });
 
   app.post('/v1/ai/glucose-insight', async (request, reply) => {

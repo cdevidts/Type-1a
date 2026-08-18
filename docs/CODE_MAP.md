@@ -101,11 +101,15 @@ docs/
 
 ## `packages/ai` — IA detrás del backend, nunca en mobile
 
-- `abacus.ts` — `AbacusRouteLLMClient`, `AbacusMealVisionService` (visión de
-  comida → macros + incertidumbre), `AbacusGlucoseInsightService` (insight
+- `abacus.ts` — `AbacusRouteLLMClient`, `AbacusMealVisionService` (foto → macros
+  + incertidumbre, y desde 2026-08-18 también **solo texto** — `MealVisionInput`
+  es una unión `{imageBase64,mimeType,description?}` | `{description}`, con
+  prompt de sistema propio para el caso sin foto que pide confianza más baja
+  e incertidumbre siempre explícita), `AbacusGlucoseInsightService` (insight
   descriptivo post-comida). Las claves viven solo en `apps/api` — nunca en
   el bundle de `apps/mobile` (ver AGENTS.md § Privacy and secrets).
-- `prompts.ts` — prompts usados por los servicios de arriba.
+- `prompts.ts` — `mealVisionSystemPrompt` (con foto) y `mealTextSystemPrompt`
+  (sin foto) para `AbacusMealVisionService`, más el de glucose-insight.
 - Toda salida de estos servicios pasa por `containsTherapyRecommendation()`
   (`packages/domain`) antes de llegar al usuario.
 
@@ -136,17 +140,46 @@ docs/
   `saveImportedMealEvent` en vez de `saveMealWithEpisode` — a propósito no
   crean fila en `meal_episodes`, para que el tracker de episodios en vivo
   (`episodes.ts`) nunca los procese ni dispare llamadas de IA sobre
-  historial antiguo.
+  historial antiguo. `update*`/`delete*` por tabla (Timeline editable,
+  2026-08-18): cada uno re-valida con el mismo Zod schema del `save*`
+  correspondiente antes de escribir. Ojo con `confirmedCarbsG` — vive
+  duplicado en `meal_events.payload` y en su propia fila de `carb_events`
+  (`source:'meal_confirmed'`); `updateCarbEvent` propaga a ambos lados por
+  `timestamp` para no desincronizarlos (bug real que encontró el
+  `domain-safety-reviewer` la primera vez que se implementó esto — no
+  quitar esa propagación). `getMealAlarmOffsets`/`saveMealAlarmOffsets` y
+  `getCorrectionReminderSettings`/`saveCorrectionReminderSettings` (Fase 6)
+  guardan la config de alarmas en `app_settings`, con *fallback* al default
+  conocido si el JSON guardado es inválido — nunca tiran excepción.
 - `src/episodes.ts` — lógica de asociación comida–insulina en cliente.
-- `src/notifications.ts` — notificaciones locales de episodios.
-- `src/components/` — `Timeline`, `TimelineDetailModal`, `GlucoseCard`,
+  **Gap conocido**: si se edita/elimina una lectura CGM o una dosis de
+  insulina que ya alimentó las métricas de un episodio `complete`, esas
+  métricas no se recalculan (`processReadyEpisodes` solo toca episodios
+  `collecting`) — ver `docs/ROADMAP_V0.2.md` § "Mejoras fuera de la
+  numeración".
+- `src/notifications.ts` — notificaciones locales: episodios de comida
+  (offsets configurables, Fase 6), recordatorio post-corrección (Fase 6,
+  opt-in, sin botones de acción rápida a propósito — no se quiere facilitar
+  apilar una segunda dosis con un solo toque), y la notificación fija de
+  acceso rápido (`postQuickEntryNotification`, reutilizada por
+  `backgroundSync.ts`).
+- `src/backgroundSync.ts` — tarea real de `expo-background-task` (Fase 7,
+  primera implementación). Abre SQLite por su cuenta (no vía
+  `SQLiteProvider`) porque corre headless; riesgo de dos conexiones
+  SQLCipher concurrentes anotado en `docs/ROADMAP_V0.2.md`, no confirmado
+  en dispositivo aún.
+- `src/components/` — `Timeline`, `TimelineDetailModal` (editar/eliminar
+  por tipo, ver `db.ts` arriba para qué es editable), `GlucoseCard`,
   `GlucoseChart`, `EntryModal`, `CorrectionModal`, `MealModal`,
   `InsulinAssociationModal`, `NumericEntryModal`, `SettingsModal`,
   `ModalShell` (shell común de modal). `EntryModal` es la entrada
   principal estilo MySugr (glucosa + comida + carbos + insulina + nota en
-  un solo registro, con calculadora de dosis); los demás modales de
-  registro quedan como atajos de un solo dato.
-- `src/theme.ts`, `src/format.ts`, `src/types.ts` — soporte de UI.
+  un solo registro, con calculadora de dosis, y estimación de IA por foto
+  **o por texto**); los demás modales de registro quedan como atajos de un
+  solo dato. Antes de tocar cualquiera de estos, leer
+  `docs/UX_GUIDELINES.md`.
+- `src/theme.ts`, `src/format.ts` (incl. `parseMinuteOffsets` para las
+  alarmas), `src/types.ts` (incl. `TimelineEditPayload`) — soporte de UI.
 - `AGENTS.md` propio — recuerda que Expo cambió de versión (SDK 57): leer
   docs versionados antes de escribir código Expo nuevo.
 
@@ -166,6 +199,7 @@ docs/
 | Cualquier prompt o salida de IA | `AGENTS.md` § Safety boundaries + `packages/domain/src/ai-safety.ts` |
 | Un proveedor CGM nuevo o existente | `packages/cgm/src/provider.ts` + `docs/CGM_INTEGRATION_DECISION.md` |
 | Variables de entorno / secrets | `apps/api/src/config.ts` + `.env.example` + `AGENTS.md` § Privacy and secrets |
-| UI de mobile | `apps/mobile/src/components/` + `apps/mobile/AGENTS.md` (versión Expo) |
+| UI de mobile | `apps/mobile/src/components/` + `apps/mobile/AGENTS.md` (versión Expo) + `docs/UX_GUIDELINES.md` |
+| Notificaciones/alarmas | `apps/mobile/src/notifications.ts` + `apps/mobile/src/backgroundSync.ts` |
 | Contrato de datos entre api/mobile | `packages/schemas/src/index.ts` |
 | Contexto de producto / alcance MVP | `docs/MVP_IMPLEMENTATION_BRIEF.md`, `docs/HANDOFF_ES.md` |

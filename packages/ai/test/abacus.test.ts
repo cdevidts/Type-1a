@@ -4,6 +4,8 @@ import {
   AbacusGlucoseInsightService,
   AbacusMealVisionService,
   AbacusRouteLLMClient,
+  MEAL_TEXT_PROMPT_VERSION,
+  mealTextSystemPrompt,
   sanitizeForStrictJsonSchema,
 } from '../src/index.js';
 
@@ -51,6 +53,45 @@ describe('Abacus RouteLLM services', () => {
     expect(authorization).toBe('Bearer server-secret');
     expect(body).toContain('json_schema');
     expect(result.totals.carbsG).toBe(50);
+  });
+
+  it('analyzes from a text description alone, with no image block in the request', async () => {
+    let sentMessages: unknown[] = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      sentMessages = (JSON.parse(String(init?.body)) as { messages: unknown[] }).messages;
+      return routeResponse({
+        foods: [
+          {
+            name: 'sopaipillas',
+            estimatedGrams: null,
+            carbsG: 40,
+            proteinG: 3,
+            fatG: 8,
+            fiberG: 1,
+            caloriesKcal: 260,
+            confidence: 0.3,
+          },
+        ],
+        uncertaintyNotes: ['No hay foto: la porción es una suposición.'],
+      });
+    };
+    const service = new AbacusMealVisionService(
+      new AbacusRouteLLMClient({ apiKey: 'server-secret', fetcher }),
+    );
+    const result = await service.analyze({ description: 'tres sopaipillas con pebre' });
+
+    expect(result.totals.carbsG).toBe(40);
+    // The user message content must not contain an image_url block.
+    const userMessage = sentMessages[1] as { content: unknown[] };
+    expect(userMessage.content.some((part) => (part as { type: string }).type === 'image_url')).toBe(false);
+    // Must use the text-only system prompt (lower-confidence, mandatory
+    // uncertainty note), not the vision one — and tag the result so
+    // downstream code can tell which path produced it. A future refactor
+    // that silently swapped or dropped this branching would otherwise pass
+    // every other assertion here.
+    const systemMessage = sentMessages[0] as { content: string };
+    expect(systemMessage.content).toBe(mealTextSystemPrompt);
+    expect(result.analysisId.startsWith(MEAL_TEXT_PROMPT_VERSION)).toBe(true);
   });
 
   it('strips $schema/minItems/maxItems/minimum/maximum before sending, but still enforces bounds on the response', async () => {

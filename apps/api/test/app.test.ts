@@ -78,4 +78,46 @@ describe('Type 1A API', () => {
     expect(meal.json().totals.carbsG).toBe(25);
     expect(insight.statusCode).toBe(200);
   });
+
+  it('accepts a text-only meal description with no image', async () => {
+    let receivedInput: unknown = null;
+    const mealVisionService: MealVisionService = {
+      analyze: async (input) => {
+        receivedInput = input;
+        return {
+          analysisId: 'text-1',
+          model: 'test',
+          estimate: {
+            foods: [{ name: 'sopaipillas', estimatedGrams: null, carbsG: 40, proteinG: 3, fatG: 8, fiberG: 1, caloriesKcal: 260, confidence: 0.3 }],
+            uncertaintyNotes: ['No hay foto.'],
+          },
+          totals: { carbsG: 40, proteinG: 3, fatG: 8, fiberG: 1, caloriesKcal: 260 },
+        };
+      },
+    };
+    const app = await buildApp(testConfig(), { mealVisionService });
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/ai/meal-analysis',
+      payload: { description: 'tres sopaipillas con pebre' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().totals.carbsG).toBe(40);
+    expect(receivedInput).toEqual({ description: 'tres sopaipillas con pebre' });
+  });
+
+  it('rejects a meal-analysis body with neither an image nor a description', async () => {
+    const app = await buildApp(testConfig(), {
+      mealVisionService: { analyze: async () => { throw new Error('should not be called'); } },
+    });
+    apps.push(app);
+
+    const response = await app.inject({ method: 'POST', url: '/v1/ai/meal-analysis', payload: {} });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe('invalid_meal_input');
+  });
 });

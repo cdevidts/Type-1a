@@ -94,6 +94,15 @@ export async function analyzeMealImage(input: {
   return MealAnalysisResultSchema.parse(payload);
 }
 
+/** Same endpoint, no photo — just a typed description of what was eaten. */
+export async function analyzeMealDescription(description: string): Promise<MealAnalysisResult> {
+  const payload = await requestJson('/v1/ai/meal-analysis', {
+    method: 'POST',
+    body: JSON.stringify({ description }),
+  });
+  return MealAnalysisResultSchema.parse(payload);
+}
+
 export async function fetchGlucoseInsight(metrics: MealEpisodeMetrics): Promise<GlucoseInsight> {
   const payload = await requestJson('/v1/ai/glucose-insight', {
     method: 'POST',

@@ -12,8 +12,10 @@ import { z } from 'zod';
 
 import {
   GLUCOSE_INSIGHT_PROMPT_VERSION,
+  MEAL_TEXT_PROMPT_VERSION,
   MEAL_VISION_PROMPT_VERSION,
   glucoseInsightSystemPrompt,
+  mealTextSystemPrompt,
   mealVisionSystemPrompt,
 } from './prompts.js';
 
@@ -150,11 +152,13 @@ export class AbacusRouteLLMClient {
   }
 }
 
-export interface MealVisionInput {
-  imageBase64: string;
-  mimeType: 'image/jpeg' | 'image/png' | 'image/webp';
-  description?: string;
-}
+export type MealVisionInput =
+  | { imageBase64: string; mimeType: 'image/jpeg' | 'image/png' | 'image/webp'; description?: string }
+  // Text-only: no photo. Verónica asked for this explicitly — being able to
+  // type what she ate instead of always needing a picture. `description` is
+  // required here (there's nothing else for the model to go on), unlike the
+  // image case where it's optional context.
+  | { description: string };
 
 export interface MealVisionService {
   analyze(input: MealVisionInput): Promise<MealAnalysisResult>;
@@ -164,26 +168,26 @@ export class AbacusMealVisionService implements MealVisionService {
   public constructor(private readonly client: AbacusRouteLLMClient) {}
 
   public async analyze(input: MealVisionInput): Promise<MealAnalysisResult> {
+    const hasImage = 'imageBase64' in input;
+    const content: unknown[] = [
+      {
+        type: 'text',
+        text: hasImage
+          ? (input.description?.trim()
+            ? `Analiza la comida. Contexto del usuario: ${input.description.trim()}`
+            : 'Analiza la comida visible y explicita la incertidumbre de porción.')
+          : `Analiza esta comida a partir únicamente de la descripción del usuario, sin foto. Descripción: ${input.description.trim()}`,
+      },
+    ];
+    if (hasImage) {
+      content.push({ type: 'image_url', image_url: { url: `data:${input.mimeType};base64,${input.imageBase64}` } });
+    }
     const completion = await this.client.structuredCompletion({
       schemaName: 'type1a_meal_analysis',
       schema: mealAnalysisJsonSchema,
       messages: [
-        { role: 'system', content: mealVisionSystemPrompt },
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: input.description?.trim()
-                ? `Analiza la comida. Contexto del usuario: ${input.description.trim()}`
-                : 'Analiza la comida visible y explicita la incertidumbre de porción.',
-            },
-            {
-              type: 'image_url',
-              image_url: { url: `data:${input.mimeType};base64,${input.imageBase64}` },
-            },
-          ],
-        },
+        { role: 'system', content: hasImage ? mealVisionSystemPrompt : mealTextSystemPrompt },
+        { role: 'user', content },
       ],
     });
     const estimate = MealAnalysisSchema.safeParse(completion.content);
@@ -195,7 +199,7 @@ export class AbacusMealVisionService implements MealVisionService {
     }
 
     return {
-      analysisId: `${MEAL_VISION_PROMPT_VERSION}:${crypto.randomUUID()}`,
+      analysisId: `${hasImage ? MEAL_VISION_PROMPT_VERSION : MEAL_TEXT_PROMPT_VERSION}:${crypto.randomUUID()}`,
       model: completion.model,
       estimate: estimate.data,
       totals: totalFoodEstimates(estimate.data.foods),

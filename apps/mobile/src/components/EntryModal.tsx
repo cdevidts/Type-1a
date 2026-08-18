@@ -6,7 +6,7 @@ import { AppState, Image, Pressable, StyleSheet, Text, TextInput, View } from 'r
 import { assessFreshness, calculateCorrection, calculateMealBolus, isSensorReading } from '@type1a/domain';
 import type { CGMReading, MealAnalysisResult, TherapyProfile } from '@type1a/schemas';
 
-import { analyzeMealImage, MobileApiError } from '../api';
+import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api';
 import { formatDayTime, parseNonNegativeNumber, parsePositiveNumber } from '../format';
 import { colors, radius, spacing } from '../theme';
 import { ModalShell } from './ModalShell';
@@ -224,6 +224,27 @@ export function EntryModal({
       setMessage(error instanceof MobileApiError
         ? `${error.message} Continúa con el ingreso manual.`
         : 'No se pudo analizar la foto. Continúa con el ingreso manual.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function analyzeFromDescription(): Promise<void> {
+    setMessage(null);
+    if (description.trim() === '') {
+      setMessage('Escribe qué comiste antes de estimar por texto.');
+      return;
+    }
+    setBusy(true);
+    setAnalysis(null);
+    try {
+      const nextAnalysis = await analyzeMealDescription(description.trim());
+      setAnalysis(nextAnalysis);
+      setMessage('Estimación lista a partir del texto (sin foto, así que la incertidumbre es mayor). Escribe tú los carbohidratos que confirmas.');
+    } catch (error) {
+      setMessage(error instanceof MobileApiError
+        ? `${error.message} Continúa con el ingreso manual.`
+        : 'No se pudo estimar desde el texto. Continúa con el ingreso manual.');
     } finally {
       setBusy(false);
     }
@@ -457,6 +478,9 @@ export function EntryModal({
       <Pressable style={[styles.cameraButton, busy && styles.disabled]} disabled={busy} onPress={() => { void captureAndAnalyze(); }}>
         <Text style={styles.cameraText}>{busy ? 'Procesando…' : '◎  Foto para estimar carbohidratos'}</Text>
       </Pressable>
+      <Pressable style={[styles.textEstimateButton, busy && styles.disabled]} disabled={busy} onPress={() => { void analyzeFromDescription(); }}>
+        <Text style={styles.textEstimateText}>Estimar por texto, sin foto</Text>
+      </Pressable>
       {imageUri === null ? null : <Image source={{ uri: imageUri }} style={styles.preview} resizeMode="cover" />}
       {analysis === null ? null : (
         <View style={styles.analysisBox}>
@@ -580,8 +604,14 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: spacing.md },
   hint: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: 6 },
   description: { backgroundColor: colors.surface, color: colors.ink, borderColor: colors.line, borderWidth: 1, borderRadius: radius.sm, minHeight: 64, padding: spacing.md, marginTop: spacing.sm, textAlignVertical: 'top' },
-  cameraButton: { backgroundColor: colors.navy, borderRadius: radius.sm, padding: spacing.md, alignItems: 'center', marginTop: spacing.sm },
+  cameraButton: { backgroundColor: colors.navy, borderRadius: radius.sm, padding: spacing.md, alignItems: 'center', marginTop: spacing.sm, minHeight: 44, justifyContent: 'center' },
   cameraText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+  // Deliberately de-emphasized (outline, not solid navy like cameraButton):
+  // this sheet already has several actions competing for attention, and the
+  // photo estimate is the primary way to get an AI estimate — text is the
+  // fallback for when a photo isn't practical, not an equal alternative.
+  textEstimateButton: { borderColor: colors.navy, borderWidth: 1, borderRadius: radius.sm, padding: spacing.md, alignItems: 'center', marginTop: spacing.sm, minHeight: 44, justifyContent: 'center' },
+  textEstimateText: { color: colors.navy, fontSize: 13, fontWeight: '700' },
   preview: { width: '100%', height: 180, borderRadius: radius.md, marginTop: spacing.sm },
   analysisBox: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.sm, borderColor: colors.line, borderWidth: 1 },
   analysisTitle: { color: colors.orange, fontSize: 14, fontWeight: '800' },

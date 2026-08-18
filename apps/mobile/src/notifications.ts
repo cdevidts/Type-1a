@@ -41,6 +41,11 @@ export async function configureNotifications(): Promise<void> {
       importance: Notifications.AndroidImportance.DEFAULT,
       showBadge: false,
     });
+    await Notifications.setNotificationChannelAsync('correction-reminders', {
+      name: 'Recordatorios de corrección',
+      importance: Notifications.AndroidImportance.DEFAULT,
+      showBadge: false,
+    });
   }
   await Notifications.setNotificationCategoryAsync(QUICK_CATEGORY, [
     { identifier: ACTION_CARBS, buttonTitle: '+ Carbos' },
@@ -120,21 +125,33 @@ export async function enableQuickEntryNotification(
   return true;
 }
 
-export async function scheduleEpisodeNotifications(episodeId: string, mealTimestamp: string): Promise<void> {
+/**
+ * `offsetsMinutes` — Fase 6: these used to be hardcoded to [60, 120, 180].
+ * Now they're whatever Ajustes has saved (see `getMealAlarmOffsets` in
+ * db.ts, default unchanged: 60/120/180). The largest offset is treated as
+ * "episode ready to review"; the rest are just interim check-ins.
+ */
+export async function scheduleEpisodeNotifications(
+  episodeId: string,
+  mealTimestamp: string,
+  offsetsMinutes: readonly number[],
+): Promise<void> {
   let permissions = await Notifications.getPermissionsAsync();
   if (!permissions.granted && permissions.canAskAgain) {
     permissions = await Notifications.requestPermissionsAsync();
   }
   if (!permissions.granted) return;
   const mealMs = Date.parse(mealTimestamp);
-  const moments = [60, 120, 180] as const;
-  for (const minutes of moments) {
+  const sorted = [...offsetsMinutes].sort((a, b) => a - b);
+  const last = sorted.at(-1);
+  for (const minutes of sorted) {
     const date = new Date(mealMs + minutes * 60_000);
     if (date.getTime() <= Date.now()) continue;
+    const isFinal = minutes === last;
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: minutes === 180 ? 'Episodio de comida listo para revisar' : `Control postcomida +${minutes}`,
-        body: minutes === 180
+        title: isFinal ? 'Episodio de comida listo para revisar' : `Control postcomida +${minutes}`,
+        body: isFinal
           ? 'Abre Type 1A para calcular el resumen con las lecturas disponibles.'
           : 'Type 1A seguirá reuniendo lecturas; no sustituye las alarmas del sensor.',
         data: { url: `type1a://episode/${episodeId}` },
@@ -146,4 +163,38 @@ export async function scheduleEpisodeNotifications(episodeId: string, mealTimest
       },
     });
   }
+}
+
+/**
+ * Fase 6: the same idea as `scheduleEpisodeNotifications`, for corrections.
+ * This is a reminder to go measure/check in, not a recalculated dose — it
+ * carries no glucose value and computes nothing. Opt-in (see
+ * `getCorrectionReminderSettings` in db.ts), off by default.
+ */
+export async function scheduleCorrectionReminder(timestamp: string, offsetMinutes: number): Promise<void> {
+  let permissions = await Notifications.getPermissionsAsync();
+  if (!permissions.granted && permissions.canAskAgain) {
+    permissions = await Notifications.requestPermissionsAsync();
+  }
+  if (!permissions.granted) return;
+  const date = new Date(Date.parse(timestamp) + offsetMinutes * 60_000);
+  if (date.getTime() <= Date.now()) return;
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: `Control tras corrección +${offsetMinutes} min`,
+      body: 'Revisa tu glucosa. Type 1A no calcula insulina activa: si hace poco te corregiste, tenlo en cuenta antes de una nueva dosis.',
+      // Deliberately no `categoryIdentifier`/quick-action buttons here —
+      // this is a checkpoint before a possible second dose, not a shortcut
+      // to log one. Tapping opens the app to Corrección, which already
+      // shows recent rapid-insulin context, but doesn't offer a one-tap
+      // "+Rápida" action the way the quick-entry notification does.
+      data: { url: 'type1a://quick/correction' },
+      ...(Platform.OS === 'android' ? { priority: Notifications.AndroidNotificationPriority.DEFAULT } : {}),
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date,
+      ...(Platform.OS === 'android' ? { channelId: 'correction-reminders' } : {}),
+    },
+  });
 }

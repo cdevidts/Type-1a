@@ -44,3 +44,23 @@ export function parseNonNegativeNumber(value: string): number | null {
   const parsed = Number(value.replace(',', '.').trim());
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
+
+/**
+ * Parses a comma-separated list of alarm offsets in minutes, e.g. "60, 120,
+ * 180". Each value must be a whole number of minutes between 1 and 720
+ * (12 h) — a bound generous enough for any real post-meal/post-correction
+ * check-in, tight enough to reject an obvious typo (like an extra zero).
+ * Returns null on any invalid entry or an empty list, so the caller can
+ * reject the whole edit rather than silently drop the bad ones.
+ */
+export function parseMinuteOffsets(value: string): number[] | null {
+  const parts = value.split(',').map((part) => part.trim()).filter((part) => part !== '');
+  if (parts.length === 0) return null;
+  const offsets: number[] = [];
+  for (const part of parts) {
+    const parsed = Number(part);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 720) return null;
+    offsets.push(parsed);
+  }
+  return offsets;
+}

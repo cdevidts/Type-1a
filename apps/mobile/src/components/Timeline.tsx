@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { formatDayTime } from '../format';
 import { colors, radius, spacing } from '../theme';
-import type { TimelineItem } from '../types';
+import type { TimelineEditPayload, TimelineItem } from '../types';
 import { TimelineDetailModal } from './TimelineDetailModal';
 
 const toneColors = {
@@ -16,7 +16,15 @@ const toneColors = {
   muted: colors.muted,
 } as const;
 
-export function Timeline({ items }: { items: readonly TimelineItem[] }) {
+export function Timeline({
+  items,
+  onSaveItem,
+  onDeleteItem,
+}: {
+  items: readonly TimelineItem[];
+  onSaveItem: (item: TimelineItem, payload: TimelineEditPayload) => Promise<void>;
+  onDeleteItem: (item: TimelineItem) => Promise<void>;
+}) {
   const [selected, setSelected] = useState<TimelineItem | null>(null);
 
   return (
@@ -49,7 +57,12 @@ export function Timeline({ items }: { items: readonly TimelineItem[] }) {
           </View>
         </Pressable>
       ))}
-      <TimelineDetailModal item={selected} onClose={() => { setSelected(null); }} />
+      <TimelineDetailModal
+        item={selected}
+        onClose={() => { setSelected(null); }}
+        onSave={onSaveItem}
+        onDelete={onDeleteItem}
+      />
     </View>
   );
 }

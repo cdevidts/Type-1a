@@ -40,6 +40,15 @@ import { Timeline } from './src/components/Timeline';
 import {
   getCGMReadings,
   confirmEpisodeInsulinContext,
+  deleteCarbEvent,
+  deleteCGMReading,
+  deleteInsulinEvent,
+  deleteMealEpisode,
+  deleteMealEvent,
+  DEFAULT_CORRECTION_REMINDER_OFFSET_MINUTES,
+  DEFAULT_MEAL_ALARM_OFFSETS_MINUTES,
+  getCorrectionReminderSettings,
+  getMealAlarmOffsets,
   getPendingInsulinAssociations,
   getRecentRapidInsulin,
   getSetting,
@@ -49,12 +58,19 @@ import {
   initializeDatabase,
   isTherapyConfigured,
   saveCarbEvent,
+  saveCorrectionReminderSettings,
   saveInsulinEvent,
+  saveMealAlarmOffsets,
   saveMealWithEpisode,
   saveTherapyProfile,
   saveUnifiedEntry,
   setSetting,
+  updateCarbEvent,
+  updateInsulinEvent,
+  updateManualCGMReading,
+  updateMealNote,
   upsertCGMReadings,
+  type CorrectionReminderSettings,
 } from './src/db';
 import { processReadyEpisodes } from './src/episodes';
 import {
@@ -62,10 +78,11 @@ import {
   enableQuickEntryNotification,
   QUICK_ENTRY_ENABLED_KEY,
   quickRouteFromNotificationAction,
+  scheduleCorrectionReminder,
   scheduleEpisodeNotifications,
 } from './src/notifications';
 import { colors, radius, spacing } from './src/theme';
-import type { PendingInsulinAssociation, QuickRoute, TimelineItem } from './src/types';
+import type { PendingInsulinAssociation, QuickRoute, TimelineEditPayload, TimelineItem } from './src/types';
 
 const EMPTY_PROFILE: TherapyProfile = {
   glucoseUnit: 'mg/dL',
@@ -93,6 +110,11 @@ function Type1AApp() {
   const [entryOpen, setEntryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showGlucoseOnLockScreen, setShowGlucoseOnLockScreen] = useState(false);
+  const [mealAlarmOffsets, setMealAlarmOffsets] = useState<number[]>([...DEFAULT_MEAL_ALARM_OFFSETS_MINUTES]);
+  const [correctionReminder, setCorrectionReminder] = useState<CorrectionReminderSettings>({
+    enabled: false,
+    offsetMinutes: DEFAULT_CORRECTION_REMINDER_OFFSET_MINUTES,
+  });
   const [refreshing, setRefreshing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const refreshingRef = useRef(false);
@@ -107,7 +129,7 @@ function Type1AApp() {
     // latestLiveReading() finds the true latest live point regardless of
     // how wide this window is.
     const from = new Date(to.getTime() - 30 * 24 * 60 * 60_000);
-    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending] = await Promise.all([
+    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending, mealOffsets, correctionSettings] = await Promise.all([
       getCGMReadings(db, from, to),
       getTimeline(db),
       getTherapyProfile(db),
@@ -115,6 +137,8 @@ function Type1AApp() {
       getRecentRapidInsulin(db),
       getSetting(db, 'showGlucoseOnLockScreen'),
       getPendingInsulinAssociations(db),
+      getMealAlarmOffsets(db),
+      getCorrectionReminderSettings(db),
     ]);
     setReadings(cached);
     setTimeline(nextTimeline);
@@ -123,6 +147,8 @@ function Type1AApp() {
     setRecentRapid(rapid);
     setShowGlucoseOnLockScreen(privacy === 'true');
     setPendingAssociations(pending);
+    setMealAlarmOffsets(mealOffsets);
+    setCorrectionReminder(correctionSettings);
   }, [db]);
 
   const refresh = useCallback(async (manual = false): Promise<void> => {
@@ -230,7 +256,11 @@ function Type1AApp() {
   }
 
   async function registerCorrection(units: number): Promise<void> {
+    const timestamp = new Date().toISOString();
     await registerNumeric('rapid', units);
+    if (correctionReminder.enabled) {
+      await scheduleCorrectionReminder(timestamp, correctionReminder.offsetMinutes);
+    }
     setNotice(`Se registraron ${units} U de rápida tras confirmación.`);
   }
 
@@ -254,8 +284,8 @@ function Type1AApp() {
           }),
     };
     const episodeId = await saveMealWithEpisode(db, meal);
-    await scheduleEpisodeNotifications(episodeId, timestamp);
-    setNotice('Comida guardada. El episodio se completará con CGM a +60, +120 y +180 minutos.');
+    await scheduleEpisodeNotifications(episodeId, timestamp, mealAlarmOffsets);
+    setNotice(`Comida guardada. El episodio se completará con CGM a ${mealAlarmOffsets.map((minutes) => `+${minutes}`).join(', ')} minutos.`);
     await loadLocalState();
   }
 
@@ -282,7 +312,10 @@ function Type1AApp() {
           }),
     });
     if (outcome.episodeId !== null) {
-      await scheduleEpisodeNotifications(outcome.episodeId, draft.timestamp);
+      await scheduleEpisodeNotifications(outcome.episodeId, draft.timestamp, mealAlarmOffsets);
+    }
+    if (outcome.savedRapid && draft.rapidIncludesCorrection && correctionReminder.enabled) {
+      await scheduleCorrectionReminder(draft.timestamp, correctionReminder.offsetMinutes);
     }
     const saved = [
       outcome.savedGlucose ? 'glucosa' : null,
@@ -300,6 +333,48 @@ function Type1AApp() {
   async function updatePrivacy(show: boolean): Promise<void> {
     await setSetting(db, 'showGlucoseOnLockScreen', String(show));
     setShowGlucoseOnLockScreen(show);
+  }
+
+  async function updateMealAlarmOffsets(offsets: number[]): Promise<void> {
+    await saveMealAlarmOffsets(db, offsets);
+    setMealAlarmOffsets(offsets);
+  }
+
+  async function updateCorrectionReminder(settings: CorrectionReminderSettings): Promise<void> {
+    await saveCorrectionReminderSettings(db, settings);
+    setCorrectionReminder(settings);
+  }
+
+  async function saveTimelineItem(item: TimelineItem, payload: TimelineEditPayload): Promise<void> {
+    if (payload.kind === 'insulin') {
+      await updateInsulinEvent(db, item.id, {
+        type: payload.type,
+        units: payload.units,
+        ...(payload.insulinName === undefined ? {} : { insulinName: payload.insulinName }),
+      });
+    } else if (payload.kind === 'carbs') {
+      await updateCarbEvent(db, item.id, payload.carbsG);
+    } else if (payload.kind === 'meal') {
+      await updateMealNote(db, item.id, payload.note);
+    } else {
+      await updateManualCGMReading(db, item.id, payload.glucose);
+    }
+    await loadLocalState();
+  }
+
+  async function deleteTimelineItem(item: TimelineItem): Promise<void> {
+    if (item.kind === 'insulin') {
+      await deleteInsulinEvent(db, item.id);
+    } else if (item.kind === 'carbs') {
+      await deleteCarbEvent(db, item.id);
+    } else if (item.kind === 'meal') {
+      await deleteMealEvent(db, item.id);
+    } else if (item.kind === 'glucose') {
+      await deleteCGMReading(db, item.id);
+    } else {
+      await deleteMealEpisode(db, item.id);
+    }
+    await loadLocalState();
   }
 
   async function activateQuickEntry(): Promise<boolean> {
@@ -385,7 +460,7 @@ function Type1AApp() {
           <Text style={styles.chevron}>›</Text>
         </Pressable>
 
-        <Timeline items={timeline} />
+        <Timeline items={timeline} onSaveItem={saveTimelineItem} onDeleteItem={deleteTimelineItem} />
 
         <View style={styles.footerSafety}>
           <Text style={styles.footerTitle}>Software de desarrollo</Text>
@@ -443,6 +518,10 @@ function Type1AApp() {
           setTherapyConfigured(true);
         }}
         onEnableQuickEntry={activateQuickEntry}
+        mealAlarmOffsets={mealAlarmOffsets}
+        onSaveMealAlarmOffsets={updateMealAlarmOffsets}
+        correctionReminder={correctionReminder}
+        onSaveCorrectionReminder={updateCorrectionReminder}
       />
       <InsulinAssociationModal
         pending={pendingAssociations[0] ?? null}

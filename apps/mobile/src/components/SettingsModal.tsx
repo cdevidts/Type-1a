@@ -5,8 +5,8 @@ import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-nati
 import type { CGMProviderStatus, TherapyProfile } from '@type1a/schemas';
 
 import { API_BASE_URL, connectFreestyleLibre } from '../api';
-import type { MySugrImportOutcome } from '../db';
-import { parsePositiveNumber } from '../format';
+import type { CorrectionReminderSettings, MySugrImportOutcome } from '../db';
+import { parseMinuteOffsets, parsePositiveNumber } from '../format';
 import { colors, radius, spacing } from '../theme';
 import { ModalShell } from './ModalShell';
 
@@ -68,6 +68,10 @@ export function SettingsModal({
   onImportMySugrCsv,
   onSaveProfile,
   onEnableQuickEntry,
+  mealAlarmOffsets,
+  onSaveMealAlarmOffsets,
+  correctionReminder,
+  onSaveCorrectionReminder,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -81,6 +85,10 @@ export function SettingsModal({
   onSaveProfile: (profile: TherapyProfile) => Promise<void>;
   /** Requests notification permission, posts the sticky notification, and — on success — persists it as enabled and starts the background refresh. */
   onEnableQuickEntry: () => Promise<boolean>;
+  mealAlarmOffsets: number[];
+  onSaveMealAlarmOffsets: (offsets: number[]) => Promise<void>;
+  correctionReminder: CorrectionReminderSettings;
+  onSaveCorrectionReminder: (settings: CorrectionReminderSettings) => Promise<void>;
 }) {
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
@@ -100,6 +108,12 @@ export function SettingsModal({
   const [therapyBusy, setTherapyBusy] = useState(false);
   const [therapyMessage, setTherapyMessage] = useState<string | null>(null);
 
+  const [mealOffsetsInput, setMealOffsetsInput] = useState(mealAlarmOffsets.join(', '));
+  const [correctionReminderEnabled, setCorrectionReminderEnabled] = useState(correctionReminder.enabled);
+  const [correctionOffsetInput, setCorrectionOffsetInput] = useState(String(correctionReminder.offsetMinutes));
+  const [alarmBusy, setAlarmBusy] = useState(false);
+  const [alarmMessage, setAlarmMessage] = useState<string | null>(null);
+
   useEffect(() => {
     if (visible) setMessage(null);
   }, [visible]);
@@ -118,9 +132,43 @@ export function SettingsModal({
       setIncrementInput(therapyConfigured ? String(profile.doseIncrement) : '');
       setCarbRatioInput(profile.carbRatio === undefined ? '' : String(profile.carbRatio));
       setTherapyMessage(null);
+      setMealOffsetsInput(mealAlarmOffsets.join(', '));
+      setCorrectionReminderEnabled(correctionReminder.enabled);
+      setCorrectionOffsetInput(String(correctionReminder.offsetMinutes));
+      setAlarmMessage(null);
     }
     wasVisibleRef.current = visible;
-  }, [visible, profile, therapyConfigured]);
+  }, [visible, profile, therapyConfigured, mealAlarmOffsets, correctionReminder]);
+
+  async function saveAlarms(): Promise<void> {
+    const offsets = parseMinuteOffsets(mealOffsetsInput);
+    if (offsets === null) {
+      setAlarmMessage('Los controles post-comida deben ser minutos enteros entre 1 y 720, separados por coma.');
+      return;
+    }
+    // While disabled, keep whatever offset was last saved rather than
+    // requiring/validating a value nobody is currently using.
+    let correctionOffset = correctionReminder.offsetMinutes;
+    if (correctionReminderEnabled) {
+      const parsed = parsePositiveNumber(correctionOffsetInput);
+      if (parsed === null || !Number.isInteger(parsed) || parsed > 720) {
+        setAlarmMessage('El recordatorio de corrección debe ser un número entero de minutos entre 1 y 720.');
+        return;
+      }
+      correctionOffset = parsed;
+    }
+    setAlarmBusy(true);
+    setAlarmMessage(null);
+    try {
+      await onSaveMealAlarmOffsets(offsets);
+      await onSaveCorrectionReminder({ enabled: correctionReminderEnabled, offsetMinutes: correctionOffset });
+      setAlarmMessage('Alarmas guardadas.');
+    } catch {
+      setAlarmMessage('No se pudieron guardar las alarmas.');
+    } finally {
+      setAlarmBusy(false);
+    }
+  }
 
   async function saveTherapy(): Promise<void> {
     const targetGlucose = parsePositiveNumber(targetInput);
@@ -243,6 +291,42 @@ export function SettingsModal({
       <Pressable style={[styles.notificationButton, busy && styles.disabled]} disabled={busy} onPress={() => { void notifications(); }}>
         <Text style={styles.notificationText}>Activar notificación de acceso rápido</Text>
       </Pressable>
+
+      <Text style={styles.sectionTitle}>Alarmas</Text>
+      <Text style={styles.copy}>Controles post-comida, en minutos separados por coma. El último se usa para avisar que el episodio está listo para revisar.</Text>
+      <TextInput
+        style={styles.input}
+        value={mealOffsetsInput}
+        onChangeText={setMealOffsetsInput}
+        keyboardType="numbers-and-punctuation"
+        placeholder="60, 120, 180"
+        placeholderTextColor={colors.muted}
+      />
+      <View style={styles.switchRow}>
+        <View style={styles.switchCopy}>
+          <Text style={styles.switchTitle}>Recordatorio tras una corrección</Text>
+          <Text style={styles.switchFoot}>Solo te avisa que revises tu glucosa — no calcula ni sugiere una nueva dosis.</Text>
+        </View>
+        <Switch
+          value={correctionReminderEnabled}
+          onValueChange={setCorrectionReminderEnabled}
+          trackColor={{ false: colors.line, true: colors.teal }}
+        />
+      </View>
+      {correctionReminderEnabled ? (
+        <TextInput
+          style={styles.input}
+          value={correctionOffsetInput}
+          onChangeText={setCorrectionOffsetInput}
+          keyboardType="number-pad"
+          placeholder="60"
+          placeholderTextColor={colors.muted}
+        />
+      ) : null}
+      <Pressable style={[styles.connectButton, alarmBusy && styles.disabled]} disabled={alarmBusy} onPress={() => { void saveAlarms(); }}>
+        <Text style={styles.connectText}>Guardar alarmas</Text>
+      </Pressable>
+      {alarmMessage === null ? null : <Text style={styles.message}>{alarmMessage}</Text>}
 
       <Text style={styles.sectionTitle}>Parámetros de terapia</Text>
       <Text style={styles.copy}>Estos valores los define tu equipo clínico — Type 1A nunca los calcula ni los sugiere. También puedes editar objetivo/factor/incremento dentro de “Corrección”; es el mismo valor guardado en ambos lados.</Text>
