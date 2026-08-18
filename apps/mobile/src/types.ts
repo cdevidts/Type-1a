@@ -1,4 +1,5 @@
 import type {
+  CGMReading,
   GlucoseInsight,
   InsulinEvent,
   MealEpisodeMetrics,
@@ -15,6 +16,7 @@ export type TimelineItem =
       title: string;
       detail: string;
       tone: 'blue' | 'navy';
+      raw: InsulinEvent;
     }
   | {
       id: string;
@@ -23,6 +25,7 @@ export type TimelineItem =
       title: string;
       detail: string;
       tone: 'orange';
+      raw: { carbsG: number; source: 'manual' | 'meal_confirmed' | 'imported' };
     }
   | {
       id: string;
@@ -31,6 +34,7 @@ export type TimelineItem =
       title: string;
       detail: string;
       tone: 'orange';
+      raw: MealEvent;
     }
   | {
       id: string;
@@ -48,7 +52,11 @@ export type TimelineItem =
       timestamp: string;
       title: string;
       detail: string;
-      tone: 'teal';
+      // 'warning' marks synthetic (sandbox) data, 'muted' marks imported
+      // history (matches GlucoseChart's dashed/muted treatment) — neither
+      // may look like a live reading anywhere in the app, Timeline included.
+      tone: 'teal' | 'warning' | 'muted';
+      raw: CGMReading;
     };
 
 export interface StoredMealEpisode {

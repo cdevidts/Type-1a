@@ -1,8 +1,10 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { formatDayTime } from '../format';
 import { colors, radius, spacing } from '../theme';
 import type { TimelineItem } from '../types';
+import { TimelineDetailModal } from './TimelineDetailModal';
 
 const toneColors = {
   blue: colors.blue,
@@ -10,20 +12,30 @@ const toneColors = {
   orange: colors.orange,
   green: colors.green,
   teal: colors.teal,
+  warning: colors.warning,
+  muted: colors.muted,
 } as const;
 
 export function Timeline({ items }: { items: readonly TimelineItem[] }) {
+  const [selected, setSelected] = useState<TimelineItem | null>(null);
+
   return (
     <View style={styles.section}>
       <Text style={styles.title}>Timeline</Text>
-      <Text style={styles.subtitle}>Lo registrado en este teléfono</Text>
+      <Text style={styles.subtitle}>Lo registrado en este teléfono — toca un ítem para ver el detalle</Text>
       {items.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyTitle}>Todavía no hay eventos</Text>
           <Text style={styles.emptyCopy}>Usa un acceso rápido para registrar el primero.</Text>
         </View>
       ) : items.map((item) => (
-        <View key={`${item.kind}:${item.id}`} style={styles.item}>
+        <Pressable
+          key={`${item.kind}:${item.id}`}
+          style={styles.item}
+          onPress={() => { setSelected(item); }}
+          accessibilityRole="button"
+          accessibilityLabel={`Ver detalle de ${item.title}`}
+        >
           <View style={[styles.dot, { backgroundColor: toneColors[item.tone] }]} />
           <View style={styles.itemBody}>
             <View style={styles.itemHeader}>
@@ -35,8 +47,9 @@ export function Timeline({ items }: { items: readonly TimelineItem[] }) {
               <Text style={styles.insight}>{item.insight.summary}</Text>
             ) : null}
           </View>
-        </View>
+        </Pressable>
       ))}
+      <TimelineDetailModal item={selected} onClose={() => { setSelected(null); }} />
     </View>
   );
 }

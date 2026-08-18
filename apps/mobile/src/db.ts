@@ -612,7 +612,7 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
       'SELECT payload FROM insulin_events ORDER BY timestamp DESC LIMIT ?',
       limit,
     ),
-    db.getAllAsync<{ id: string; timestamp: string; carbs_g: number; source: string }>(
+    db.getAllAsync<{ id: string; timestamp: string; carbs_g: number; source: 'manual' | 'meal_confirmed' | 'imported' }>(
       'SELECT id, timestamp, carbs_g, source FROM carb_events ORDER BY timestamp DESC LIMIT ?',
       limit,
     ),
@@ -653,6 +653,7 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
         title: event.data.type === 'rapid' ? 'Insulina rápida' : 'Insulina basal',
         detail: `${event.data.units} U`,
         tone: event.data.type === 'rapid' ? 'blue' : 'navy',
+        raw: event.data,
       });
     }
   }
@@ -664,6 +665,7 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
       title: row.source === 'meal_confirmed' ? 'Carbohidratos confirmados' : 'Carbohidratos',
       detail: `${row.carbs_g} g`,
       tone: 'orange',
+      raw: { carbsG: row.carbs_g, source: row.source },
     });
   }
   for (const row of mealRows) {
@@ -678,21 +680,30 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
           ? 'Sin carbohidratos confirmados'
           : `${meal.data.confirmedCarbsG} g confirmados`,
         tone: 'orange',
+        raw: meal.data,
       });
     }
   }
   for (const row of glucoseRows) {
     const reading = CGMReadingSchema.safeParse(JSON.parse(row.payload));
     if (reading.success) {
+      const originSuffix = reading.data.origin === 'imported'
+        ? ' · importado'
+        : reading.data.origin === 'synthetic'
+          ? ' · sintético'
+          : '';
       items.push({
         id: reading.data.id,
         kind: 'glucose',
         timestamp: reading.data.sourceTimestamp,
         title: 'Glucosa',
-        detail: reading.data.origin === 'imported'
-          ? `${reading.data.glucose} mg/dL · importado`
-          : `${reading.data.glucose} mg/dL`,
-        tone: 'teal',
+        detail: `${reading.data.glucose} mg/dL${originSuffix}`,
+        tone: reading.data.origin === 'synthetic'
+          ? 'warning'
+          : reading.data.origin === 'imported'
+            ? 'muted'
+            : 'teal',
+        raw: reading.data,
       });
     }
   }
