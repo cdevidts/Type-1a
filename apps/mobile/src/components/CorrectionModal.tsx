@@ -40,6 +40,7 @@ export function CorrectionModal({
   visible,
   latest,
   profile,
+  therapyConfigured,
   recentRapid,
   onClose,
   onSaveProfile,
@@ -48,6 +49,8 @@ export function CorrectionModal({
   visible: boolean;
   latest: CGMReading | null;
   profile: TherapyProfile;
+  /** False while the therapy values are still the placeholders shipped with the app. */
+  therapyConfigured: boolean;
   recentRapid: readonly InsulinEvent[];
   onClose: () => void;
   onSaveProfile: (profile: TherapyProfile) => Promise<void>;
@@ -98,6 +101,15 @@ export function CorrectionModal({
   }, [visible, latest, profile]);
 
   async function calculate(): Promise<void> {
+    // The fields below arrive pre-filled with the values the app ships with,
+    // which look no different from real ones. Until they've been confirmed
+    // in Ajustes, calculating here would just launder a placeholder into a
+    // dose — and, since saving is a side effect of this button, would also
+    // mark them "configured" for every other screen.
+    if (!therapyConfigured) {
+      setError('Antes de calcular, confirma tus parámetros en Ajustes → Parámetros de terapia. Los valores que trae la app son solo de ejemplo y no sirven para dosificar.');
+      return;
+    }
     const currentGlucose = parsePositiveNumber(current);
     const targetGlucose = parsePositiveNumber(target);
     const correctionFactor = parsePositiveNumber(factor);
@@ -206,6 +218,13 @@ export function CorrectionModal({
           <Text style={styles.resultValue}>{result.roundedUnits} U</Text>
           <Text style={styles.formula}>{result.formula} = {result.rawUnits.toFixed(2)} U, redondeado al incremento.</Text>
           {result.isBelowTarget ? <Text style={styles.below}>Glucosa bajo el objetivo: el resultado se limita a 0 U.</Text> : null}
+          {result.isHypoglycemic ? (
+            <View style={styles.hypoBox}>
+              <Text style={styles.hypoText}>
+                Estás en hipoglucemia. Trata la hipoglucemia primero y calcula la dosis después de recuperarte — este número no reemplaza esa decisión.
+              </Text>
+            </View>
+          ) : null}
           {result.roundedUnits > 0 ? (
             <Pressable style={[styles.registerButton, busy && styles.disabled]} disabled={busy} onPress={() => { void register(); }}>
               <Text style={styles.registerText}>Confirmar y registrar {result.roundedUnits} U como rápida</Text>
@@ -243,6 +262,8 @@ const styles = StyleSheet.create({
   resultValue: { color: colors.ink, fontSize: 48, fontWeight: '900', marginTop: 2 },
   formula: { color: colors.muted, fontSize: 13, lineHeight: 19 },
   below: { color: colors.red, fontSize: 13, marginTop: spacing.sm },
+  hypoBox: { backgroundColor: colors.redSoft, borderRadius: radius.sm, padding: spacing.md, marginTop: spacing.md },
+  hypoText: { color: colors.red, fontSize: 13, lineHeight: 19, fontWeight: '700' },
   registerButton: { backgroundColor: colors.blue, borderRadius: radius.sm, padding: spacing.md, alignItems: 'center', marginTop: spacing.lg },
   registerText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800', textAlign: 'center' },
   disabled: { opacity: 0.55 },

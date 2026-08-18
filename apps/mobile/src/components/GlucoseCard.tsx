@@ -24,6 +24,19 @@ export function GlucoseCard({
   const isManual = latest !== null && latest.origin === 'manual';
   const showsSensorValue = latest !== null && isSensorReading(latest);
 
+  const badgeLabel = [
+    isSynthetic ? 'SINTÉTICO' : isManual ? 'MANUAL' : null,
+    isStale ? 'ATRASADO' : null,
+  ].filter((part): part is string => part !== null).join(' · ') || 'EN LÍNEA';
+  // Staleness owns the colour whenever it applies — it's the more urgent of
+  // the two, and it's the one a reassuring colour would hide.
+  const badgeStyle = isStale
+    ? styles.staleBadge
+    : isSynthetic ? styles.syntheticBadge : isManual ? styles.manualBadge : styles.liveBadge;
+  const badgeTextStyle = isStale
+    ? styles.staleText
+    : isSynthetic ? styles.syntheticText : isManual ? styles.manualText : styles.liveText;
+
   return (
     <View style={styles.card}>
       <View style={styles.headerRow}>
@@ -35,16 +48,15 @@ export function GlucoseCard({
               : status?.provider ?? 'Sin proveedor conectado'}
           </Text>
         </View>
-        <View style={[
-          styles.badge,
-          isSynthetic ? styles.syntheticBadge : isManual ? styles.manualBadge : isStale ? styles.staleBadge : styles.liveBadge,
-        ]}>
-          <Text style={[
-            styles.badgeText,
-            isSynthetic ? styles.syntheticText : isManual ? styles.manualText : isStale ? styles.staleText : styles.liveText,
-          ]}>
-            {isSynthetic ? 'SINTÉTICO' : isManual ? 'MANUAL' : isStale ? 'ATRASADO' : 'EN LÍNEA'}
-          </Text>
+        {/*
+          Provenance and freshness are two independent facts, so the badge
+          composes them instead of ranking one above the other. Letting
+          "MANUAL" replace "ATRASADO" would drop the staleness warning on an
+          hours-old fingerstick — the calm badge would read as reassurance
+          exactly when the value is least trustworthy.
+        */}
+        <View style={[styles.badge, badgeStyle]}>
+          <Text style={[styles.badgeText, badgeTextStyle]}>{badgeLabel}</Text>
         </View>
       </View>
 
@@ -62,7 +74,7 @@ export function GlucoseCard({
               <Text style={styles.unit}>mg/dL</Text>
             </View>
           </View>
-          <Text style={[styles.timestamp, isStale && !isManual && styles.staleText]}>
+          <Text style={[styles.timestamp, isStale && styles.staleText]}>
             {showsSensorValue ? 'Sensor' : 'Registrado'} {formatClock(latest.sourceTimestamp)} · {relativeAge(latest.sourceTimestamp)}
           </Text>
         </>

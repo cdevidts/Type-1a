@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
-import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AppState, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { assessFreshness, calculateCorrection, calculateMealBolus, isSensorReading } from '@type1a/domain';
 import type { CGMReading, MealAnalysisResult, TherapyProfile } from '@type1a/schemas';
@@ -159,6 +159,20 @@ export function EntryModal({
     wasVisibleRef.current = visible;
   }, [visible, latest]);
 
+  // The sheet can sit open across a long break (it isn't dismissed when the
+  // app is backgrounded), and everything written here — the bolus, the carbs,
+  // the meal episode's +60/+120/+180 window — is stamped with `openedAt`.
+  // Re-stamp on return so a three-hour-old header time doesn't become the
+  // recorded time of a meal that's about to be eaten. Only the timestamp
+  // moves; nothing the user typed is touched.
+  useEffect(() => {
+    if (!visible) return;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') setOpenedAt(new Date().toISOString());
+    });
+    return () => { subscription.remove(); };
+  }, [visible]);
+
   /**
    * Drop a suggestion whose inputs just changed. If its number was already
    * copied into the insulin field it stays there — silently editing what the
@@ -234,19 +248,25 @@ export function EntryModal({
       setMessage('La glucosa debe ser un número positivo.');
       return;
     }
-    // Judge the reading that actually filled the field, not whatever the
-    // app has refreshed to since. A value that went stale while the sheet
-    // sat open must not silently drive a dose.
-    if (prefilled !== null && currentGlucose === prefilled.glucose) {
+    // Judge the reading that actually filled the field, not whatever the app
+    // has refreshed to since. A value that went stale while the sheet sat
+    // open must not silently drive a dose.
+    //
+    // Invariant: `prefilled` is cleared on any edit of the glucose field, so
+    // a non-null `prefilled` means the field still holds exactly that
+    // reading. Don't reintroduce a value comparison here — if the banner is
+    // ever kept visible after an edit, comparing by value would let a
+    // hand-typed number inherit the prefill's freshness verdict.
+    if (prefilled !== null) {
       if (assessFreshness(prefilled.sourceTimestamp).state !== 'connected') {
         setPrefilled(null);
         setGlucose('');
-        setSuggestion(null);
+        invalidateSuggestion();
         setMessage('La lectura precargada dejó de estar vigente. Escribe una glucosa actual.');
         return;
       }
       if (prefilled.isSynthetic) {
-        setSuggestion(null);
+        invalidateSuggestion();
         setMessage('La glucosa precargada es sintética (modo demo). No la uses para dosificar: escribe una medición real.');
         return;
       }
@@ -348,12 +368,11 @@ export function EntryModal({
       await onSave({
         timestamp: openedAt,
         rapidIncludesCorrection: rapidFromCalculator && correctionIncluded,
-        // Only a hand-typed glucose becomes a new stored reading; one carried
-        // over from an existing reading is already in the database and must
-        // not be duplicated.
-        ...(glucoseValue === undefined || (prefilled !== null && glucoseValue === prefilled.glucose)
-          ? {}
-          : { manualGlucose: glucoseValue }),
+        // Only a hand-typed glucose becomes a new stored reading; an
+        // untouched prefill is already in the database and must not be
+        // duplicated. Same invariant as in `calculate()`: `prefilled` is
+        // non-null exactly while the field still holds the prefilled value.
+        ...(glucoseValue === undefined || prefilled !== null ? {} : { manualGlucose: glucoseValue }),
         ...(description.trim() === '' ? {} : { description: description.trim() }),
         ...(carbsG === undefined ? {} : { carbsG }),
         ...(imageUri === null ? {} : { imageUri }),

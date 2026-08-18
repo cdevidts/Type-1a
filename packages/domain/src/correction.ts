@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { isHypoglycemic } from './glucose-thresholds';
+
 const CorrectionInputSchema = z.object({
   currentGlucose: z.number().positive().finite(),
   targetGlucose: z.number().positive().finite(),
@@ -11,6 +13,13 @@ export interface CorrectionResult {
   rawUnits: number;
   roundedUnits: number;
   isBelowTarget: boolean;
+  /**
+   * Glucose is in hypoglycemic range — a different situation from merely
+   * sitting under target. Same meaning and same threshold as the flag on
+   * `MealBolusResult`, so both dose screens can say "treat the low first"
+   * without keeping their own copy of the cutoff.
+   */
+  isHypoglycemic: boolean;
   formula: string;
 }
 
@@ -43,6 +52,7 @@ export function calculateCorrection(input: z.input<typeof CorrectionInputSchema>
     rawUnits: nonNegativeRaw,
     roundedUnits: roundToIncrement(nonNegativeRaw, parsed.doseIncrement),
     isBelowTarget: raw < 0,
+    isHypoglycemic: isHypoglycemic(parsed.currentGlucose),
     formula: `(${parsed.currentGlucose} − ${parsed.targetGlucose}) ÷ ${parsed.correctionFactor}`,
   };
 }

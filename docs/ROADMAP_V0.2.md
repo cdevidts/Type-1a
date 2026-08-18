@@ -221,6 +221,25 @@ los datos que alimentan la fórmula*. Ese es el patrón a vigilar.
    copió de una fuente que sigue cambiando, hay que guardar la fuente, no
    volver a leerla.
 
+La segunda ronda de auditoría encontró que dos de esos tres arreglos estaban
+solo a medias, lo cual es su propia lección:
+
+- **Una bandera de "configurado" vale lo que valga el camino que la
+  escribe.** La primera versión marcaba `therapyConfiguredAt` en cualquier
+  `saveTherapyProfile`, pero el modal de Corrección también guarda — ahí
+  guardar es un *efecto secundario* de pedir un número ("Guardar parámetros
+  y calcular"), no un acto de configuración. Un solo toque sobre los
+  defaults pre-llenados desbloqueaba permanentemente la calculadora de
+  comida. Ahora solo la pantalla de Ajustes pasa `markConfigured: true`, y
+  el modal de Corrección también se niega a calcular sin la bandera.
+- **Arreglar procedencia puede romper frescura.** Al agregar el badge
+  MANUAL se puso antes que el chequeo de `isStale`, así que una medición
+  manual de hace 8 horas perdía el ATRASADO y quedaba con un badge calmado.
+  Procedencia y frescura son ejes independientes: se componen
+  (`MANUAL · ATRASADO`), no se rankean, y el color siempre lo gana el
+  atraso. Regla: al agregar un estado visual nuevo a un indicador de
+  seguridad, revisar que no *reemplace* a otro que ya estaba.
+
 Otras dos que valen como patrón: `saveUnifiedEntry` escribía 4-5 filas sin
 transacción (un rechazo de schema a mitad dejaba una entrada a medias que al
 reintentar se duplicaba, porque cada intento genera IDs nuevos — SQLite no

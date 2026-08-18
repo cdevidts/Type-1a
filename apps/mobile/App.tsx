@@ -377,9 +377,11 @@ function Type1AApp() {
         visible={quickRoute === 'correction'}
         latest={latest}
         profile={profile}
+        therapyConfigured={therapyConfigured}
         recentRapid={recentRapid}
         onClose={() => { setQuickRoute(null); }}
         onSaveProfile={async (nextProfile) => {
+          // Deliberately not `markConfigured` — see saveTherapyProfile.
           await saveTherapyProfile(db, nextProfile);
           setProfile(nextProfile);
         }}
@@ -408,8 +410,12 @@ function Type1AApp() {
           return outcome;
         }}
         onSaveProfile={async (nextProfile) => {
-          await saveTherapyProfile(db, nextProfile);
+          // The therapy section is the one place where saving *is* the act
+          // of configuring, so this is the only call that marks the profile
+          // as user-entered and unlocks the dose calculators.
+          await saveTherapyProfile(db, nextProfile, { markConfigured: true });
           setProfile(nextProfile);
+          setTherapyConfigured(true);
         }}
       />
       <InsulinAssociationModal

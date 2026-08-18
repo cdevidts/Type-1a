@@ -174,7 +174,11 @@ export async function isTherapyConfigured(db: SQLiteDatabase): Promise<boolean> 
   return (await getSetting(db, THERAPY_CONFIGURED_KEY)) !== null;
 }
 
-export async function saveTherapyProfile(db: SQLiteDatabase, profile: TherapyProfile): Promise<void> {
+export async function saveTherapyProfile(
+  db: SQLiteDatabase,
+  profile: TherapyProfile,
+  options: { markConfigured?: boolean } = {},
+): Promise<void> {
   const parsed = TherapyProfileSchema.parse(profile);
   const now = new Date().toISOString();
   await db.withTransactionAsync(async () => {
@@ -183,10 +187,14 @@ export async function saveTherapyProfile(db: SQLiteDatabase, profile: TherapyPro
       JSON.stringify(parsed),
       now,
     );
-    // Saving only ever happens from a screen that showed the user these
-    // numbers in editable fields, so reaching here means they saw and
-    // accepted them — that is what "configured" means.
-    await setSetting(db, THERAPY_CONFIGURED_KEY, now);
+    // Only an intentional trip to the therapy section counts as configuring.
+    // The correction sheet also saves these values, but there saving is a
+    // side effect of asking for a number ("Guardar parámetros y calcular") —
+    // treating that as configuration would let one tap on pre-filled
+    // defaults permanently vouch for numbers nobody chose.
+    if (options.markConfigured === true) {
+      await setSetting(db, THERAPY_CONFIGURED_KEY, now);
+    }
   });
 }
 
@@ -884,11 +892,15 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
   for (const row of glucoseRows) {
     const reading = CGMReadingSchema.safeParse(JSON.parse(row.payload));
     if (reading.success) {
+      // Anything that isn't real sensor data says so, in the list itself —
+      // a manual fingerstick and a sensor reading must not look identical.
       const originSuffix = reading.data.origin === 'imported'
         ? ' · importado'
         : reading.data.origin === 'synthetic'
           ? ' · sintético'
-          : '';
+          : reading.data.origin === 'manual'
+            ? ' · manual'
+            : '';
       items.push({
         id: reading.data.id,
         kind: 'glucose',
@@ -897,7 +909,7 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
         detail: `${reading.data.glucose} mg/dL${originSuffix}`,
         tone: reading.data.origin === 'synthetic'
           ? 'warning'
-          : reading.data.origin === 'imported'
+          : reading.data.origin === 'imported' || reading.data.origin === 'manual'
             ? 'muted'
             : 'teal',
         raw: reading.data,

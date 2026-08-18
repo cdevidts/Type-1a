@@ -14,6 +14,21 @@ describe('correction calculator', () => {
     ).toMatchObject({ rawUnits: 100 / 45, roundedUnits: 2, isBelowTarget: false });
   });
 
+  it('flags hypoglycemia separately from being under target, without changing the units', () => {
+    const params = { targetGlucose: 110, correctionFactor: 45, doseIncrement: 0.5 } as const;
+    expect(calculateCorrection({ ...params, currentGlucose: 95 })).toMatchObject({
+      isBelowTarget: true,
+      isHypoglycemic: false,
+      roundedUnits: 0,
+    });
+    expect(calculateCorrection({ ...params, currentGlucose: 55 })).toMatchObject({
+      isBelowTarget: true,
+      isHypoglycemic: true,
+      roundedUnits: 0,
+    });
+    expect(calculateCorrection({ ...params, currentGlucose: 210 }).isHypoglycemic).toBe(false);
+  });
+
   it('never returns negative insulin', () => {
     expect(
       calculateCorrection({

@@ -61,7 +61,11 @@ function rowsFor(item: TimelineItem): { label: string; value: string }[] {
         { label: 'Tendencia', value: trendArrow[item.raw.trend] },
         { label: 'Origen', value: originLabel[item.raw.origin] ?? item.raw.origin },
         { label: 'Proveedor', value: item.raw.source },
-        { label: 'Hora del sensor', value: formatDayTime(item.raw.sourceTimestamp) },
+        // Not always a sensor: `origin: 'manual'` readings are hand-entered.
+        {
+          label: item.raw.origin === 'real' ? 'Hora del sensor' : 'Hora de la medición',
+          value: formatDayTime(item.raw.sourceTimestamp),
+        },
         { label: 'Hora de sincronización', value: formatDayTime(item.raw.ingestedAt) },
       ];
     case 'episode':
