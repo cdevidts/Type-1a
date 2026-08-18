@@ -184,17 +184,20 @@ function Type1AApp() {
       await loadLocalState();
       const to = new Date();
       const from = new Date(to.getTime() - 4 * 60 * 60_000);
+      let nextStatus: CGMProviderStatus | null = null;
+      let remoteReadings: CGMReading[] = [];
       try {
-        const [nextStatus, remoteReadings] = await Promise.all([
+        [nextStatus, remoteReadings] = await Promise.all([
           fetchCGMStatus(),
           fetchCGMReadings(from, to),
         ]);
-        await upsertCGMReadings(db, remoteReadings);
-        setStatus(nextStatus);
-        setNotice(nextStatus.isSynthetic
-          ? 'Modo de prueba: las lecturas CGM son sintéticas.'
-          : null);
       } catch (error) {
+        // A genuine network/backend failure — the only case that should ever
+        // be labelled "Backend sin conexión" (previously this catch also
+        // wrapped the local upsertCGMReadings write below, so a SQLite
+        // failure with nothing to do with the network — e.g. a stale
+        // connection colliding with a background-sync run — got mislabeled
+        // as a backend outage, which sent debugging in the wrong direction).
         setStatus({
           state: 'offline',
           provider: 'backend',
@@ -203,6 +206,21 @@ function Type1AApp() {
           isSynthetic: false,
         });
         setNotice('Backend sin conexión. El registro local sigue funcionando.');
+      }
+      if (nextStatus !== null) {
+        try {
+          await upsertCGMReadings(db, remoteReadings);
+          setStatus(nextStatus);
+          setNotice(nextStatus.isSynthetic
+            ? 'Modo de prueba: las lecturas CGM son sintéticas.'
+            : null);
+        } catch {
+          // Distinct from a backend outage: the fetch succeeded, but saving
+          // it locally failed (e.g. a momentary SQLite conflict with a
+          // background sync run). The read cache from loadLocalState() above
+          // still has the last successfully-saved data.
+          setNotice('No se pudo guardar la lectura localmente. Los datos ya guardados siguen disponibles.');
+        }
       }
       await processReadyEpisodes(db);
       await loadLocalState();

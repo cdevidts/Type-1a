@@ -487,13 +487,59 @@ Cuarta tanda de pedidos de Verónica sobre el mismo build:
 **Seguimiento aceptado (no accionar salvo pedido):** al adjuntar una comida a
 una lectura vieja de sensor, el episodio se computa retroactivamente con
 `processReadyEpisodes` a partir del CGM alrededor de esa hora — correcto — pero
-las alarmas +60/+120/+180 caen en el pasado y se saltan solas (esperado). El
-riesgo de doble-conexión SQLCipher del background sync sigue sin probarse en
-dispositivo real. Además, `apps/mobile/src/db.ts` no tiene arnés de tests
-(expo-sqlite es nativo, no corre directo en vitest), así que la lógica
-*provenance-aware* nueva (ancla de sensor nunca mutada/borrada) quedó cubierta
-solo por typecheck + revisión de seguridad, no por un test unitario — vale la
-pena montar un test con SQLite en memoria antes de que esa lógica crezca más.
+las alarmas +60/+120/+180 caen en el pasado y se saltan solas (esperado).
+Además, `apps/mobile/src/db.ts` no tiene arnés de tests (expo-sqlite es
+nativo, no corre directo en vitest), así que la lógica *provenance-aware*
+nueva (ancla de sensor nunca mutada/borrada) quedó cubierta solo por
+typecheck + revisión de seguridad, no por un test unitario — vale la pena
+montar un test con SQLite en memoria antes de que esa lógica crezca más.
+
+## Bug encontrado en dispositivo (2026-08-18) — crash de SQLite al tocar "Actualizar" varias veces
+
+El riesgo de doble-conexión SQLCipher que quedó anotado como "sin probar en
+dispositivo real" **se confirmó**: Verónica tocó "Actualizar" en la
+notificación 3 veces seguidas y la app quedó mostrando, en Ajustes → Estado
+CGM: *"Call to function 'NativeDatabase.execAsync' has been rejected. →
+Caused by: java.lang.NullPointerException"*.
+
+**Causa raíz**: `openDb()` en `backgroundSync.ts` abría una conexión SQLite
+nativa nueva en **cada** invocación de la tarea headless
+(`NOTIFICATION_TASK_ID`, disparada por cada toque de "Actualizar") y **nunca
+la cerraba**. Tres toques rápidos (probablemente con la bandeja de
+notificaciones abierta, o sea con la app en un estado "backgrounded" que
+según la documentación de expo-notifications sí dispara la tarea headless
+aunque el proceso siga vivo) dejaban varias conexiones nativas abiertas al
+mismo tiempo contra el mismo archivo SQLCipher/WAL — encima de la conexión
+propia del `SQLiteProvider` de la app si el proceso seguía vivo. Eso es lo
+que rompió a nivel nativo.
+
+**Arreglo**: `backgroundSync.ts` ahora serializa toda llamada de ambas tareas
+(`PERIODIC_TASK_ID` y `NOTIFICATION_TASK_ID`) a través de una sola cadena de
+promesas (`runSyncSerialized`), y cierra la conexión (`db.closeAsync()`) en un
+`finally` antes de que la siguiente llamada pueda abrir otra — nunca hay más
+de una conexión de este módulo abierta a la vez, y una ráfaga de toques se
+vuelve secuencial en vez de concurrente. **Nota de honestidad**: esto ayuda
+con certeza cuando las invocaciones comparten el mismo motor JS (lo más
+probable para toques seguidos dentro de una ventana corta); si Android llega
+a lanzar un proceso headless totalmente nuevo por cada toque, el cierre en
+`finally` sigue siendo correcto (nunca deja una conexión huérfana abierta más
+de lo necesario) pero la serialización entre procesos separados no se puede
+garantizar sin un mecanismo cross-proceso — no hay forma de confirmar esto sin
+más pruebas en dispositivo.
+
+**Bug secundario encontrado de paso**: el `catch` de `refresh()` en `App.tsx`
+envolvía tanto el fetch de red (`fetchCGMStatus`/`fetchCGMReadings`) como la
+escritura local (`upsertCGMReadings`), así que un fallo de SQLite local se
+mostraba como *"Backend sin conexión"* — mandando el diagnóstico en la
+dirección equivocada. Separado en dos bloques: un fallo de red se etiqueta
+como antes; un fallo al guardar localmente ahora dice explícitamente que no
+se pudo guardar, sin culpar al backend.
+
+**Seguimiento sugerido, no urgente**: si el crash volviera a reproducirse tras
+este arreglo, el siguiente paso sería instrumentar con logs de diagnóstico
+(sin cuerpos sensibles) qué contexto de ejecución usa cada invocación headless
+en un dispositivo real, para confirmar o descartar el escenario de "proceso
+headless nuevo por toque".
 
 ## Verificación por fase
 

@@ -34,6 +34,41 @@ async function openDb(): Promise<SQLiteDatabase> {
 }
 
 /**
+ * Serializes every call into this module (both task bodies) through one
+ * promise chain, and always closes the connection it opened before the next
+ * call gets to run.
+ *
+ * Bug this fixes: a burst of taps on the notification's "Actualizar" button
+ * — each one a separate `NOTIFICATION_TASK_ID` invocation — used to call
+ * `openDb()` and never close it, so N rapid taps left N native SQLite
+ * connections open concurrently against the same SQLCipher/WAL file (on top
+ * of the app's own long-lived `SQLiteProvider` connection, if the app
+ * process was still alive with the notification shade pulled down). That's
+ * what crashed with "NativeDatabase.execAsync has been rejected —
+ * NullPointerException" on-device. This queue plus the `finally`-closed
+ * connection below means at most one connection this module owns is ever
+ * open at a time, and a burst of taps collapses into sequential runs instead
+ * of concurrent ones.
+ */
+let syncChain: Promise<void> = Promise.resolve();
+
+async function runSyncSerialized(): Promise<void> {
+  const run = syncChain.then(async () => {
+    const db = await openDb();
+    try {
+      await runCgmSync(db);
+    } finally {
+      await db.closeAsync();
+    }
+  });
+  // Swallow so one failed run doesn't permanently wedge the chain for
+  // whichever call comes after it — but this call still awaits `run` below
+  // and sees its own rejection.
+  syncChain = run.catch(() => {});
+  return run;
+}
+
+/**
  * Fetches recent CGM data, caches it, and — if the quick-entry notification
  * is on — reposts it with the fresh reading. Shared by the periodic
  * background task below and the notification's own "Actualizar" button
@@ -68,7 +103,7 @@ async function runCgmSync(db: SQLiteDatabase): Promise<void> {
  */
 TaskManager.defineTask(PERIODIC_TASK_ID, async () => {
   try {
-    await runCgmSync(await openDb());
+    await runSyncSerialized();
     return BackgroundTask.BackgroundTaskResult.Success;
   } catch {
     return BackgroundTask.BackgroundTaskResult.Failed;
@@ -92,7 +127,7 @@ TaskManager.defineTask<Notifications.NotificationTaskPayload>(NOTIFICATION_TASK_
     if (!('actionIdentifier' in data) || data.actionIdentifier !== ACTION_REFRESH) {
       return Notifications.BackgroundNotificationTaskResult.NoData;
     }
-    await runCgmSync(await openDb());
+    await runSyncSerialized();
     return Notifications.BackgroundNotificationTaskResult.NewData;
   } catch {
     return Notifications.BackgroundNotificationTaskResult.Failed;
