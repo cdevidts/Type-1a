@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { calculateMealBolus } from '../src/index.js';
+import { calculateCorrection, calculateMealBolus } from '../src/index.js';
 
 const BASE = {
   carbRatio: 10,
@@ -57,6 +57,37 @@ describe('meal + correction bolus calculator', () => {
     const result = calculateMealBolus({ ...BASE, carbsG: 60, currentGlucose: 200 });
     expect(result.mealFormula).toBe('60 g ÷ 10 g/U');
     expect(result.correctionFormula).toBe('(200 − 110) ÷ 45');
+  });
+
+  it('flags hypoglycemia separately from merely being under target', () => {
+    const underTarget = calculateMealBolus({ ...BASE, carbsG: 60, currentGlucose: 95 });
+    expect(underTarget.isBelowTarget).toBe(true);
+    expect(underTarget.isHypoglycemic).toBe(false);
+
+    const low = calculateMealBolus({ ...BASE, carbsG: 60, currentGlucose: 58 });
+    expect(low.isBelowTarget).toBe(true);
+    expect(low.isHypoglycemic).toBe(true);
+
+    // The threshold itself is not a dose input: the units are unchanged by
+    // the flag, it only tells the UI to say "treat the low first".
+    expect(low.totalRawUnits).toBeCloseTo(6 + (58 - 110) / 45, 10);
+  });
+
+  it('never reports hypoglycemia when no glucose was supplied', () => {
+    expect(calculateMealBolus({ ...BASE, carbsG: 60 }).isHypoglycemic).toBe(false);
+  });
+
+  it('agrees exactly with calculateCorrection when there are no carbs', () => {
+    // The seam between the two calculators the UI picks between. If this
+    // ever diverges, the same glucose yields two different doses depending
+    // on whether the carbs field held "" or "0".
+    for (const currentGlucose of [50, 70, 110, 180, 260]) {
+      const params = { targetGlucose: 110, correctionFactor: 45, doseIncrement: 0.5 } as const;
+      const bolus = calculateMealBolus({ ...params, carbRatio: 10, carbsG: 0, currentGlucose });
+      const correction = calculateCorrection({ ...params, currentGlucose });
+      expect(bolus.totalRoundedUnits).toBe(correction.roundedUnits);
+      expect(bolus.totalRawUnits).toBeCloseTo(correction.rawUnits, 10);
+    }
   });
 
   it('rejects therapy parameters that are missing, zero, or negative', () => {

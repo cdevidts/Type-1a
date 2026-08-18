@@ -72,7 +72,9 @@ export function GlucoseChart({ readings }: { readings: readonly CGMReading[] }) 
       x: xFor(Date.parse(reading.sourceTimestamp)),
       y: yForGlucose(reading.glucose),
       glucose: reading.glucose,
-      imported: reading.origin === 'imported',
+      // Anything that didn't come off the sensor feed gets the same
+      // "not live sensor data" treatment: hollow marker, dashed muted line.
+      imported: reading.origin === 'imported' || reading.origin === 'manual',
       id: reading.id,
     }));
 
@@ -189,7 +191,7 @@ export function GlucoseChart({ readings }: { readings: readonly CGMReading[] }) 
           <View style={styles.legendDot} />
           <Text style={styles.legendText}>en vivo</Text>
           <View style={[styles.legendDot, styles.legendDotImported]} />
-          <Text style={styles.legendText}>importado</Text>
+          <Text style={styles.legendText}>importado/manual</Text>
         </View>
         <Text style={styles.legendText}>
           {latestLive === null ? 'Sin lectura en vivo' : `Ahora · ${formatHourLabel(Date.parse(latestLive.sourceTimestamp))}`}

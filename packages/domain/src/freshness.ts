@@ -38,6 +38,17 @@ export function assessFreshness(
  * KEPT — it's a legitimate "current" value for the dev/mock provider,
  * just visibly labelled as synthetic by the UI, unlike imported history.
  *
+ * `origin: 'manual'` is also KEPT, and that is a deliberate decision (see
+ * `isSensorReading` for the other half of it). A glucose the user measured
+ * and typed in a minute ago genuinely is their current value — more current
+ * than an older sensor reading — so excluding it would make the correction
+ * calculator ignore the freshest number available. What must NOT happen is
+ * the reverse: a manual value being *attributed to the sensor*. It carries
+ * no provider, no trend, and no proof the CGM is streaming, so every surface
+ * that names a source ("EN LÍNEA", "Precargada desde CGM", the provider
+ * subtitle) has to check `isSensorReading` before claiming the value came
+ * from the sensor.
+ *
  * Use this for anything that presents "now"/"the current trend" — the
  * live-status badge, the correction calculator's auto-fill, and the trend
  * chart's highlighted latest point. A same-day CSV import can leave a
@@ -49,6 +60,16 @@ export function assessFreshness(
  */
 export function liveReadings(readings: readonly CGMReading[]): CGMReading[] {
   return readings.filter((reading) => reading.origin !== 'imported');
+}
+
+/**
+ * True only for readings that actually came off a sensor feed. Manual
+ * entries are current (see `liveReadings`) but are not sensor data, and
+ * synthetic ones are not real data at all — neither may be presented as
+ * evidence that the CGM is connected and streaming.
+ */
+export function isSensorReading(reading: CGMReading): boolean {
+  return reading.origin === 'real';
 }
 
 /**

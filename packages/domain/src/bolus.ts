@@ -16,6 +16,13 @@ import { roundToIncrement } from './correction';
  * shortly after another bolus will overstate what the user should take. The
  * UI has to say so.
  */
+/**
+ * Standard hypoglycemia cutoff (mg/dL). Not a therapy parameter the user
+ * configures — it is the widely used clinical threshold for "this is a low",
+ * used here only to decide whether to warn, never to alter a dose.
+ */
+const HYPOGLYCEMIA_THRESHOLD = 70;
+
 const MealBolusInputSchema = z.object({
   carbsG: z.number().nonnegative().max(500).finite(),
   /** Grams of carbohydrate covered by one unit of rapid insulin. */
@@ -47,6 +54,13 @@ export interface MealBolusResult {
   /** False when no `currentGlucose` was supplied — the total is carbs only. */
   correctionApplied: boolean;
   isBelowTarget: boolean;
+  /**
+   * Glucose is in hypoglycemic range, which is a different situation from
+   * merely sitting under target: the answer is to treat the low first and
+   * dose afterwards, not to take a slightly smaller bolus now. Callers must
+   * surface this differently from `isBelowTarget`.
+   */
+  isHypoglycemic: boolean;
   mealFormula: string;
   correctionFormula: string | null;
 }
@@ -67,6 +81,7 @@ export function calculateMealBolus(input: z.input<typeof MealBolusInputSchema>):
     totalRoundedUnits: roundToIncrement(totalRawUnits, parsed.doseIncrement),
     correctionApplied: parsed.currentGlucose !== undefined,
     isBelowTarget: correctionUnits < 0,
+    isHypoglycemic: parsed.currentGlucose !== undefined && parsed.currentGlucose < HYPOGLYCEMIA_THRESHOLD,
     mealFormula: `${parsed.carbsG} g ÷ ${parsed.carbRatio} g/U`,
     correctionFormula: parsed.currentGlucose === undefined
       ? null

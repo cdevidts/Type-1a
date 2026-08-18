@@ -23,6 +23,17 @@ export function roundToIncrement(value: number, increment: number): number {
   return Number((Math.round(value / increment) * increment).toFixed(decimals));
 }
 
+/**
+ * Standalone correction: the result is floored at 0 U, because there is
+ * nothing for a negative value to offset.
+ *
+ * This deliberately differs from `calculateMealBolus` in `bolus.ts`, where
+ * the correction component is allowed to stay negative so that a
+ * below-target glucose *reduces* the meal bolus. Do not "harmonize" the two
+ * — clamping the component there would return a larger dose to someone who
+ * is already low. `bolus.test.ts` asserts the two agree exactly at
+ * `carbsG = 0`, which is the only point where they should.
+ */
 export function calculateCorrection(input: z.input<typeof CorrectionInputSchema>): CorrectionResult {
   const parsed = CorrectionInputSchema.parse(input);
   const raw = (parsed.currentGlucose - parsed.targetGlucose) / parsed.correctionFactor;

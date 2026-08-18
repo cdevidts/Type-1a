@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { assessFreshness, latestLiveReading } from '@type1a/domain';
+import { assessFreshness, isSensorReading, latestLiveReading } from '@type1a/domain';
 import type { CGMProviderStatus, CGMReading } from '@type1a/schemas';
 
 import { formatClock, relativeAge, trendArrow } from '../format';
@@ -18,23 +18,32 @@ export function GlucoseCard({
   const freshness = latest === null ? null : assessFreshness(latest.sourceTimestamp);
   const isStale = freshness?.state !== 'connected';
   const isSynthetic = latest?.origin === 'synthetic' || status?.isSynthetic === true;
+  // A hand-typed measurement is a legitimate current value, but it is not
+  // proof the sensor is streaming — badging it "EN LÍNEA" under the
+  // provider's name would hide a sensor outage behind a fingerstick.
+  const isManual = latest !== null && latest.origin === 'manual';
+  const showsSensorValue = latest !== null && isSensorReading(latest);
 
   return (
     <View style={styles.card}>
       <View style={styles.headerRow}>
         <View>
           <Text style={styles.eyebrow}>GLUCOSA ACTUAL</Text>
-          <Text style={styles.source}>{status?.provider ?? 'Sin proveedor conectado'}</Text>
+          <Text style={styles.source}>
+            {isManual
+              ? 'Medición manual · el sensor no la respalda'
+              : status?.provider ?? 'Sin proveedor conectado'}
+          </Text>
         </View>
         <View style={[
           styles.badge,
-          isSynthetic ? styles.syntheticBadge : isStale ? styles.staleBadge : styles.liveBadge,
+          isSynthetic ? styles.syntheticBadge : isManual ? styles.manualBadge : isStale ? styles.staleBadge : styles.liveBadge,
         ]}>
           <Text style={[
             styles.badgeText,
-            isSynthetic ? styles.syntheticText : isStale ? styles.staleText : styles.liveText,
+            isSynthetic ? styles.syntheticText : isManual ? styles.manualText : isStale ? styles.staleText : styles.liveText,
           ]}>
-            {isSynthetic ? 'SINTÉTICO' : isStale ? 'ATRASADO' : 'EN LÍNEA'}
+            {isSynthetic ? 'SINTÉTICO' : isManual ? 'MANUAL' : isStale ? 'ATRASADO' : 'EN LÍNEA'}
           </Text>
         </View>
       </View>
@@ -53,8 +62,8 @@ export function GlucoseCard({
               <Text style={styles.unit}>mg/dL</Text>
             </View>
           </View>
-          <Text style={[styles.timestamp, isStale && styles.staleText]}>
-            Fuente {formatClock(latest.sourceTimestamp)} · {relativeAge(latest.sourceTimestamp)}
+          <Text style={[styles.timestamp, isStale && !isManual && styles.staleText]}>
+            {showsSensorValue ? 'Sensor' : 'Registrado'} {formatClock(latest.sourceTimestamp)} · {relativeAge(latest.sourceTimestamp)}
           </Text>
         </>
       )}
@@ -110,6 +119,8 @@ const styles = StyleSheet.create({
   liveBadge: { backgroundColor: colors.greenSoft },
   staleBadge: { backgroundColor: colors.redSoft },
   syntheticBadge: { backgroundColor: colors.warningSoft },
+  manualBadge: { backgroundColor: colors.tealSoft },
+  manualText: { color: colors.navy },
   badgeText: { fontSize: 10, fontWeight: '900', letterSpacing: 0.7 },
   liveText: { color: colors.green },
   staleText: { color: colors.red },

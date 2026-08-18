@@ -184,6 +184,63 @@ Este documento asume que estas dos reformulaciones son aceptables; si
 Verónica quisiera literalmente que la IA ajuste la dosis sola, eso está
 fuera de lo que este proyecto puede construir sin violar `AGENTS.md`.
 
+## Lecciones de la auditoría de la Fase 5 (2026-08-18) — releer antes de tocar cualquier cálculo de dosis
+
+La primera versión de la calculadora de bolo pasó `pnpm verify` en verde y
+aun así el `domain-safety-reviewer` encontró **tres fallas bloqueantes**.
+Ninguna era un error de aritmética: las tres eran sobre *la procedencia de
+los datos que alimentan la fórmula*. Ese es el patrón a vigilar.
+
+1. **Un parámetro por defecto se ve idéntico a uno real.** `db.ts` sembraba
+   `targetGlucose: 110, correctionFactor: 45` para tener algo que mostrar, y
+   la pantalla nueva los usaba para calcular sin que Verónica los hubiera
+   confirmado nunca. Una dosis calculada con un factor de fábrica se ve en
+   pantalla exactamente igual que una correcta. Ahora existe la bandera
+   `therapyConfiguredAt` (`isTherapyConfigured()`): **cualquier pantalla que
+   convierta parámetros en unidades de insulina debe negarse a calcular
+   mientras sea falsa**, y debe además mostrar en el resultado con qué
+   parámetros calculó. Regla general: si un valor de terapia puede venir de
+   un default, no alcanza con validarlo — hay que poder distinguir "el
+   usuario lo eligió" de "venía puesto".
+2. **`origin: 'manual'` no estaba decidido.** El roadmap ya había anotado en
+   la Fase 2 que había que decidir explícitamente si una glucosa escrita a
+   mano cuenta como "actual" *antes* de crear la primera; se creó sin
+   decidir. Decisión tomada: **sí cuenta como actual** (un pinchazo de hace
+   un minuto es el dato más fresco que existe, excluirlo haría que la
+   calculadora ignore el mejor valor disponible), **pero nunca puede
+   atribuirse al sensor**. Para eso está `isSensorReading()` (solo
+   `origin: 'real'`): toda afirmación de procedencia ("EN LÍNEA", el nombre
+   del proveedor, "precargada desde el sensor") tiene que pasar por ahí.
+3. **Revalidar frescura contra la variable equivocada.** Los modales
+   precargaban la glucosa desde `latest` al abrirse, pero al momento de
+   calcular revalidaban `latest` — que ya no era la misma lectura, porque la
+   app refresca al volver del segundo plano. Resultado: una lectura nueva
+   "avalaba" un número viejo que seguía en el campo. Ahora se congela un
+   snapshot `{glucose, sourceTimestamp, isSensor, isSynthetic}` en el
+   momento del prefill y se valida **ese**. Regla general: si un valor se
+   copió de una fuente que sigue cambiando, hay que guardar la fuente, no
+   volver a leerla.
+
+Otras dos que valen como patrón: `saveUnifiedEntry` escribía 4-5 filas sin
+transacción (un rechazo de schema a mitad dejaba una entrada a medias que al
+reintentar se duplicaba, porque cada intento genera IDs nuevos — SQLite no
+tiene transacciones anidadas, por eso existen los cores
+`writeMealWithEpisode`/`writeCGMReading`); y una dosis ya copiada al campo
+de insulina sobrevivía a cambiar los carbohidratos que la produjeron.
+
+Sobre la corrección negativa (la decisión de diseño que se consultó
+explícitamente): **se mantiene**. Sumar una corrección con signo y limitar a
+0 solo el total es la convención estándar de las calculadoras de bolo, y
+clampear cada componente por separado le daría una dosis *mayor* justo a
+quien ya está bajo objetivo. La asimetría del error decide: sobreestimar
+causa hipoglucemia (minutos, potencialmente grave), subestimar causa
+hiperglucemia transitoria (horas, visible y corregible). Se agregó
+`isHypoglycemic` (umbral 70 mg/dL — constante clínica, no un parámetro de
+terapia del usuario; **no altera las unidades**, solo cambia el mensaje a
+"trata la hipoglucemia primero"). No se puso tope a cuánto puede restar la
+corrección inversa: ese tope sí sería un parámetro clínico y inventarlo
+sería exactamente lo que `AGENTS.md` prohíbe.
+
 ## Bugs/gaps encontrados probando la Fase 2 en el dispositivo (2026-08-17)
 
 Verónica importó su CSV real y reportó: no aparece ninguna glucosa en el

@@ -1,7 +1,7 @@
 import type { CGMReading } from '@type1a/schemas';
 import { describe, expect, it } from 'vitest';
 
-import { assessFreshness, latestLiveReading, liveReadings } from '../src/index.js';
+import { assessFreshness, isSensorReading, latestLiveReading, liveReadings } from '../src/index.js';
 
 describe('CGM freshness', () => {
   const now = new Date('2026-08-12T14:00:00.000Z');
@@ -19,6 +19,17 @@ describe('CGM freshness', () => {
 
   it('treats an implausible future source time as provider error', () => {
     expect(assessFreshness('2026-08-12T14:05:00.000Z', now, 15).state).toBe('provider_error');
+  });
+});
+
+describe('sensor provenance', () => {
+  it('counts only real sensor data as evidence the CGM is streaming', () => {
+    // Manual and synthetic readings can be "current" (see liveReadings) but
+    // must never make the UI claim the sensor is connected.
+    expect(isSensorReading(reading({ origin: 'real' }))).toBe(true);
+    expect(isSensorReading(reading({ origin: 'manual' }))).toBe(false);
+    expect(isSensorReading(reading({ origin: 'synthetic' }))).toBe(false);
+    expect(isSensorReading(reading({ origin: 'imported' }))).toBe(false);
   });
 });
 
@@ -71,6 +82,14 @@ describe('liveReadings', () => {
       reading({ id: 'live-2', sourceTimestamp: '2026-08-12T13:59:00.000Z', origin: 'real' }),
     ];
     expect(liveReadings(readings).map((entry) => entry.id)).toEqual(['live-1', 'synthetic-1', 'live-2']);
+  });
+
+  it('keeps a hand-entered reading as current — it is the freshest real value', () => {
+    const readings = [
+      reading({ id: 'live-1', sourceTimestamp: '2026-08-12T13:30:00.000Z', origin: 'real' }),
+      reading({ id: 'manual-1', sourceTimestamp: '2026-08-12T13:58:00.000Z', origin: 'manual' }),
+    ];
+    expect(latestLiveReading(readings)?.id).toBe('manual-1');
   });
 
   it('returns an empty array when every reading is imported', () => {

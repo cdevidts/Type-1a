@@ -160,13 +160,34 @@ export async function getTherapyProfile(db: SQLiteDatabase): Promise<TherapyProf
   return parsed.success ? parsed.data : DEFAULT_PROFILE;
 }
 
+/**
+ * The row seeded by `initializeDatabase` holds placeholder numbers so the
+ * app has something to render — they are NOT Verónica's therapy parameters
+ * until she has actually entered them. This flag is what tells the two apart.
+ * Any screen that turns these values into an insulin number must refuse to
+ * calculate while it is false; showing a dose derived from a shipped default
+ * would be inferring a therapy parameter, which AGENTS.md forbids.
+ */
+export const THERAPY_CONFIGURED_KEY = 'therapyConfiguredAt';
+
+export async function isTherapyConfigured(db: SQLiteDatabase): Promise<boolean> {
+  return (await getSetting(db, THERAPY_CONFIGURED_KEY)) !== null;
+}
+
 export async function saveTherapyProfile(db: SQLiteDatabase, profile: TherapyProfile): Promise<void> {
   const parsed = TherapyProfileSchema.parse(profile);
-  await db.runAsync(
-    'INSERT OR REPLACE INTO therapy_profile (id, payload, updated_at) VALUES (1, ?, ?)',
-    JSON.stringify(parsed),
-    new Date().toISOString(),
-  );
+  const now = new Date().toISOString();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      'INSERT OR REPLACE INTO therapy_profile (id, payload, updated_at) VALUES (1, ?, ?)',
+      JSON.stringify(parsed),
+      now,
+    );
+    // Saving only ever happens from a screen that showed the user these
+    // numbers in editable fields, so reaching here means they saw and
+    // accepted them — that is what "configured" means.
+    await setSetting(db, THERAPY_CONFIGURED_KEY, now);
+  });
 }
 
 export async function saveInsulinEvent(db: SQLiteDatabase, event: InsulinEvent): Promise<void> {
@@ -201,38 +222,58 @@ export async function saveCarbEvent(
   );
 }
 
-export async function saveMealWithEpisode(db: SQLiteDatabase, meal: MealEvent): Promise<string> {
+/**
+ * The writes behind `saveMealWithEpisode`, without opening a transaction of
+ * their own — SQLite has no nested transactions, so a caller that is already
+ * inside one (`saveUnifiedEntry`) must use this and let the outer
+ * transaction cover it.
+ */
+async function writeMealWithEpisode(db: SQLiteDatabase, meal: MealEvent): Promise<string> {
   const parsed = MealEventSchema.parse(meal);
   const episodeId = Crypto.randomUUID();
+  await db.runAsync(
+    'INSERT INTO meal_events (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
+    parsed.id,
+    parsed.timestamp,
+    JSON.stringify(parsed),
+    parsed.createdAt,
+  );
+  await db.runAsync(
+    `INSERT INTO meal_episodes
+      (id, meal_id, meal_timestamp, status, updated_at)
+     VALUES (?, ?, ?, 'collecting', ?)`,
+    episodeId,
+    parsed.id,
+    parsed.timestamp,
+    parsed.createdAt,
+  );
+  if (parsed.confirmedCarbsG !== undefined) {
+    await saveCarbEvent(db, {
+      id: Crypto.randomUUID(),
+      timestamp: parsed.timestamp,
+      carbsG: parsed.confirmedCarbsG,
+      source: 'meal_confirmed',
+      createdAt: parsed.createdAt,
+    });
+  }
+  return episodeId;
+}
+
+export async function saveMealWithEpisode(db: SQLiteDatabase, meal: MealEvent): Promise<string> {
+  let episodeId = '';
   await db.withTransactionAsync(async () => {
-    await db.runAsync(
-      'INSERT INTO meal_events (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
-      parsed.id,
-      parsed.timestamp,
-      JSON.stringify(parsed),
-      parsed.createdAt,
-    );
-    await db.runAsync(
-      `INSERT INTO meal_episodes
-        (id, meal_id, meal_timestamp, status, updated_at)
-       VALUES (?, ?, ?, 'collecting', ?)`,
-      episodeId,
-      parsed.id,
-      parsed.timestamp,
-      parsed.createdAt,
-    );
-    if (parsed.confirmedCarbsG !== undefined) {
-      await saveCarbEvent(db, {
-        id: Crypto.randomUUID(),
-        timestamp: parsed.timestamp,
-        carbsG: parsed.confirmedCarbsG,
-        source: 'meal_confirmed',
-        createdAt: parsed.createdAt,
-      });
-    }
+    episodeId = await writeMealWithEpisode(db, meal);
   });
   return episodeId;
 }
+
+/**
+ * Bounds mirrored from the event schemas in `@type1a/schemas`, checked
+ * before any row is written so a combined entry can't land half-saved.
+ */
+const InsulinUnitsSchema = InsulinEventSchema.shape.units;
+const CarbGramsSchema = CarbEventSchema.shape.carbsG;
+const GlucoseValueSchema = CGMReadingSchema.shape.glucose;
 
 export interface UnifiedEntryInput {
   manualGlucose?: number;
@@ -248,6 +289,15 @@ export interface UnifiedEntryInput {
   rapidUnits?: number;
   basalUnits?: number;
   note?: string;
+  /**
+   * When the entry happened, as shown to the user while filling the sheet.
+   * Passed in rather than taken at write time so a sheet left open for
+   * twenty minutes doesn't stamp everything — including the meal episode's
+   * +60/+120/+180 window — twenty minutes after the header said.
+   */
+  timestamp: string;
+  /** True when the rapid dose covers a correction as well as carbs. */
+  rapidIncludesCorrection?: boolean;
 }
 
 export interface UnifiedEntryOutcome {
@@ -273,7 +323,7 @@ export async function saveUnifiedEntry(
   db: SQLiteDatabase,
   input: UnifiedEntryInput,
 ): Promise<UnifiedEntryOutcome> {
-  const timestamp = new Date().toISOString();
+  const timestamp = input.timestamp;
   const outcome: UnifiedEntryOutcome = {
     episodeId: null,
     savedGlucose: false,
@@ -282,97 +332,118 @@ export async function saveUnifiedEntry(
     savedNote: false,
   };
 
-  if (input.manualGlucose !== undefined) {
-    // A value the user measured and typed. `origin: 'manual'` keeps it
-    // distinguishable from sensor data everywhere it is displayed, and
-    // sourceTimestamp/ingestedAt are both "now" because the measurement and
-    // its entry genuinely happened at the same time.
-    await upsertCGMReadings(db, [{
-      id: Crypto.randomUUID(),
-      glucose: input.manualGlucose,
-      unit: 'mg/dL',
-      timestamp,
-      trend: 'unknown',
-      trendSource: 'unknown',
-      source: 'entrada manual',
-      origin: 'manual',
-      sourceTimestamp: timestamp,
-      ingestedAt: timestamp,
-    }]);
-    outcome.savedGlucose = true;
-  }
+  // Validate every piece up front. Each write below is an independent
+  // INSERT, so a schema rejection partway through would otherwise leave a
+  // half-written entry the user can only "fix" by re-saving — duplicating
+  // everything that already landed, since each retry mints new ids.
+  if (input.rapidUnits !== undefined) InsulinUnitsSchema.parse(input.rapidUnits);
+  if (input.basalUnits !== undefined) InsulinUnitsSchema.parse(input.basalUnits);
+  if (input.carbsG !== undefined) CarbGramsSchema.parse(input.carbsG);
+  if (input.manualGlucose !== undefined) GlucoseValueSchema.parse(input.manualGlucose);
 
   const hasMeal = input.carbsG !== undefined || input.description !== undefined || input.imageUri !== undefined;
-  if (hasMeal) {
-    outcome.episodeId = await saveMealWithEpisode(db, {
-      id: Crypto.randomUUID(),
-      timestamp,
-      createdAt: timestamp,
-      ...(input.carbsG === undefined ? {} : { confirmedCarbsG: input.carbsG }),
-      ...(input.description === undefined ? {} : { note: input.description }),
-      ...(input.imageUri === undefined ? {} : { imageUri: input.imageUri }),
-      ...(input.aiEstimatedCarbsG === undefined ? {} : { aiEstimatedCarbsG: input.aiEstimatedCarbsG }),
-      ...(input.proteinG === undefined ? {} : { proteinG: input.proteinG }),
-      ...(input.fatG === undefined ? {} : { fatG: input.fatG }),
-      ...(input.fiberG === undefined ? {} : { fiberG: input.fiberG }),
-      ...(input.caloriesKcal === undefined ? {} : { caloriesKcal: input.caloriesKcal }),
-      ...(input.aiAnalysisId === undefined ? {} : { aiAnalysisId: input.aiAnalysisId }),
-    });
-  }
 
-  if (input.rapidUnits !== undefined) {
-    await saveInsulinEvent(db, {
-      id: Crypto.randomUUID(),
-      timestamp,
-      type: 'rapid',
-      units: input.rapidUnits,
-      source: 'manual',
-      createdAt: timestamp,
+  await db.withTransactionAsync(async () => {
+    if (input.manualGlucose !== undefined) {
+      // A value the user measured and typed. `origin: 'manual'` keeps it
+      // distinguishable from sensor data everywhere it is displayed, and
+      // sourceTimestamp/ingestedAt are both the entry time because the
+      // measurement and its entry genuinely happened together.
+      await writeCGMReading(db, {
+        id: Crypto.randomUUID(),
+        glucose: input.manualGlucose,
+        unit: 'mg/dL',
+        timestamp,
+        trend: 'unknown',
+        trendSource: 'unknown',
+        source: 'entrada manual',
+        origin: 'manual',
+        sourceTimestamp: timestamp,
+        ingestedAt: timestamp,
+      });
+      outcome.savedGlucose = true;
+    }
+
+    if (hasMeal) {
+      outcome.episodeId = await writeMealWithEpisode(db, {
+        id: Crypto.randomUUID(),
+        timestamp,
+        createdAt: timestamp,
+        ...(input.carbsG === undefined ? {} : { confirmedCarbsG: input.carbsG }),
+        ...(input.description === undefined ? {} : { note: input.description }),
+        ...(input.imageUri === undefined ? {} : { imageUri: input.imageUri }),
+        ...(input.aiEstimatedCarbsG === undefined ? {} : { aiEstimatedCarbsG: input.aiEstimatedCarbsG }),
+        ...(input.proteinG === undefined ? {} : { proteinG: input.proteinG }),
+        ...(input.fatG === undefined ? {} : { fatG: input.fatG }),
+        ...(input.fiberG === undefined ? {} : { fiberG: input.fiberG }),
+        ...(input.caloriesKcal === undefined ? {} : { caloriesKcal: input.caloriesKcal }),
+        ...(input.aiAnalysisId === undefined ? {} : { aiAnalysisId: input.aiAnalysisId }),
+      });
+    }
+
+    if (input.rapidUnits !== undefined) {
       // Descriptive bookkeeping only — `purpose` never feeds a calculation.
-      purpose: hasMeal ? (outcome.savedGlucose ? 'combined' : 'meal') : 'correction',
-    });
-    outcome.savedRapid = true;
-  }
+      // It reflects what the dose actually covered, which is why it keys off
+      // whether a correction was included rather than off where the glucose
+      // value came from.
+      const includesCorrection = input.rapidIncludesCorrection === true;
+      await saveInsulinEvent(db, {
+        id: Crypto.randomUUID(),
+        timestamp,
+        type: 'rapid',
+        units: input.rapidUnits,
+        source: 'manual',
+        createdAt: timestamp,
+        purpose: hasMeal ? (includesCorrection ? 'combined' : 'meal') : 'correction',
+      });
+      outcome.savedRapid = true;
+    }
 
-  if (input.basalUnits !== undefined) {
-    await saveInsulinEvent(db, {
-      id: Crypto.randomUUID(),
-      timestamp,
-      type: 'basal',
-      units: input.basalUnits,
-      source: 'manual',
-      createdAt: timestamp,
-    });
-    outcome.savedBasal = true;
-  }
+    if (input.basalUnits !== undefined) {
+      await saveInsulinEvent(db, {
+        id: Crypto.randomUUID(),
+        timestamp,
+        type: 'basal',
+        units: input.basalUnits,
+        source: 'manual',
+        createdAt: timestamp,
+      });
+      outcome.savedBasal = true;
+    }
 
-  if (input.note !== undefined) {
-    await saveNoteEvent(db, {
-      id: Crypto.randomUUID(),
-      timestamp,
-      text: input.note,
-      source: 'manual',
-      createdAt: timestamp,
-    });
-    outcome.savedNote = true;
-  }
+    if (input.note !== undefined) {
+      await saveNoteEvent(db, {
+        id: Crypto.randomUUID(),
+        timestamp,
+        text: input.note,
+        source: 'manual',
+        createdAt: timestamp,
+      });
+      outcome.savedNote = true;
+    }
+  });
 
   return outcome;
+}
+
+/** Non-transactional core — see `writeMealWithEpisode` for why this exists. */
+async function writeCGMReading(db: SQLiteDatabase, reading: CGMReading): Promise<void> {
+  const parsed = CGMReadingSchema.parse(reading);
+  await db.runAsync(
+    `INSERT OR REPLACE INTO cgm_readings
+      (id, source_timestamp, payload, ingested_at) VALUES (?, ?, ?, ?)`,
+    parsed.id,
+    parsed.sourceTimestamp,
+    JSON.stringify(parsed),
+    parsed.ingestedAt,
+  );
 }
 
 export async function upsertCGMReadings(db: SQLiteDatabase, readings: readonly CGMReading[]): Promise<void> {
   if (readings.length === 0) return;
   await db.withTransactionAsync(async () => {
     for (const reading of readings) {
-      const parsed = CGMReadingSchema.parse(reading);
-      await db.runAsync(
-        `INSERT OR REPLACE INTO cgm_readings
-          (id, source_timestamp, payload, ingested_at) VALUES (?, ?, ?, ?)`,
-        parsed.id,
-        parsed.sourceTimestamp,
-        JSON.stringify(parsed),
-        parsed.ingestedAt,
-      );
+      await writeCGMReading(db, reading);
     }
   });
 }

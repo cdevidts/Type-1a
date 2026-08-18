@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { assessFreshness, calculateCorrection, type CorrectionResult } from '@type1a/domain';
+import { assessFreshness, calculateCorrection, isSensorReading, type CorrectionResult } from '@type1a/domain';
 import type { CGMReading, InsulinEvent, TherapyProfile } from '@type1a/schemas';
 
 import { formatDayTime, parsePositiveNumber } from '../format';
@@ -57,7 +57,12 @@ export function CorrectionModal({
   const [target, setTarget] = useState(String(profile.targetGlucose));
   const [factor, setFactor] = useState(String(profile.correctionFactor));
   const [increment, setIncrement] = useState(String(profile.doseIncrement));
-  const [usingLiveReading, setUsingLiveReading] = useState(false);
+  /**
+   * The reading that filled the field, frozen at prefill time. `latest` keeps
+   * changing underneath us (the app refreshes on foreground), so validating
+   * freshness against it would check a newer reading than the number shown.
+   */
+  const [prefilled, setPrefilled] = useState<{ glucose: number; sourceTimestamp: string; isSensor: boolean; isSynthetic: boolean } | null>(null);
   const [result, setResult] = useState<CorrectionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -75,7 +80,14 @@ export function CorrectionModal({
     if (visible && !wasVisibleRef.current) {
       const canUseReading = latest !== null && assessFreshness(latest.sourceTimestamp).state === 'connected';
       setCurrent(canUseReading ? String(latest.glucose) : '');
-      setUsingLiveReading(canUseReading);
+      setPrefilled(canUseReading && latest !== null
+        ? {
+            glucose: latest.glucose,
+            sourceTimestamp: latest.sourceTimestamp,
+            isSensor: isSensorReading(latest),
+            isSynthetic: latest.origin === 'synthetic',
+          }
+        : null);
       setTarget(String(profile.targetGlucose));
       setFactor(String(profile.correctionFactor));
       setIncrement(String(profile.doseIncrement));
@@ -94,11 +106,20 @@ export function CorrectionModal({
       setError('Revisa glucosa, objetivo, factor e incremento (máximo 1 U).');
       return;
     }
-    if (usingLiveReading && (latest === null || assessFreshness(latest.sourceTimestamp).state !== 'connected')) {
-      setUsingLiveReading(false);
-      setCurrent('');
-      setError('La lectura dejó de estar vigente. Ingresa una glucosa actual manualmente.');
-      return;
+    // Validate the snapshot that filled the field, not whatever `latest` has
+    // refreshed to since — otherwise a newer reading can vouch for an older
+    // number still sitting in the input.
+    if (prefilled !== null && currentGlucose === prefilled.glucose) {
+      if (assessFreshness(prefilled.sourceTimestamp).state !== 'connected') {
+        setPrefilled(null);
+        setCurrent('');
+        setError('La lectura dejó de estar vigente. Ingresa una glucosa actual manualmente.');
+        return;
+      }
+      if (prefilled.isSynthetic) {
+        setError('La glucosa precargada es sintética (modo demo). Escribe una medición real antes de calcular.');
+        return;
+      }
     }
     const nextProfile: TherapyProfile = {
       ...profile,
@@ -131,8 +152,6 @@ export function CorrectionModal({
     }
   }
 
-  const staleOrMissing = latest === null || assessFreshness(latest.sourceTimestamp).state !== 'connected';
-
   return (
     <ModalShell visible={visible} title="Corrección experimental" onClose={onClose}>
       <View style={styles.warningBox}>
@@ -140,17 +159,25 @@ export function CorrectionModal({
         <Text style={styles.warningText}>Usa solo los parámetros indicados por tu equipo clínico. Type 1A no calcula insulina activa (IOB) ni resta dosis anteriores.</Text>
       </View>
 
-      {staleOrMissing ? (
-        <Text style={styles.staleText}>La lectura CGM no está vigente y no se usó automáticamente. Escribe una medición actual.</Text>
+      {prefilled === null ? (
+        <Text style={styles.staleText}>No hay lectura vigente para precargar. Escribe una medición actual.</Text>
+      ) : prefilled.isSynthetic ? (
+        <Text style={styles.syntheticText}>
+          Glucosa precargada SINTÉTICA (modo demo) · {formatDayTime(prefilled.sourceTimestamp)}. No sirve para dosificar.
+        </Text>
+      ) : prefilled.isSensor ? (
+        <Text style={styles.liveText}>Glucosa precargada desde el sensor · {formatDayTime(prefilled.sourceTimestamp)}</Text>
       ) : (
-        <Text style={styles.liveText}>Glucosa precargada desde CGM · {formatDayTime(latest.sourceTimestamp)}</Text>
+        <Text style={styles.manualText}>
+          Glucosa precargada desde tu última medición manual · {formatDayTime(prefilled.sourceTimestamp)} (no viene del sensor)
+        </Text>
       )}
 
       <Field
         label="Glucosa actual"
         value={current}
         unit="mg/dL"
-        onChange={(value) => { setCurrent(value); setUsingLiveReading(false); setResult(null); }}
+        onChange={(value) => { setCurrent(value); setPrefilled(null); setResult(null); }}
       />
       <View style={styles.row}>
         <Field label="Objetivo" value={target} unit="mg/dL" onChange={(value) => { setTarget(value); setResult(null); }} />
@@ -196,6 +223,8 @@ const styles = StyleSheet.create({
   warningText: { color: colors.warning, fontSize: 13, lineHeight: 19, marginTop: 4 },
   staleText: { color: colors.red, fontSize: 13, lineHeight: 19, marginTop: spacing.lg },
   liveText: { color: colors.green, fontSize: 13, marginTop: spacing.lg },
+  manualText: { color: colors.navy, fontSize: 13, lineHeight: 19, marginTop: spacing.lg },
+  syntheticText: { color: colors.warning, fontSize: 13, lineHeight: 19, marginTop: spacing.lg, fontWeight: '700' },
   field: { flex: 1, marginTop: spacing.lg },
   fieldLabel: { color: colors.navy, fontSize: 12, fontWeight: '800' },
   fieldInputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.sm, borderColor: colors.line, borderWidth: 1, marginTop: 6, paddingHorizontal: spacing.md },

@@ -43,6 +43,7 @@ import {
   getTimeline,
   importMySugrCsv,
   initializeDatabase,
+  isTherapyConfigured,
   saveCarbEvent,
   saveInsulinEvent,
   saveMealWithEpisode,
@@ -78,6 +79,7 @@ function Type1AApp() {
   const [status, setStatus] = useState<CGMProviderStatus | null>(null);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [profile, setProfile] = useState<TherapyProfile>(EMPTY_PROFILE);
+  const [therapyConfigured, setTherapyConfigured] = useState(false);
   const [recentRapid, setRecentRapid] = useState<InsulinEvent[]>([]);
   const [pendingAssociations, setPendingAssociations] = useState<PendingInsulinAssociation[]>([]);
   const [quickRoute, setQuickRoute] = useState<QuickRoute | null>(null);
@@ -99,10 +101,11 @@ function Type1AApp() {
     // latestLiveReading() finds the true latest live point regardless of
     // how wide this window is.
     const from = new Date(to.getTime() - 30 * 24 * 60 * 60_000);
-    const [cached, nextTimeline, nextProfile, rapid, privacy, pending] = await Promise.all([
+    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending] = await Promise.all([
       getCGMReadings(db, from, to),
       getTimeline(db),
       getTherapyProfile(db),
+      isTherapyConfigured(db),
       getRecentRapidInsulin(db),
       getSetting(db, 'showGlucoseOnLockScreen'),
       getPendingInsulinAssociations(db),
@@ -110,6 +113,7 @@ function Type1AApp() {
     setReadings(cached);
     setTimeline(nextTimeline);
     setProfile(nextProfile);
+    setTherapyConfigured(configured);
     setRecentRapid(rapid);
     setShowGlucoseOnLockScreen(privacy === 'true');
     setPendingAssociations(pending);
@@ -244,6 +248,8 @@ function Type1AApp() {
 
   async function saveEntry(draft: UnifiedEntryDraft): Promise<void> {
     const outcome = await saveUnifiedEntry(db, {
+      timestamp: draft.timestamp,
+      rapidIncludesCorrection: draft.rapidIncludesCorrection,
       ...(draft.manualGlucose === undefined ? {} : { manualGlucose: draft.manualGlucose }),
       ...(draft.description === undefined ? {} : { description: draft.description }),
       ...(draft.carbsG === undefined ? {} : { carbsG: draft.carbsG }),
@@ -263,7 +269,7 @@ function Type1AApp() {
           }),
     });
     if (outcome.episodeId !== null) {
-      await scheduleEpisodeNotifications(outcome.episodeId, new Date().toISOString());
+      await scheduleEpisodeNotifications(outcome.episodeId, draft.timestamp);
     }
     const saved = [
       outcome.savedGlucose ? 'glucosa' : null,
@@ -383,6 +389,7 @@ function Type1AApp() {
         visible={entryOpen}
         latest={latest}
         profile={profile}
+        therapyConfigured={therapyConfigured}
         onClose={() => { setEntryOpen(false); }}
         onSave={saveEntry}
       />
