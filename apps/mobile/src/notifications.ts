@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 
 import type { CGMReading } from '@type1a/schemas';
 
-import { trendArrow } from './format';
+import { formatClock, trendArrow } from './format';
 import type { QuickRoute } from './types';
 
 export const QUICK_CATEGORY = 'type1a-quick-entry';
@@ -64,13 +64,22 @@ export async function enableQuickEntryNotification(
   const permission = await Notifications.requestPermissionsAsync();
   if (!permission.granted) return false;
   await configureNotifications();
+  // This notification is sticky and never refreshes, so the number frozen
+  // into it stops being current the moment it's posted. Stamping it with the
+  // reading's own clock time — and marking anything that isn't real sensor
+  // data — keeps it from reading as a live value. The real fix (a
+  // notification that actually updates) belongs to Fase 7; see
+  // docs/ROADMAP_V0.2.md.
+  const originMark = reading === null || reading.origin === 'real'
+    ? ''
+    : reading.origin === 'synthetic' ? ' (sintético)' : ' (manual)';
   const glucoseText = showGlucose && reading !== null
-    ? `${reading.glucose} ${trendArrow[reading.trend]} mg/dL`
+    ? `${reading.glucose} ${trendArrow[reading.trend]} mg/dL · ${formatClock(reading.sourceTimestamp)}${originMark}`
     : 'Glucosa oculta';
   await Notifications.scheduleNotificationAsync({
     content: {
       title: `Type 1A · ${glucoseText}`,
-      body: 'Registro rápido. Toca para abrir; basal está dentro de la app.',
+      body: 'Valor del momento en que se activó, no se actualiza solo. Toca para abrir.',
       categoryIdentifier: QUICK_CATEGORY,
       data: { url: 'type1a://quick/carbs' },
       sticky: true,

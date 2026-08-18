@@ -336,6 +336,21 @@ export function EntryModal({
   }
 
   async function save(): Promise<void> {
+    // A calculated dose doesn't expire on its own: `rapidStale` only fires
+    // when the inputs are *edited*, so a sheet left open while the glucose
+    // it was built from goes stale would still save that dose. Re-check at
+    // save time, and only for a number that came from the calculator — a
+    // hand-typed dose is the user's own decision and isn't ours to expire.
+    // Nothing typed is discarded: she can retype the units and save.
+    if (rapidFromCalculator && prefilled !== null
+      && assessFreshness(prefilled.sourceTimestamp).state !== 'connected') {
+      setPrefilled(null);
+      setGlucose('');
+      setSuggestion(null);
+      setRapidStale(true);
+      setMessage('La glucosa que originó esta dosis ya no está vigente. Escribe una glucosa actual y vuelve a calcular, o escribe a mano las unidades que te vas a poner.');
+      return;
+    }
     const carbsG = carbs.trim() === '' ? undefined : parseNonNegativeNumber(carbs);
     const rapidUnits = rapid.trim() === '' ? undefined : parsePositiveNumber(rapid);
     const basalUnits = basal.trim() === '' ? undefined : parsePositiveNumber(basal);

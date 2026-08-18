@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { assessFreshness, calculateCorrection, isSensorReading, type CorrectionResult } from '@type1a/domain';
 import type { CGMReading, InsulinEvent, TherapyProfile } from '@type1a/schemas';
 
-import { formatDayTime, parsePositiveNumber } from '../format';
+import { formatClock, formatDayTime, parsePositiveNumber } from '../format';
 import { colors, radius, spacing } from '../theme';
 import { ModalShell } from './ModalShell';
 
@@ -57,9 +57,13 @@ export function CorrectionModal({
   onRegister: (units: number) => Promise<void>;
 }) {
   const [current, setCurrent] = useState('');
-  const [target, setTarget] = useState(String(profile.targetGlucose));
-  const [factor, setFactor] = useState(String(profile.correctionFactor));
-  const [increment, setIncrement] = useState(String(profile.doseIncrement));
+  // Empty until configured, matching Ajustes. Showing the shipped
+  // placeholders here would contradict the notice there that the app doesn't
+  // propose therapy values — and three plausible-looking numbers read as a
+  // recommendation, which is exactly what she must not copy back into Ajustes.
+  const [target, setTarget] = useState(therapyConfigured ? String(profile.targetGlucose) : '');
+  const [factor, setFactor] = useState(therapyConfigured ? String(profile.correctionFactor) : '');
+  const [increment, setIncrement] = useState(therapyConfigured ? String(profile.doseIncrement) : '');
   /**
    * The reading that filled the field, frozen at prefill time. `latest` keeps
    * changing underneath us (the app refreshes on foreground), so validating
@@ -67,6 +71,9 @@ export function CorrectionModal({
    */
   const [prefilled, setPrefilled] = useState<{ glucose: number; sourceTimestamp: string; isSensor: boolean; isSynthetic: boolean } | null>(null);
   const [result, setResult] = useState<CorrectionResult | null>(null);
+  // Stamped so a dose built from a hand-typed glucose — which the app
+  // deliberately never expires — still shows its own age.
+  const [calculatedAt, setCalculatedAt] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -91,14 +98,14 @@ export function CorrectionModal({
             isSynthetic: latest.origin === 'synthetic',
           }
         : null);
-      setTarget(String(profile.targetGlucose));
-      setFactor(String(profile.correctionFactor));
-      setIncrement(String(profile.doseIncrement));
+      setTarget(therapyConfigured ? String(profile.targetGlucose) : '');
+      setFactor(therapyConfigured ? String(profile.correctionFactor) : '');
+      setIncrement(therapyConfigured ? String(profile.doseIncrement) : '');
       setResult(null);
       setError(null);
     }
     wasVisibleRef.current = visible;
-  }, [visible, latest, profile]);
+  }, [visible, latest, profile, therapyConfigured]);
 
   async function calculate(): Promise<void> {
     // The fields below arrive pre-filled with the values the app ships with,
@@ -154,6 +161,7 @@ export function CorrectionModal({
     try {
       await onSaveProfile(nextProfile);
       setResult(calculateCorrection({ currentGlucose, targetGlucose, correctionFactor, doseIncrement }));
+      setCalculatedAt(new Date().toISOString());
     } catch {
       setError('No se pudieron guardar los parámetros.');
     } finally {
@@ -235,7 +243,7 @@ export function CorrectionModal({
 
       {result === null ? null : (
         <View style={styles.resultBox}>
-          <Text style={styles.resultLabel}>RESULTADO DE LA FÓRMULA</Text>
+          <Text style={styles.resultLabel}>RESULTADO DE LA FÓRMULA · {formatClock(calculatedAt)}</Text>
           <Text style={styles.resultValue}>{result.roundedUnits} U</Text>
           <Text style={styles.formula}>{result.formula} = {result.rawUnits.toFixed(2)} U, redondeado al incremento.</Text>
           {result.isBelowTarget ? <Text style={styles.below}>Glucosa bajo el objetivo: el resultado se limita a 0 U.</Text> : null}
