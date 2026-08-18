@@ -494,6 +494,38 @@ nueva (ancla de sensor nunca mutada/borrada) quedó cubierta solo por
 typecheck + revisión de seguridad, no por un test unitario — vale la pena
 montar un test con SQLite en memoria antes de que esa lógica crezca más.
 
+## No-bug encontrado en dispositivo (2026-08-18) — estimación por texto: backend desplegado desactualizado
+
+Verónica reportó que "la parte para aproximar carbohidratos con IA usando
+texto no funciona, solo con fotos". Investigado: **el código está bien y
+probado** (`packages/ai/src/abacus.ts`, `apps/api/src/app.ts`'s
+`MealAnalysisBodySchema` union, `apps/mobile/src/components/EntryModal.tsx` y
+`MealModal.tsx`'s `analyzeFromDescription()` — todo correctamente wireado, tal
+como quedó documentado cuando se implementó). El problema es que el **backend
+desplegado en producción** (`https://237e8b7f1.abacusai.cloud`, el mismo host
+citado en la Fase 0/bug 502, desplegado y actualizado por "DeepAgent", una
+herramienta externa a este repo/sesión de Claude Code) sigue corriendo una
+versión **anterior** a la que agregó el camino solo-texto.
+
+**Verificado con curl directo contra el servidor real**:
+```
+POST /v1/ai/meal-analysis {"description":"una manzana"}
+→ 400 {"error":{"code":"invalid_image","message":"La imagen o su descripción
+   no son válidas.","retryable":false}}
+```
+El código `invalid_image` y ese mensaje **no existen en el `app.ts` actual**
+(hoy sería `invalid_meal_input` / "Falta una imagen válida o una descripción
+de texto."), lo que confirma que el servidor desplegado predata este cambio.
+
+**No es accionable desde esta sesión**: no hay credenciales ni script de
+deploy para ese host en este repo (solo `apps/api` tiene un `start` local vía
+`tsx src/server.ts`); el redeploy a producción lo dispara "DeepAgent" por
+fuera de Claude Code, como ya pasó una vez para el bug 502 (línea ~128 de
+este documento — "Redeploy verificado en producción por DeepAgent"). **Acción
+pendiente de Verónica**: pedir/disparar un redeploy de `apps/api` a
+producción; una vez hecho, el camino de texto debería funcionar sin ningún
+cambio de código adicional — se puede reverificar con el mismo curl de arriba.
+
 ## Bug encontrado en dispositivo (2026-08-18) — crash de SQLite al tocar "Actualizar" varias veces
 
 El riesgo de doble-conexión SQLCipher que quedó anotado como "sin probar en
