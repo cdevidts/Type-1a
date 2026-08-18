@@ -43,6 +43,10 @@ Otros documentos de contexto en `docs/`:
 - `RESEARCH_SOURCES.md` — fuentes usadas para las decisiones de arriba.
 - `UX_GUIDELINES.md` — reglas de diseño/interacción (HIG + apps de salud)
   aplicadas a los componentes reales de `apps/mobile/src/components/`.
+- `AI_CHAT_ARCHITECTURE.md` — documento vivo: qué funciones de la app debe
+  poder alcanzar el futuro chat de IA y con qué arquitectura, sin cruzar las
+  fronteras de seguridad de `AGENTS.md`. Ver "Constancia para el chat de IA"
+  más abajo.
 - `adr/` — decisiones de arquitectura (local-first, límite de IA).
 
 ## Comandos de desarrollo
@@ -88,3 +92,21 @@ que el código compila y pasa tests.
   no se mantiene junto con el código.
 - No hardcodees claves de Abacus/Junction/firma en ningún archivo que se
   empaquete en `apps/mobile`.
+
+## Constancia para el chat de IA (al final de cada corrida)
+
+Pedido explícito de Verónica (2026-08-18): mantener vivo
+[`docs/AI_CHAT_ARCHITECTURE.md`](docs/AI_CHAT_ARCHITECTURE.md). Al terminar
+cualquier corrida que **agregue o cambie una capacidad de la app** (una función
+de `db.ts`, un endpoint de `apps/api`, un módulo de `packages/domain`, una
+integración externa, un ajuste nuevo), actualiza ese documento en la **misma
+corrida**:
+
+- agrega la capacidad nueva al catálogo (§3), marcada R (lectura) o W
+  (escritura), con de dónde sale y su nota de seguridad;
+- si aprendiste algo sobre la mejor arquitectura para que el chat acceda a las
+  funciones sin romper las fronteras de `AGENTS.md`, déjalo escrito en §2 o §5.
+
+La idea es que, cuando armemos el chat en su fase, no se nos escape ninguna
+función y el chat nazca poderoso y con buenas prácticas. Si no se mantiene junto
+al código, se desactualiza y el chat nacerá ciego a media app.

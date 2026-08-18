@@ -28,7 +28,7 @@ import {
   type VitalsEvent,
 } from '@type1a/schemas';
 
-import type { PendingInsulinAssociation, StoredMealEpisode, TimelineItem } from './types';
+import type { PendingInsulinAssociation, ReminderAlertStyle, StoredMealEpisode, TimelineItem } from './types';
 
 const DATABASE_KEY_NAME = 'type1a.database-key.v1';
 
@@ -684,11 +684,23 @@ export async function updateUnifiedEntryGroup(
   };
 
   await db.withTransactionAsync(async () => {
-    const existingGlucose = await db.getFirstAsync<{ id: string }>(
-      'SELECT id FROM cgm_readings WHERE entry_group_id = ?',
+    const existingGlucose = await db.getFirstAsync<{ id: string; payload: string }>(
+      'SELECT id, payload FROM cgm_readings WHERE entry_group_id = ?',
       entryGroupId,
     );
-    if (input.manualGlucose !== undefined) {
+    // A non-'manual' anchor is a real sensor/imported/synthetic reading this
+    // entry was attached to after the fact (attachEntryToReading). It is a
+    // record of what that source reported, never something this edit may
+    // rewrite or delete — the edit form keeps it read-only, so
+    // `input.manualGlucose` is undefined for these, and the delete-when-
+    // omitted branch below must NOT fire against it.
+    const anchorOrigin = existingGlucose === null
+      ? null
+      : CGMReadingSchema.parse(JSON.parse(existingGlucose.payload)).origin;
+    const hasSensorAnchor = anchorOrigin !== null && anchorOrigin !== 'manual';
+    if (hasSensorAnchor) {
+      outcome.savedGlucose = true; // present and preserved, just untouched
+    } else if (input.manualGlucose !== undefined) {
       if (existingGlucose === null) {
         await writeCGMReading(db, {
           id: Crypto.randomUUID(),
@@ -799,17 +811,99 @@ export async function updateUnifiedEntryGroup(
     } else if (existingNote !== null) {
       await deleteNoteEvent(db, existingNote.id);
     }
+
+    // If a sensor-anchored entry has had every attachment removed, it's no
+    // longer an "entry" — just the plain sensor reading again. Detach it
+    // (clear the group id) rather than leave a one-item group that would
+    // render as "Entrada registrada" wrapping a lone glucose value. The
+    // reading itself is never deleted here.
+    if (hasSensorAnchor && existingGlucose !== null
+      && !hasMeal && input.rapidUnits === undefined && input.basalUnits === undefined && input.note === undefined) {
+      await db.runAsync('UPDATE cgm_readings SET entry_group_id = NULL WHERE id = ?', existingGlucose.id);
+    }
   });
 
   return outcome;
 }
 
-/** Deletes every row tagged with this group — the whole packaged entry, not one field of it. */
+/**
+ * Turns a standalone glucose reading into a packaged entry by attaching a
+ * meal/carbs, insulin, and/or a note to it — Verónica logging what she ate
+ * against an auto-saved sensor reading from the time she measured ("la hora
+ * en que comí y me pinché"). The reading keeps its own value, origin, and
+ * timestamp untouched; the attachments are written with the reading's
+ * `sourceTimestamp` so they read as one moment, and tagged with a new group
+ * id so the whole thing is edited together from then on.
+ *
+ * For a hand-typed 'manual' reading, `input.manualGlucose` may also correct
+ * the value; for any other origin it's ignored (the value is a record of what
+ * the sensor reported, never rewritten — same rule as updateManualCGMReading).
+ */
+export async function attachEntryToReading(
+  db: SQLiteDatabase,
+  readingId: string,
+  input: Omit<UnifiedEntryInput, 'timestamp'>,
+): Promise<UnifiedEntryOutcome> {
+  const row = await db.getFirstAsync<{ payload: string; entry_group_id: string | null }>(
+    'SELECT payload, entry_group_id FROM cgm_readings WHERE id = ?',
+    readingId,
+  );
+  if (row === null) throw new Error('La lectura ya no existe.');
+  if (row.entry_group_id !== null) {
+    // Already part of a group — the caller should be editing it via
+    // updateUnifiedEntryGroup, not re-attaching. Guarded so a double-tap
+    // can't mint a second group id over the same reading.
+    throw new Error('Esta lectura ya es parte de una entrada.');
+  }
+  const reading = CGMReadingSchema.parse(JSON.parse(row.payload));
+  // Validate the attachments up front, before tagging the reading — the only
+  // pre-write throw inside the delegated updateUnifiedEntryGroup is this same
+  // validation, so doing it here first means a bad input can't leave the
+  // reading tagged into a one-item group with nothing attached.
+  if (input.rapidUnits !== undefined) InsulinUnitsSchema.parse(input.rapidUnits);
+  if (input.basalUnits !== undefined) InsulinUnitsSchema.parse(input.basalUnits);
+  if (input.carbsG !== undefined) CarbGramsSchema.parse(input.carbsG);
+  if (input.manualGlucose !== undefined) GlucoseValueSchema.parse(input.manualGlucose);
+  const entryGroupId = Crypto.randomUUID();
+  await db.runAsync('UPDATE cgm_readings SET entry_group_id = ? WHERE id = ?', entryGroupId, readingId);
+  // Delegate the attachment writes to the same in-place editor used for every
+  // later edit, so there's one code path (and one set of safety rules) for a
+  // group's contents. It preserves the now-anchored reading because its origin
+  // isn't 'manual' — or, for a manual reading, applies `manualGlucose` if given.
+  // The glucose value is only ever forwarded for a 'manual' reading; for any
+  // other origin it's dropped entirely, never passed as undefined.
+  const { manualGlucose, ...rest } = input;
+  const glucoseOverride = reading.origin === 'manual' && manualGlucose !== undefined ? { manualGlucose } : {};
+  return updateUnifiedEntryGroup(db, entryGroupId, {
+    ...rest,
+    ...glucoseOverride,
+    timestamp: reading.sourceTimestamp,
+  });
+}
+
+/**
+ * Deletes a packaged entry. A hand-typed 'manual' anchor is part of the
+ * entry and gets deleted with it; a sensor/imported/synthetic anchor is real
+ * source data, so it is preserved and simply detached (its group id cleared)
+ * while the attachments are removed — deleting the "entry" must never destroy
+ * a real sensor reading.
+ */
 export async function deleteUnifiedEntryGroup(db: SQLiteDatabase, entryGroupId: string): Promise<void> {
   await db.withTransactionAsync(async () => {
     const meal = await db.getFirstAsync<{ id: string }>('SELECT id FROM meal_events WHERE entry_group_id = ?', entryGroupId);
     if (meal !== null) await deleteMealEventRows(db, meal.id); // cascades the episode, cleans up the linked carb_events row
-    await db.runAsync('DELETE FROM cgm_readings WHERE entry_group_id = ?', entryGroupId);
+    const glucose = await db.getFirstAsync<{ id: string; payload: string }>(
+      'SELECT id, payload FROM cgm_readings WHERE entry_group_id = ?',
+      entryGroupId,
+    );
+    if (glucose !== null) {
+      const origin = CGMReadingSchema.parse(JSON.parse(glucose.payload)).origin;
+      if (origin === 'manual') {
+        await db.runAsync('DELETE FROM cgm_readings WHERE id = ?', glucose.id);
+      } else {
+        await db.runAsync('UPDATE cgm_readings SET entry_group_id = NULL WHERE id = ?', glucose.id);
+      }
+    }
     await db.runAsync('DELETE FROM insulin_events WHERE entry_group_id = ?', entryGroupId);
     await db.runAsync('DELETE FROM note_events WHERE entry_group_id = ?', entryGroupId);
   });
@@ -1215,6 +1309,22 @@ interface EntryGroupAccumulator {
   note?: NoteEvent;
 }
 
+/**
+ * The provenance suffix shown after a glucose value everywhere in the
+ * Timeline. A live sensor reading ('real') gets none — it's the baseline
+ * everything else is distinguished FROM; anything else says what it is, so a
+ * fingerstick, an import, or synthetic demo data never reads as live sensor
+ * data (AGENTS.md).
+ */
+function glucoseOriginSuffix(origin: CGMReading['origin']): string {
+  switch (origin) {
+    case 'imported': return ' · importado';
+    case 'synthetic': return ' · sintético';
+    case 'manual': return ' · manual';
+    default: return '';
+  }
+}
+
 export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<TimelineItem[]> {
   const [insulinRows, carbRows, mealRows, episodeRows, glucoseRows, noteRows] = await Promise.all([
     db.getAllAsync<{ payload: string; entry_group_id: string | null }>(
@@ -1333,19 +1443,12 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
     }
     // Anything that isn't real sensor data says so, in the list itself —
     // a manual fingerstick and a sensor reading must not look identical.
-    const originSuffix = reading.data.origin === 'imported'
-      ? ' · importado'
-      : reading.data.origin === 'synthetic'
-        ? ' · sintético'
-        : reading.data.origin === 'manual'
-          ? ' · manual'
-          : '';
     items.push({
       id: reading.data.id,
       kind: 'glucose',
       timestamp: reading.data.sourceTimestamp,
       title: 'Glucosa',
-      detail: `${reading.data.glucose} mg/dL${originSuffix}`,
+      detail: `${reading.data.glucose} mg/dL${glucoseOriginSuffix(reading.data.origin)}`,
       tone: reading.data.origin === 'synthetic'
         ? 'warning'
         : reading.data.origin === 'imported' || reading.data.origin === 'manual'
@@ -1387,11 +1490,11 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
 
   for (const [entryGroupId, group] of groups) {
     const parts = [
-      // Grouped glucose is always origin:'manual' (the only two write sites
-      // for a grouped reading hardcode it) — stating that here matches the
-      // app's rule that every glucose display names its provenance, same
-      // as the standalone 'glucose' Timeline item's ' · manual' suffix.
-      group.glucose === undefined ? null : `${group.glucose.glucose} mg/dL (manual)`,
+      // A grouped reading is usually a hand-typed 'manual' value, but can now
+      // be an auto-saved sensor reading Verónica attached carbs/insulin to
+      // after the fact — so the provenance suffix is derived from the reading,
+      // never hardcoded, keeping every glucose display honest about its source.
+      group.glucose === undefined ? null : `${group.glucose.glucose} mg/dL${glucoseOriginSuffix(group.glucose.origin)}`,
       group.meal?.confirmedCarbsG === undefined ? null : `${group.meal.confirmedCarbsG} g`,
       group.rapid === undefined ? null : `${group.rapid.units} U rápida`,
       group.basal === undefined ? null : `${group.basal.units} U basal`,
@@ -1406,7 +1509,7 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
       tone: 'teal',
       raw: {
         entryGroupId,
-        ...(group.glucose === undefined ? {} : { glucose: group.glucose.glucose }),
+        ...(group.glucose === undefined ? {} : { glucose: group.glucose.glucose, glucoseOrigin: group.glucose.origin }),
         ...(group.meal?.note === undefined ? {} : { description: group.meal.note }),
         ...(group.meal?.confirmedCarbsG === undefined ? {} : { carbsG: group.meal.confirmedCarbsG }),
         ...(group.meal?.aiEstimatedCarbsG === undefined ? {} : { aiEstimatedCarbsG: group.meal.aiEstimatedCarbsG }),
@@ -1489,4 +1592,67 @@ export async function saveCorrectionReminderSettings(
     await setSetting(db, CORRECTION_REMINDER_ENABLED_KEY, String(settings.enabled));
     await setSetting(db, CORRECTION_REMINDER_OFFSET_KEY, String(offsetMinutes));
   });
+}
+
+const REMINDER_ALERT_STYLE_KEY = 'reminderAlertStyle';
+export const DEFAULT_REMINDER_ALERT_STYLE: ReminderAlertStyle = 'both';
+const ReminderAlertStyleSchema = z.enum(['sound', 'vibrate', 'both', 'silent']);
+
+export async function getReminderAlertStyle(db: SQLiteDatabase): Promise<ReminderAlertStyle> {
+  const stored = await getSetting(db, REMINDER_ALERT_STYLE_KEY);
+  const parsed = ReminderAlertStyleSchema.safeParse(stored);
+  return parsed.success ? parsed.data : DEFAULT_REMINDER_ALERT_STYLE;
+}
+
+export async function saveReminderAlertStyle(db: SQLiteDatabase, style: ReminderAlertStyle): Promise<void> {
+  await setSetting(db, REMINDER_ALERT_STYLE_KEY, ReminderAlertStyleSchema.parse(style));
+}
+
+const CAPILLARY_REMINDER_KEY = 'capillaryReminderSettings';
+
+export interface CapillaryReminderSettings {
+  enabled: boolean;
+  /** How many measurement reminders to spread across the awake window. */
+  count: number;
+  /** Start of the awake window, "HH:MM" (24 h). */
+  wakeStart: string;
+  /** End of the awake window, "HH:MM" (24 h). */
+  wakeEnd: string;
+}
+
+export const DEFAULT_CAPILLARY_REMINDER_SETTINGS: CapillaryReminderSettings = {
+  enabled: false,
+  count: 4,
+  wakeStart: '08:00',
+  wakeEnd: '22:00',
+};
+
+const ClockStringSchema = z.string().regex(/^\d{1,2}:\d{2}$/u);
+const CapillaryReminderSettingsSchema = z.object({
+  enabled: z.boolean(),
+  count: z.number().int().min(1).max(12),
+  wakeStart: ClockStringSchema,
+  wakeEnd: ClockStringSchema,
+});
+
+export async function getCapillaryReminderSettings(db: SQLiteDatabase): Promise<CapillaryReminderSettings> {
+  const stored = await getSetting(db, CAPILLARY_REMINDER_KEY);
+  if (stored === null) return { ...DEFAULT_CAPILLARY_REMINDER_SETTINGS };
+  // Corrupted local setting degrades to the default rather than throwing and
+  // taking loadLocalState's Promise.all down with it (same reasoning as
+  // getMealAlarmOffsets). JSON.parse can throw on malformed text, so the
+  // try/catch is not redundant with safeParse.
+  try {
+    const parsed = CapillaryReminderSettingsSchema.safeParse(JSON.parse(stored));
+    return parsed.success ? parsed.data : { ...DEFAULT_CAPILLARY_REMINDER_SETTINGS };
+  } catch {
+    return { ...DEFAULT_CAPILLARY_REMINDER_SETTINGS };
+  }
+}
+
+export async function saveCapillaryReminderSettings(
+  db: SQLiteDatabase,
+  settings: CapillaryReminderSettings,
+): Promise<void> {
+  await setSetting(db, CAPILLARY_REMINDER_KEY, JSON.stringify(CapillaryReminderSettingsSchema.parse(settings)));
 }

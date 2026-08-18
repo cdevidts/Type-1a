@@ -429,6 +429,72 @@ notificación fija para forzar el refresco sin depender solo del ciclo de
   necesidad de traerla al frente — mismas limitaciones de mejor esfuerzo
   que el resto de lo de segundo plano (Doze, ahorro de batería).
 
+## Mejoras fuera de la numeración (2026-08-18, cont. 2) — widget, edición de sensor, alertas y capilar
+
+Cuarta tanda de pedidos de Verónica sobre el mismo build:
+
+- **Botón "Actualizar" ahora visible en la notificación.** El bug era de
+  plataforma: Android solo dibuja **3** botones de acción en la fila de una
+  notificación (iOS los apila todos), y `ACTION_REFRESH` era el 4º, así que
+  no aparecía. Se reordenó la categoría para que "Actualizar" vaya **primero**
+  (siempre visible), ya que ver la glucosa sin abrir la app es el motivo
+  mismo de la notificación. En un dispositivo que solo muestra 3, el que cae
+  es "Corrección" (el último): es el más redundante acá, porque está en la
+  app y además tiene su propia notificación de recordatorio. No hay forma de
+  mostrar 4 en Android; si algún día se quiere priorizar otro, es reordenar
+  el array en `configureNotifications`.
+- **Editar lecturas auto-guardadas del sensor para adjuntarles datos.**
+  Pedido textual: poder tomar *"la hora en que comí y me pinché"* — una
+  lectura del sensor ya guardada — y adjuntarle carbos/insulina/nota. Modelo:
+  `attachEntryToReading(db, readingId, input)` le pone un `entry_group_id`
+  nuevo a la fila `cgm_readings` existente y escribe las adjunciones con el
+  `sourceTimestamp` de la lectura, delegando en el mismo
+  `updateUnifiedEntryGroup` de siempre. **Regla de seguridad clave**: el valor
+  y el `origin` del sensor **nunca** se reescriben ni se borran. Para lograrlo
+  hubo que hacer `updateUnifiedEntryGroup` y `deleteUnifiedEntryGroup`
+  *provenance-aware*: si el ancla del grupo no es `origin:'manual'`, se
+  preserva (borrar la "entrada" solo quita las adjunciones y desliga la
+  lectura, no destruye dato real de sensor); y si a una entrada anclada en
+  sensor se le quitan todas las adjunciones, se desliga (`entry_group_id =
+  NULL`) y vuelve a ser una lectura suelta. El `TimelineDetailModal` muestra
+  el valor del sensor como solo-lectura y ofrece los campos de adjunción; el
+  suffix de provenance en el Timeline se derivó a un helper
+  `glucoseOriginSuffix` (antes el grupo hardcodeaba "(manual)").
+- **Sonido/vibración configurable en recordatorios.** Android fija
+  sonido/vibración **por canal** y no deja mutarlo después de crearlo, así que
+  no se puede "cambiar el sonido" de un canal — hay que enrutar a canales
+  pre-creados. Se crean 4 (`reminders-both/sound/vibrate/silent`) y cada
+  recordatorio (post-comida, corrección, capilar) se agenda en el canal del
+  estilo elegido (`reminderChannelId(style)`). `silent` usa importancia LOW;
+  `vibrate` usa `sound: null` + patrón de vibración; el resto HIGH. La
+  notificación fija de glucosa **no** usa estos canales (repostea cada ~15 min,
+  jamás debe sonar). Se borran los canales viejos `meal-episodes`/
+  `correction-reminders`.
+- **Recordatorio de mediciones capilares X veces/día.** Ajuste nuevo: la
+  usuaria ingresa su horario de vigilia (inicio/fin) y cuántas veces al día;
+  `capillaryReminderTimes(wakeStart, wakeEnd, count)` (puro, con tests en
+  `format.test.ts`) reparte los avisos anclados al inicio, cada
+  `ventana/count` minutos, y se agendan como notificaciones DAILY repetidas.
+  Se cancelan/reprograman por `data.kind === CAPILLARY_REMINDER_KIND`. Se
+  auto-reparan al abrir la app (como el registro de background sync), porque
+  reinstalar o un update de OS puede borrarlas.
+- **Constancia para el chat de IA.** Nuevo `docs/AI_CHAT_ARCHITECTURE.md`
+  (documento vivo) + regla en `CLAUDE.md`: cada corrida que agregue una
+  capacidad a la app debe reflejarla en el catálogo de ese documento, para que
+  cuando armemos el chat de IA (fase futura) no se nos escape ninguna función
+  y nazca respetando las fronteras de `AGENTS.md`.
+
+**Seguimiento aceptado (no accionar salvo pedido):** al adjuntar una comida a
+una lectura vieja de sensor, el episodio se computa retroactivamente con
+`processReadyEpisodes` a partir del CGM alrededor de esa hora — correcto — pero
+las alarmas +60/+120/+180 caen en el pasado y se saltan solas (esperado). El
+riesgo de doble-conexión SQLCipher del background sync sigue sin probarse en
+dispositivo real. Además, `apps/mobile/src/db.ts` no tiene arnés de tests
+(expo-sqlite es nativo, no corre directo en vitest), así que la lógica
+*provenance-aware* nueva (ancla de sensor nunca mutada/borrada) quedó cubierta
+solo por typecheck + revisión de seguridad, no por un test unitario — vale la
+pena montar un test con SQLite en memoria antes de que esa lógica crezca más.
+
 ## Verificación por fase
 
 - `pnpm verify` (lint + typecheck + test) antes de cerrar cualquier fase.

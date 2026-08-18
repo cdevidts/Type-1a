@@ -155,11 +155,21 @@ docs/
   `packages/schemas` — es un concepto de UI, no del evento en sí): tagea
   todo lo escrito por un mismo guardado de "Nueva entrada", para que
   `getTimeline()` lo agrupe en un solo `TimelineItem` (`kind: 'entry'`) en
-  vez de mostrarlo como filas sueltas. `getUnifiedEntryGroup`/
+  vez de mostrarlo como filas sueltas.
   `updateUnifiedEntryGroup`/`deleteUnifiedEntryGroup` leen/editan/borran el
   paquete completo como una unidad — edición en el lugar cuando la fila ya
   existe (no borra-y-recrea, para no resetear un episodio `complete` a
   `collecting`), inserta si es nueva, borra si el formulario la dejó vacía.
+  `attachEntryToReading(db, readingId, input)` empaqueta una lectura de sensor
+  ya guardada: le pone `entry_group_id` y le adjunta carbos/insulina/nota con
+  el `sourceTimestamp` de la lectura. Estas funciones son *provenance-aware*:
+  un ancla de glucosa `origin != 'manual'` (sensor/importado/sintético) nunca
+  se reescribe ni se borra — borrar la entrada solo quita adjunciones y
+  desliga la lectura; vaciar todas las adjunciones también la desliga.
+  `getReminderAlertStyle`/`saveReminderAlertStyle` y
+  `getCapillaryReminderSettings`/`saveCapillaryReminderSettings` guardan el
+  estilo de alerta (sonido/vibración) y el recordatorio capilar en
+  `app_settings`.
   Toda función `save*`/`update*`/`delete*` que envuelve su propia
   transacción tiene (o debería tener) un núcleo `*Rows` no-transaccional
   para poder llamarse desde estas — patrón repetido varias veces esta
@@ -173,9 +183,15 @@ docs/
 - `src/notifications.ts` — notificaciones locales: episodios de comida
   (offsets configurables, Fase 6), recordatorio post-corrección (Fase 6,
   opt-in, sin botones de acción rápida a propósito — no se quiere facilitar
-  apilar una segunda dosis con un solo toque), y la notificación fija de
-  acceso rápido (`postQuickEntryNotification`, reutilizada por
-  `backgroundSync.ts`).
+  apilar una segunda dosis con un solo toque), recordatorios de medición
+  capilar X veces/día (`scheduleCapillaryReminders`, DAILY repetidas,
+  canceladas por `data.kind`), y la notificación fija de acceso rápido
+  (`postQuickEntryNotification`, reutilizada por `backgroundSync.ts`). El
+  botón "Actualizar" va **primero** en la categoría porque Android solo
+  muestra 3 acciones en la fila. Sonido/vibración de recordatorios se maneja
+  con 4 canales pre-creados (`reminderChannelId(style)`) porque Android fija
+  eso por canal y no deja mutarlo; la notificación fija de glucosa queda en su
+  propio canal silencioso.
 - `src/backgroundSync.ts` — dos tareas headless que comparten `runCgmSync()`:
   la periódica (`expo-background-task`, Fase 7, ~15 min mejor esfuerzo) y la
   del botón "Actualizar" de la notificación fija
@@ -195,7 +211,9 @@ docs/
   solo dato. Antes de tocar cualquiera de estos, leer
   `docs/UX_GUIDELINES.md`.
 - `src/theme.ts`, `src/format.ts` (incl. `parseMinuteOffsets` para las
-  alarmas), `src/types.ts` (incl. `TimelineEditPayload`) — soporte de UI.
+  alarmas y `capillaryReminderTimes`/`parseClockToMinutes` para el
+  recordatorio capilar, con tests en `format.test.ts`), `src/types.ts` (incl.
+  `TimelineEditPayload` y `ReminderAlertStyle`) — soporte de UI.
 - `AGENTS.md` propio — recuerda que Expo cambió de versión (SDK 57): leer
   docs versionados antes de escribir código Expo nuevo.
 

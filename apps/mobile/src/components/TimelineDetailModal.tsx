@@ -86,7 +86,10 @@ function rowsFor(item: TimelineItem): { label: string; value: string }[] {
       ];
     case 'entry':
       return [
-        ...(item.raw.glucose === undefined ? [] : [{ label: 'Glicemia capilar', value: `${item.raw.glucose} mg/dL` }]),
+        ...(item.raw.glucose === undefined ? [] : [{
+          label: item.raw.glucoseOrigin !== undefined && item.raw.glucoseOrigin !== 'manual' ? 'Glucosa (sensor)' : 'Glicemia capilar',
+          value: `${item.raw.glucose} mg/dL`,
+        }]),
         ...(item.raw.carbsG === undefined ? [] : [{ label: 'Carbohidratos', value: `${item.raw.carbsG} g` }]),
         ...(item.raw.aiEstimatedCarbsG === undefined ? [] : [{ label: 'Estimado por IA', value: `${item.raw.aiEstimatedCarbsG} g` }]),
         ...(item.raw.description === undefined || item.raw.description === '' ? [] : [{ label: 'Comida', value: item.raw.description }]),
@@ -98,20 +101,29 @@ function rowsFor(item: TimelineItem): { label: string; value: string }[] {
   }
 }
 
+/** Whether a packaged entry (or a candidate one) is anchored on a real
+ * sensor/imported/synthetic reading rather than a hand-typed 'manual' value.
+ * That value is a record of what the source reported — read-only, and kept
+ * when the rest of the entry is deleted. */
+function hasReadOnlyGlucoseAnchor(item: TimelineItem): boolean {
+  if (item.kind === 'glucose') return item.raw.origin !== 'manual';
+  if (item.kind === 'entry') return item.raw.glucoseOrigin !== undefined && item.raw.glucoseOrigin !== 'manual';
+  return false;
+}
+
 /** Whether this Timeline item has anything a user can edit. Episodes are a
  * computed aggregate (metrics/insight come from CGM readings, never typed
- * in), so they're delete-only. A CGM reading is only editable when it's
- * `origin: 'manual'` — correcting a sensor/imported/synthetic value in
- * place would misrepresent what that source actually reported. */
+ * in), so they're delete-only. A glucose reading is always editable now: a
+ * 'manual' one lets you correct the value, and any reading (sensor included)
+ * lets you attach carbs/insulina/nota to it after the fact — the sensor value
+ * itself stays read-only. */
 function isEditable(item: TimelineItem): boolean {
-  if (item.kind === 'episode') return false;
-  if (item.kind === 'glucose') return item.raw.origin === 'manual';
-  return true;
+  return item.kind !== 'episode';
 }
 
 function deleteLabel(item: TimelineItem): string {
   if (item.kind === 'episode') return 'Eliminar seguimiento';
-  if (item.kind === 'entry') return 'Eliminar entrada completa';
+  if (item.kind === 'entry') return hasReadOnlyGlucoseAnchor(item) ? 'Quitar datos adjuntos' : 'Eliminar entrada completa';
   return 'Eliminar registro';
 }
 
@@ -123,7 +135,9 @@ function deleteConfirmMessage(item: TimelineItem): string {
     return 'Se borra esta comida y el seguimiento post-comida asociado. Los carbohidratos confirmados también se borran.';
   }
   if (item.kind === 'entry') {
-    return 'Se borra todo lo guardado junto en esta entrada: glicemia, carbohidratos, insulina y nota.';
+    return hasReadOnlyGlucoseAnchor(item)
+      ? 'Se quitan los carbohidratos, la insulina y la nota de esta entrada. La glucosa del sensor se conserva.'
+      : 'Se borra todo lo guardado junto en esta entrada: glicemia, carbohidratos, insulina y nota.';
   }
   return 'Esta acción no se puede deshacer.';
 }
@@ -175,6 +189,13 @@ export function TimelineDetailModal({
       setNote(item.raw.note ?? '');
     } else if (item.kind === 'glucose') {
       setGlucose(String(item.raw.glucose));
+      // Attachment fields (reused from the packaged-entry form) start empty —
+      // a standalone reading has nothing attached yet.
+      setEntryCarbsG('');
+      setEntryDescription('');
+      setEntryRapidUnits('');
+      setEntryBasalUnits('');
+      setEntryNote('');
     } else if (item.kind === 'note') {
       setNote(item.raw.text);
     } else if (item.kind === 'entry') {
@@ -214,12 +235,51 @@ export function TimelineDetailModal({
     } else if (item.kind === 'meal') {
       payload = { kind: 'meal', note: note.trim() };
     } else if (item.kind === 'glucose') {
-      const parsed = parsePositiveNumber(glucose);
-      if (parsed === null) {
-        setError('La glucosa debe ser un número positivo.');
+      // A 'manual' reading's value is editable; any other origin is a record
+      // of what the source reported and stays read-only — you can still
+      // attach carbs/insulina/nota to it.
+      const isManual = item.raw.origin === 'manual';
+      let glucoseValue: number | undefined;
+      if (isManual) {
+        const parsed = parsePositiveNumber(glucose);
+        if (parsed === null) {
+          setError('La glucosa debe ser un número positivo.');
+          return;
+        }
+        glucoseValue = parsed;
+      }
+      const carbsValue = entryCarbsG.trim() === '' ? undefined : parseNonNegativeNumber(entryCarbsG);
+      if (carbsValue === null || (carbsValue !== undefined && carbsValue > 500)) {
+        setError('Los carbohidratos deben ser un número entre 0 y 500 g.');
         return;
       }
-      payload = { kind: 'glucose', glucose: parsed };
+      const rapidValue = entryRapidUnits.trim() === '' ? undefined : parsePositiveNumber(entryRapidUnits);
+      if (rapidValue === null || (rapidValue !== undefined && rapidValue > 100)) {
+        setError('La insulina rápida debe ser un número positivo, 100 U o menos.');
+        return;
+      }
+      const basalValue = entryBasalUnits.trim() === '' ? undefined : parsePositiveNumber(entryBasalUnits);
+      if (basalValue === null || (basalValue !== undefined && basalValue > 100)) {
+        setError('La insulina basal debe ser un número positivo, 100 U o menos.');
+        return;
+      }
+      const hasAttachments = carbsValue !== undefined || entryDescription.trim() !== ''
+        || rapidValue !== undefined || basalValue !== undefined || entryNote.trim() !== '';
+      // For a read-only sensor value, editing only makes sense to attach
+      // something — there's no value change to save on its own.
+      if (!isManual && !hasAttachments) {
+        setError('Agrega carbohidratos, insulina o una nota para adjuntar a esta lectura.');
+        return;
+      }
+      payload = {
+        kind: 'glucose',
+        ...(glucoseValue === undefined ? {} : { glucose: glucoseValue }),
+        ...(carbsValue === undefined ? {} : { carbsG: carbsValue }),
+        ...(entryDescription.trim() === '' ? {} : { description: entryDescription.trim() }),
+        ...(rapidValue === undefined ? {} : { rapidUnits: rapidValue }),
+        ...(basalValue === undefined ? {} : { basalUnits: basalValue }),
+        ...(entryNote.trim() === '' ? {} : { note: entryNote.trim() }),
+      };
     } else if (item.kind === 'note') {
       const text = note.trim();
       if (text === '') {
@@ -228,10 +288,18 @@ export function TimelineDetailModal({
       }
       payload = { kind: 'note', text };
     } else if (item.kind === 'entry') {
-      const glucoseValue = entryGlucose.trim() === '' ? undefined : parsePositiveNumber(entryGlucose);
-      if (glucoseValue === null) {
-        setError('La glicemia capilar debe ser un número positivo.');
-        return;
+      // A sensor-anchored entry's glucose is read-only (a real reading) — it's
+      // never sent back as a manual value, so it can't overwrite or delete the
+      // sensor reading. Only a 'manual' anchor (or none) is editable here.
+      const isSensorAnchor = hasReadOnlyGlucoseAnchor(item);
+      let glucoseValue: number | undefined;
+      if (!isSensorAnchor && entryGlucose.trim() !== '') {
+        const parsed = parsePositiveNumber(entryGlucose);
+        if (parsed === null) {
+          setError('La glicemia capilar debe ser un número positivo.');
+          return;
+        }
+        glucoseValue = parsed;
       }
       const carbsValue = entryCarbsG.trim() === '' ? undefined : parseNonNegativeNumber(entryCarbsG);
       if (carbsValue === null || (carbsValue !== undefined && carbsValue > 500)) {
@@ -251,7 +319,7 @@ export function TimelineDetailModal({
       const hasSomething = glucoseValue !== undefined || carbsValue !== undefined || entryDescription.trim() !== ''
         || rapidValue !== undefined || basalValue !== undefined || entryNote.trim() !== '';
       if (!hasSomething) {
-        setError('Completa al menos un campo, o usa Eliminar entrada completa.');
+        setError('Completa al menos un campo, o usa el botón de eliminar de abajo.');
         return;
       }
       payload = {
@@ -355,11 +423,62 @@ export function TimelineDetailModal({
           ) : null}
           {item.kind === 'glucose' ? (
             <>
-              <Text style={styles.fieldLabel}>Glucosa</Text>
+              {item.raw.origin === 'manual' ? (
+                <>
+                  <Text style={styles.fieldLabel}>Glucosa</Text>
+                  <View style={styles.inputWrap}>
+                    <TextInput value={glucose} onChangeText={setGlucose} keyboardType="decimal-pad" style={styles.input} selectTextOnFocus />
+                    <Text style={styles.inputUnit}>{item.raw.unit}</Text>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.fieldLabel}>Glucosa (del sensor)</Text>
+                  <Text style={styles.readonlyValue}>{item.raw.glucose} {item.raw.unit}</Text>
+                  <Text style={styles.hint}>
+                    Este valor viene del sensor y no se edita. Puedes adjuntarle lo que comiste, la insulina o una nota de ese momento.
+                  </Text>
+                </>
+              )}
+              <Text style={styles.fieldLabel}>Carbohidratos</Text>
               <View style={styles.inputWrap}>
-                <TextInput value={glucose} onChangeText={setGlucose} keyboardType="decimal-pad" style={styles.input} selectTextOnFocus />
-                <Text style={styles.inputUnit}>{item.raw.unit}</Text>
+                <TextInput value={entryCarbsG} onChangeText={setEntryCarbsG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
+                <Text style={styles.inputUnit}>g</Text>
               </View>
+              <Text style={styles.fieldLabel}>Comida</Text>
+              <TextInput
+                value={entryDescription}
+                onChangeText={setEntryDescription}
+                style={[styles.textInput, styles.textArea]}
+                placeholder="¿Qué comiste?"
+                placeholderTextColor={colors.muted}
+                multiline
+              />
+              <View style={styles.fieldRow}>
+                <View style={styles.fieldRowItem}>
+                  <Text style={styles.fieldLabel}>Rápida</Text>
+                  <View style={styles.inputWrap}>
+                    <TextInput value={entryRapidUnits} onChangeText={setEntryRapidUnits} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
+                    <Text style={styles.inputUnit}>U</Text>
+                  </View>
+                </View>
+                <View style={styles.fieldRowItem}>
+                  <Text style={styles.fieldLabel}>Basal</Text>
+                  <View style={styles.inputWrap}>
+                    <TextInput value={entryBasalUnits} onChangeText={setEntryBasalUnits} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
+                    <Text style={styles.inputUnit}>U</Text>
+                  </View>
+                </View>
+              </View>
+              <Text style={styles.fieldLabel}>Nota</Text>
+              <TextInput
+                value={entryNote}
+                onChangeText={setEntryNote}
+                style={[styles.textInput, styles.textArea]}
+                placeholder="Contexto, ejercicio, cómo te sentías…"
+                placeholderTextColor={colors.muted}
+                multiline
+              />
             </>
           ) : null}
           {item.kind === 'note' ? (
@@ -379,11 +498,21 @@ export function TimelineDetailModal({
               <Text style={styles.hint}>
                 Esta entrada se guardó junto: edita lo que corresponda y guarda — lo que dejes vacío se borra de la entrada.
               </Text>
-              <Text style={styles.fieldLabel}>Glicemia capilar</Text>
-              <View style={styles.inputWrap}>
-                <TextInput value={entryGlucose} onChangeText={setEntryGlucose} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
-                <Text style={styles.inputUnit}>mg/dL</Text>
-              </View>
+              {item.raw.glucoseOrigin !== undefined && item.raw.glucoseOrigin !== 'manual' ? (
+                <>
+                  <Text style={styles.fieldLabel}>Glucosa (del sensor)</Text>
+                  <Text style={styles.readonlyValue}>{item.raw.glucose} mg/dL</Text>
+                  <Text style={styles.hint}>Viene del sensor y no se edita; el resto de la entrada sí.</Text>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.fieldLabel}>Glicemia capilar</Text>
+                  <View style={styles.inputWrap}>
+                    <TextInput value={entryGlucose} onChangeText={setEntryGlucose} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
+                    <Text style={styles.inputUnit}>mg/dL</Text>
+                  </View>
+                </>
+              )}
               <Text style={styles.fieldLabel}>Carbohidratos</Text>
               <View style={styles.inputWrap}>
                 <TextInput value={entryCarbsG} onChangeText={setEntryCarbsG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
@@ -500,6 +629,7 @@ const styles = StyleSheet.create({
   fieldRow: { flexDirection: 'row', gap: spacing.md },
   fieldRowItem: { flex: 1 },
   hint: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: spacing.md },
+  readonlyValue: { color: colors.ink, fontSize: 20, fontWeight: '700', marginTop: 6 },
   inputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.sm, borderColor: colors.line, borderWidth: 1, marginTop: 6, paddingHorizontal: spacing.md },
   input: { color: colors.ink, fontSize: 20, fontWeight: '700', flex: 1, paddingVertical: spacing.md, minHeight: 44 },
   inputUnit: { color: colors.muted, fontSize: 12, marginLeft: 4 },

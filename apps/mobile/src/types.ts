@@ -9,6 +9,16 @@ import type {
 
 export type QuickRoute = 'carbs' | 'rapid' | 'basal' | 'correction';
 
+/**
+ * How a reminder notification alerts. Android fixes sound/vibration per
+ * channel (immutable after creation), so each style maps to its own
+ * pre-created channel — see `reminderChannelId` in notifications.ts. Applies
+ * to every reminder (post-comida, corrección, capilar); the sticky
+ * quick-entry notification keeps its own silent channel, since it reposts
+ * every ~15 min and must never buzz.
+ */
+export type ReminderAlertStyle = 'sound' | 'vibrate' | 'both' | 'silent';
+
 export type TimelineItem =
   | {
       id: string;
@@ -84,6 +94,15 @@ export type TimelineItem =
 export interface TimelineEntryGroupRaw {
   entryGroupId: string;
   glucose?: number;
+  /**
+   * Origin of the group's glucose reading, when it has one. A packaged entry
+   * can now be anchored on an auto-saved sensor reading (Verónica attaches
+   * carbs/insulin/nota to a past reading — "la hora en que comí y me pinché"),
+   * not just a hand-typed 'manual' value. The edit form keeps a non-'manual'
+   * value read-only and never relabels it, same rule as the standalone
+   * 'glucose' item — real sensor data is a record, not a field to correct.
+   */
+  glucoseOrigin?: CGMReading['origin'];
   description?: string;
   carbsG?: number;
   aiEstimatedCarbsG?: number;
@@ -117,7 +136,21 @@ export type TimelineEditPayload =
   | { kind: 'insulin'; type: 'rapid' | 'basal'; units: number; insulinName?: string }
   | { kind: 'carbs'; carbsG: number }
   | { kind: 'meal'; note: string }
-  | { kind: 'glucose'; glucose: number }
+  // A standalone glucose reading. `glucose` (the value) is only present when
+  // editing a hand-typed 'manual' reading — a sensor/imported/synthetic value
+  // is read-only. The optional attachment fields turn a bare reading into a
+  // packaged entry anchored on it (Verónica adding carbs/insulina to an
+  // auto-saved sensor reading she measured a meal against after the fact).
+  | {
+      kind: 'glucose';
+      glucose?: number;
+      carbsG?: number;
+      description?: string;
+      rapidUnits?: number;
+      basalUnits?: number;
+      note?: string;
+      rapidIncludesCorrection?: boolean;
+    }
   | { kind: 'note'; text: string }
   // Whatever a field omits gets deleted from the group, not left alone —
   // this is a full replace of the packaged entry's contents, matching what

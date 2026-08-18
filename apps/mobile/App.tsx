@@ -39,6 +39,7 @@ import { SettingsModal } from './src/components/SettingsModal';
 import { Timeline } from './src/components/Timeline';
 import {
   getCGMReadings,
+  attachEntryToReading,
   confirmEpisodeInsulinContext,
   deleteCarbEvent,
   deleteCGMReading,
@@ -47,23 +48,29 @@ import {
   deleteMealEvent,
   deleteNoteEvent,
   deleteUnifiedEntryGroup,
+  DEFAULT_CAPILLARY_REMINDER_SETTINGS,
   DEFAULT_CORRECTION_REMINDER_OFFSET_MINUTES,
   DEFAULT_MEAL_ALARM_OFFSETS_MINUTES,
+  DEFAULT_REMINDER_ALERT_STYLE,
+  getCapillaryReminderSettings,
   getCorrectionReminderSettings,
   getMealAlarmOffsets,
   getPendingInsulinAssociations,
   getRecentRapidInsulin,
+  getReminderAlertStyle,
   getSetting,
   getTherapyProfile,
   getTimeline,
   importMySugrCsv,
   initializeDatabase,
   isTherapyConfigured,
+  saveCapillaryReminderSettings,
   saveCarbEvent,
   saveCorrectionReminderSettings,
   saveInsulinEvent,
   saveMealAlarmOffsets,
   saveMealWithEpisode,
+  saveReminderAlertStyle,
   saveTherapyProfile,
   saveUnifiedEntry,
   setSetting,
@@ -74,6 +81,7 @@ import {
   updateNoteEvent,
   updateUnifiedEntryGroup,
   upsertCGMReadings,
+  type CapillaryReminderSettings,
   type CorrectionReminderSettings,
 } from './src/db';
 import { processReadyEpisodes } from './src/episodes';
@@ -83,11 +91,14 @@ import {
   enableQuickEntryNotification,
   QUICK_ENTRY_ENABLED_KEY,
   quickRouteFromNotificationAction,
+  reminderChannelId,
+  scheduleCapillaryReminders,
   scheduleCorrectionReminder,
   scheduleEpisodeNotifications,
 } from './src/notifications';
+import { capillaryReminderTimes } from './src/format';
 import { colors, radius, spacing } from './src/theme';
-import type { PendingInsulinAssociation, QuickRoute, TimelineEditPayload, TimelineItem } from './src/types';
+import type { PendingInsulinAssociation, QuickRoute, ReminderAlertStyle, TimelineEditPayload, TimelineItem } from './src/types';
 
 const EMPTY_PROFILE: TherapyProfile = {
   glucoseUnit: 'mg/dL',
@@ -120,6 +131,10 @@ function Type1AApp() {
     enabled: false,
     offsetMinutes: DEFAULT_CORRECTION_REMINDER_OFFSET_MINUTES,
   });
+  const [reminderAlertStyle, setReminderAlertStyle] = useState<ReminderAlertStyle>(DEFAULT_REMINDER_ALERT_STYLE);
+  const [capillaryReminder, setCapillaryReminder] = useState<CapillaryReminderSettings>({
+    ...DEFAULT_CAPILLARY_REMINDER_SETTINGS,
+  });
   const [refreshing, setRefreshing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const refreshingRef = useRef(false);
@@ -134,7 +149,7 @@ function Type1AApp() {
     // latestLiveReading() finds the true latest live point regardless of
     // how wide this window is.
     const from = new Date(to.getTime() - 30 * 24 * 60 * 60_000);
-    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending, mealOffsets, correctionSettings] = await Promise.all([
+    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending, mealOffsets, correctionSettings, alertStyle, capillarySettings] = await Promise.all([
       getCGMReadings(db, from, to),
       getTimeline(db),
       getTherapyProfile(db),
@@ -144,6 +159,8 @@ function Type1AApp() {
       getPendingInsulinAssociations(db),
       getMealAlarmOffsets(db),
       getCorrectionReminderSettings(db),
+      getReminderAlertStyle(db),
+      getCapillaryReminderSettings(db),
     ]);
     setReadings(cached);
     setTimeline(nextTimeline);
@@ -154,6 +171,8 @@ function Type1AApp() {
     setPendingAssociations(pending);
     setMealAlarmOffsets(mealOffsets);
     setCorrectionReminder(correctionSettings);
+    setReminderAlertStyle(alertStyle);
+    setCapillaryReminder(capillarySettings);
   }, [db]);
 
   const refresh = useCallback(async (manual = false): Promise<void> => {
@@ -194,15 +213,24 @@ function Type1AApp() {
   }, [db, loadLocalState]);
 
   useEffect(() => {
-    void configureNotifications();
     void refresh();
-    // Self-heal the background-task registration: it's persisted at the OS
-    // level, but re-checking on launch covers a reinstall, an OS update that
-    // cleared WorkManager state, or a previous registration that silently
-    // failed. registerBackgroundSync() is a no-op if already registered.
-    void getSetting(db, QUICK_ENTRY_ENABLED_KEY).then((enabled) => {
-      if (enabled === 'true') void registerBackgroundSync();
-    });
+    // Self-heal the notification channels, the background-task registration,
+    // and the standing capillary reminders on every launch: all three are
+    // persisted at the OS level, but re-establishing them covers a reinstall,
+    // an OS update that cleared them, or a previous attempt that silently
+    // failed. Sequenced so the channels exist before anything is scheduled
+    // against them; each step is idempotent.
+    void (async () => {
+      await configureNotifications();
+      const quickEntryEnabled = await getSetting(db, QUICK_ENTRY_ENABLED_KEY);
+      if (quickEntryEnabled === 'true') await registerBackgroundSync();
+      const capillary = await getCapillaryReminderSettings(db);
+      if (capillary.enabled) {
+        const style = await getReminderAlertStyle(db);
+        const times = capillaryReminderTimes(capillary.wakeStart, capillary.wakeEnd, capillary.count);
+        await scheduleCapillaryReminders(times ?? [], reminderChannelId(style));
+      }
+    })();
     const appStateSubscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') void refresh();
     });
@@ -273,7 +301,7 @@ function Type1AApp() {
     const timestamp = new Date().toISOString();
     await registerNumeric('rapid', units);
     if (correctionReminder.enabled) {
-      await scheduleCorrectionReminder(timestamp, correctionReminder.offsetMinutes);
+      await scheduleCorrectionReminder(timestamp, correctionReminder.offsetMinutes, reminderChannelId(reminderAlertStyle));
     }
     setNotice(`Se registraron ${units} U de rápida tras confirmación.`);
   }
@@ -298,7 +326,7 @@ function Type1AApp() {
           }),
     };
     const episodeId = await saveMealWithEpisode(db, meal);
-    await scheduleEpisodeNotifications(episodeId, timestamp, mealAlarmOffsets);
+    await scheduleEpisodeNotifications(episodeId, timestamp, mealAlarmOffsets, reminderChannelId(reminderAlertStyle));
     setNotice(`Comida guardada. El episodio se completará con CGM a ${mealAlarmOffsets.map((minutes) => `+${minutes}`).join(', ')} minutos.`);
     await loadLocalState();
   }
@@ -326,10 +354,10 @@ function Type1AApp() {
           }),
     });
     if (outcome.episodeId !== null) {
-      await scheduleEpisodeNotifications(outcome.episodeId, draft.timestamp, mealAlarmOffsets);
+      await scheduleEpisodeNotifications(outcome.episodeId, draft.timestamp, mealAlarmOffsets, reminderChannelId(reminderAlertStyle));
     }
     if (outcome.savedRapid && draft.rapidIncludesCorrection && correctionReminder.enabled) {
-      await scheduleCorrectionReminder(draft.timestamp, correctionReminder.offsetMinutes);
+      await scheduleCorrectionReminder(draft.timestamp, correctionReminder.offsetMinutes, reminderChannelId(reminderAlertStyle));
     }
     const saved = [
       outcome.savedGlucose ? 'glucosa' : null,
@@ -359,6 +387,31 @@ function Type1AApp() {
     setCorrectionReminder(settings);
   }
 
+  async function updateReminderAlertStyle(style: ReminderAlertStyle): Promise<void> {
+    await saveReminderAlertStyle(db, style);
+    setReminderAlertStyle(style);
+    // Reschedule the standing capillary reminders onto the newly-chosen alert
+    // channel — they're the only reminders scheduled ahead of time; episode
+    // and correction reminders are scheduled on demand and already read the
+    // current style. If capillary reminders are off, this just clears them.
+    if (capillaryReminder.enabled) {
+      const times = capillaryReminderTimes(capillaryReminder.wakeStart, capillaryReminder.wakeEnd, capillaryReminder.count);
+      await scheduleCapillaryReminders(times ?? [], reminderChannelId(style));
+    }
+  }
+
+  async function updateCapillaryReminder(settings: CapillaryReminderSettings): Promise<void> {
+    await saveCapillaryReminderSettings(db, settings);
+    setCapillaryReminder(settings);
+    const times = settings.enabled
+      ? capillaryReminderTimes(settings.wakeStart, settings.wakeEnd, settings.count)
+      : [];
+    // A null result means the window/count didn't produce valid times; treat
+    // it as "none" so a bad edit clears the schedule rather than leaving stale
+    // reminders. SettingsModal validates before calling, so this is a backstop.
+    await scheduleCapillaryReminders(times ?? [], reminderChannelId(reminderAlertStyle));
+  }
+
   async function saveTimelineItem(item: TimelineItem, payload: TimelineEditPayload): Promise<void> {
     if (payload.kind === 'insulin') {
       await updateInsulinEvent(db, item.id, {
@@ -371,7 +424,33 @@ function Type1AApp() {
     } else if (payload.kind === 'meal') {
       await updateMealNote(db, item.id, payload.note);
     } else if (payload.kind === 'glucose') {
-      await updateManualCGMReading(db, item.id, payload.glucose);
+      const hasAttachments = payload.carbsG !== undefined || payload.description !== undefined
+        || payload.rapidUnits !== undefined || payload.basalUnits !== undefined || payload.note !== undefined;
+      if (hasAttachments) {
+        // Turn the standalone reading into a packaged entry anchored on it.
+        const outcome = await attachEntryToReading(db, item.id, {
+          rapidIncludesCorrection: payload.rapidIncludesCorrection === true,
+          ...(payload.glucose === undefined ? {} : { manualGlucose: payload.glucose }),
+          ...(payload.carbsG === undefined ? {} : { carbsG: payload.carbsG }),
+          ...(payload.description === undefined ? {} : { description: payload.description }),
+          ...(payload.rapidUnits === undefined ? {} : { rapidUnits: payload.rapidUnits }),
+          ...(payload.basalUnits === undefined ? {} : { basalUnits: payload.basalUnits }),
+          ...(payload.note === undefined ? {} : { note: payload.note }),
+        });
+        if (outcome.episodeId !== null) {
+          // Offsets in the past self-skip; a reading measured minutes ago can
+          // still have future check-ins worth scheduling.
+          await scheduleEpisodeNotifications(outcome.episodeId, item.timestamp, mealAlarmOffsets, reminderChannelId(reminderAlertStyle));
+        }
+        if (outcome.savedRapid && payload.rapidIncludesCorrection === true && correctionReminder.enabled) {
+          await scheduleCorrectionReminder(item.timestamp, correctionReminder.offsetMinutes, reminderChannelId(reminderAlertStyle));
+        }
+        // Compute the retroactive episode right away from the CGM around that
+        // time, rather than waiting for the next refresh.
+        await processReadyEpisodes(db);
+      } else if (payload.glucose !== undefined) {
+        await updateManualCGMReading(db, item.id, payload.glucose);
+      }
     } else if (payload.kind === 'note') {
       await updateNoteEvent(db, item.id, payload.text);
     } else {
@@ -553,6 +632,10 @@ function Type1AApp() {
         onSaveMealAlarmOffsets={updateMealAlarmOffsets}
         correctionReminder={correctionReminder}
         onSaveCorrectionReminder={updateCorrectionReminder}
+        reminderAlertStyle={reminderAlertStyle}
+        onSaveReminderAlertStyle={updateReminderAlertStyle}
+        capillaryReminder={capillaryReminder}
+        onSaveCapillaryReminder={updateCapillaryReminder}
       />
       <InsulinAssociationModal
         pending={pendingAssociations[0] ?? null}

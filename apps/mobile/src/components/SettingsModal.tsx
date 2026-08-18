@@ -5,10 +5,18 @@ import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-nati
 import type { CGMProviderStatus, TherapyProfile } from '@type1a/schemas';
 
 import { API_BASE_URL, connectFreestyleLibre } from '../api';
-import type { CorrectionReminderSettings, MySugrImportOutcome } from '../db';
-import { parseMinuteOffsets, parsePositiveNumber } from '../format';
+import type { CapillaryReminderSettings, CorrectionReminderSettings, MySugrImportOutcome } from '../db';
+import { capillaryReminderTimes, formatMinutesAsClock, parseMinuteOffsets, parsePositiveNumber } from '../format';
 import { colors, radius, spacing } from '../theme';
+import type { ReminderAlertStyle } from '../types';
 import { ModalShell } from './ModalShell';
+
+const ALERT_STYLE_OPTIONS: { value: ReminderAlertStyle; label: string }[] = [
+  { value: 'both', label: 'Sonido y vibración' },
+  { value: 'sound', label: 'Solo sonido' },
+  { value: 'vibrate', label: 'Solo vibración' },
+  { value: 'silent', label: 'Silencioso' },
+];
 
 function TherapyField({
   label,
@@ -72,6 +80,10 @@ export function SettingsModal({
   onSaveMealAlarmOffsets,
   correctionReminder,
   onSaveCorrectionReminder,
+  reminderAlertStyle,
+  onSaveReminderAlertStyle,
+  capillaryReminder,
+  onSaveCapillaryReminder,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -89,6 +101,10 @@ export function SettingsModal({
   onSaveMealAlarmOffsets: (offsets: number[]) => Promise<void>;
   correctionReminder: CorrectionReminderSettings;
   onSaveCorrectionReminder: (settings: CorrectionReminderSettings) => Promise<void>;
+  reminderAlertStyle: ReminderAlertStyle;
+  onSaveReminderAlertStyle: (style: ReminderAlertStyle) => Promise<void>;
+  capillaryReminder: CapillaryReminderSettings;
+  onSaveCapillaryReminder: (settings: CapillaryReminderSettings) => Promise<void>;
 }) {
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
@@ -111,8 +127,18 @@ export function SettingsModal({
   const [mealOffsetsInput, setMealOffsetsInput] = useState(mealAlarmOffsets.join(', '));
   const [correctionReminderEnabled, setCorrectionReminderEnabled] = useState(correctionReminder.enabled);
   const [correctionOffsetInput, setCorrectionOffsetInput] = useState(String(correctionReminder.offsetMinutes));
+  const [alertStyle, setAlertStyle] = useState<ReminderAlertStyle>(reminderAlertStyle);
+  const [capEnabled, setCapEnabled] = useState(capillaryReminder.enabled);
+  const [capCountInput, setCapCountInput] = useState(String(capillaryReminder.count));
+  const [capStartInput, setCapStartInput] = useState(capillaryReminder.wakeStart);
+  const [capEndInput, setCapEndInput] = useState(capillaryReminder.wakeEnd);
   const [alarmBusy, setAlarmBusy] = useState(false);
   const [alarmMessage, setAlarmMessage] = useState<string | null>(null);
+
+  // Live preview of the reminder times for the values currently in the form,
+  // so Verónica sees exactly what she'll get before saving. null while the
+  // window/count is invalid — the hint below explains what to fix.
+  const capillaryPreview = capillaryReminderTimes(capStartInput, capEndInput, Number(capCountInput));
 
   useEffect(() => {
     if (visible) setMessage(null);
@@ -135,10 +161,15 @@ export function SettingsModal({
       setMealOffsetsInput(mealAlarmOffsets.join(', '));
       setCorrectionReminderEnabled(correctionReminder.enabled);
       setCorrectionOffsetInput(String(correctionReminder.offsetMinutes));
+      setAlertStyle(reminderAlertStyle);
+      setCapEnabled(capillaryReminder.enabled);
+      setCapCountInput(String(capillaryReminder.count));
+      setCapStartInput(capillaryReminder.wakeStart);
+      setCapEndInput(capillaryReminder.wakeEnd);
       setAlarmMessage(null);
     }
     wasVisibleRef.current = visible;
-  }, [visible, profile, therapyConfigured, mealAlarmOffsets, correctionReminder]);
+  }, [visible, profile, therapyConfigured, mealAlarmOffsets, correctionReminder, reminderAlertStyle, capillaryReminder]);
 
   async function saveAlarms(): Promise<void> {
     const offsets = parseMinuteOffsets(mealOffsetsInput);
@@ -157,11 +188,26 @@ export function SettingsModal({
       }
       correctionOffset = parsed;
     }
+    // Only validate the capillary window when the reminder is on. Keep the
+    // last-saved values otherwise, same reasoning as the correction offset.
+    let capillary = capillaryReminder;
+    if (capEnabled) {
+      const count = Number(capCountInput);
+      if (capillaryReminderTimes(capStartInput, capEndInput, count) === null) {
+        setAlarmMessage('Revisa el recordatorio capilar: cantidad entre 1 y 12, y horas válidas "HH:MM" con fin después del inicio.');
+        return;
+      }
+      capillary = { enabled: true, count, wakeStart: capStartInput, wakeEnd: capEndInput };
+    } else {
+      capillary = { ...capillaryReminder, enabled: false };
+    }
     setAlarmBusy(true);
     setAlarmMessage(null);
     try {
       await onSaveMealAlarmOffsets(offsets);
       await onSaveCorrectionReminder({ enabled: correctionReminderEnabled, offsetMinutes: correctionOffset });
+      await onSaveReminderAlertStyle(alertStyle);
+      await onSaveCapillaryReminder(capillary);
       setAlarmMessage('Alarmas guardadas.');
     } catch {
       setAlarmMessage('No se pudieron guardar las alarmas.');
@@ -323,6 +369,84 @@ export function SettingsModal({
           placeholderTextColor={colors.muted}
         />
       ) : null}
+
+      <Text style={styles.subheading}>Sonido y vibración</Text>
+      <Text style={styles.copy}>Cómo te avisan los recordatorios (post-comida, corrección y capilar). La notificación de glucosa fija sigue siendo silenciosa.</Text>
+      <View style={styles.styleGrid}>
+        {ALERT_STYLE_OPTIONS.map((option) => (
+          <Pressable
+            key={option.value}
+            style={[styles.styleChip, alertStyle === option.value && styles.styleChipActive]}
+            onPress={() => { setAlertStyle(option.value); }}
+          >
+            <Text style={[styles.styleChipText, alertStyle === option.value && styles.styleChipTextActive]}>{option.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <View style={styles.switchRow}>
+        <View style={styles.switchCopy}>
+          <Text style={styles.switchTitle}>Recordar mediciones capilares</Text>
+          <Text style={styles.switchFoot}>Reparte X avisos por día dentro de tu horario despierto para que te pinches el dedo.</Text>
+        </View>
+        <Switch
+          value={capEnabled}
+          onValueChange={setCapEnabled}
+          trackColor={{ false: colors.line, true: colors.teal }}
+        />
+      </View>
+      {capEnabled ? (
+        <>
+          <View style={styles.row}>
+            <View style={styles.therapyField}>
+              <Text style={styles.therapyFieldLabel}>Veces al día</Text>
+              <View style={styles.therapyFieldInputWrap}>
+                <TextInput
+                  value={capCountInput}
+                  onChangeText={setCapCountInput}
+                  keyboardType="number-pad"
+                  style={styles.therapyFieldInput}
+                  placeholder="4"
+                  placeholderTextColor={colors.muted}
+                  selectTextOnFocus
+                />
+              </View>
+            </View>
+            <View style={styles.therapyField}>
+              <Text style={styles.therapyFieldLabel}>Despierto desde</Text>
+              <View style={styles.therapyFieldInputWrap}>
+                <TextInput
+                  value={capStartInput}
+                  onChangeText={setCapStartInput}
+                  keyboardType="numbers-and-punctuation"
+                  style={styles.therapyFieldInput}
+                  placeholder="08:00"
+                  placeholderTextColor={colors.muted}
+                />
+              </View>
+            </View>
+            <View style={styles.therapyField}>
+              <Text style={styles.therapyFieldLabel}>Hasta</Text>
+              <View style={styles.therapyFieldInputWrap}>
+                <TextInput
+                  value={capEndInput}
+                  onChangeText={setCapEndInput}
+                  keyboardType="numbers-and-punctuation"
+                  style={styles.therapyFieldInput}
+                  placeholder="22:00"
+                  placeholderTextColor={colors.muted}
+                />
+              </View>
+            </View>
+          </View>
+          <Text style={styles.hint}>
+            {capillaryPreview === null
+              ? 'Ingresa una cantidad entre 1 y 12 y horas válidas "HH:MM", con el fin después del inicio.'
+              : `Te avisará a las ${capillaryPreview.map((time) => formatMinutesAsClock(time.hour * 60 + time.minute)).join(', ')}.`}
+          </Text>
+        </>
+      ) : null}
+
       <Pressable style={[styles.connectButton, alarmBusy && styles.disabled]} disabled={alarmBusy} onPress={() => { void saveAlarms(); }}>
         <Text style={styles.connectText}>Guardar alarmas</Text>
       </Pressable>
@@ -369,6 +493,12 @@ export function SettingsModal({
 
 const styles = StyleSheet.create({
   sectionTitle: { color: colors.ink, fontSize: 18, fontWeight: '800', marginTop: spacing.xl },
+  subheading: { color: colors.ink, fontSize: 14, fontWeight: '800', marginTop: spacing.lg },
+  styleGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
+  styleChip: { borderColor: colors.line, borderWidth: 1, borderRadius: radius.sm, paddingVertical: spacing.sm, paddingHorizontal: spacing.md, minHeight: 40, justifyContent: 'center' },
+  styleChipActive: { backgroundColor: colors.teal, borderColor: colors.teal },
+  styleChipText: { color: colors.navy, fontSize: 13, fontWeight: '700' },
+  styleChipTextActive: { color: '#FFFFFF' },
   statusCard: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.sm },
   statusRow: { flexDirection: 'row', alignItems: 'center' },
   statusDot: { width: 10, height: 10, borderRadius: 5, marginRight: spacing.sm },

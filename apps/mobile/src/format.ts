@@ -64,3 +64,46 @@ export function parseMinuteOffsets(value: string): number[] | null {
   }
   return offsets;
 }
+
+/** Parses "HH:MM" (24 h) into minutes since midnight, or null if malformed. */
+export function parseClockToMinutes(value: string): number | null {
+  const match = /^(\d{1,2}):(\d{2})$/u.exec(value.trim());
+  if (match === null) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+/** Formats minutes since midnight back into a zero-padded "HH:MM". */
+export function formatMinutesAsClock(minutes: number): string {
+  const hour = Math.floor(minutes / 60) % 24;
+  const minute = minutes % 60;
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+/**
+ * Spreads `count` capillary-measurement reminders evenly across the awake
+ * window [wakeStart, wakeEnd], both "HH:MM". The reminders are anchored at
+ * wakeStart and spaced one interval (window / count) apart, so they read as
+ * "cada Y horas mientras estás despierto". Returns null on any malformed
+ * time, a non-positive window, or a count outside 1..12 — the caller rejects
+ * the whole edit rather than schedule a nonsensical set.
+ */
+export function capillaryReminderTimes(
+  wakeStart: string,
+  wakeEnd: string,
+  count: number,
+): { hour: number; minute: number }[] | null {
+  if (!Number.isInteger(count) || count < 1 || count > 12) return null;
+  const start = parseClockToMinutes(wakeStart);
+  const end = parseClockToMinutes(wakeEnd);
+  if (start === null || end === null || end <= start) return null;
+  const interval = (end - start) / count;
+  const times: { hour: number; minute: number }[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const total = Math.round(start + i * interval);
+    times.push({ hour: Math.floor(total / 60) % 24, minute: total % 60 });
+  }
+  return times;
+}
