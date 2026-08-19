@@ -236,10 +236,14 @@ docs/
   descartaban el error real con un `catch {}` mudo — sin esto, un fallo real
   (rechazo de schema, error nativo de SQLite, una llamada de notificaciones
   que lanza) no dejaba ningún rastro. Ahora se loguea `error.name`/
-  `error.message` a consola (nunca el objeto de error completo ni los datos
-  guardados — un `ZodError` completo puede traer el valor que falló la
-  validación en `issues`, y AGENTS.md prohíbe loguear cuerpos con
-  glucosa/insulina/comida). **2026-08-19**, en respuesta a un reporte de
+  `error.message` a consola, nunca el objeto de error completo ni los datos
+  guardados — no `error.issues`/`error.cause`. Verificado que los mensajes
+  por defecto de zod v4 para los schemas de este repo (`CGMReadingSchema`,
+  `InsulinEventSchema`, `CarbEventSchema`, `TherapyProfileSchema`) no
+  incluyen el valor rechazado, pero loguear solo `.message` en vez del
+  objeto completo evita depender de que eso siga siendo cierto en cada
+  cambio de schema — AGENTS.md prohíbe loguear cuerpos con
+  glucosa/insulina/comida. **2026-08-19**, en respuesta a un reporte de
   Verónica de que "no me deja guardar entradas nuevas": revisión estática
   completa de `saveUnifiedEntry`/`writeMealWithEpisode`/`writeCGMReading`/la
   migración de `entry_group_id` no encontró ningún bug reproducible (y

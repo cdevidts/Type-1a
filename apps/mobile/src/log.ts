@@ -8,9 +8,13 @@
  *
  * Deliberately logs only `error.name`/`error.message`, never the error object
  * itself or any of the data being saved — AGENTS.md forbids logging request
- * bodies containing glucose, insulin, food, or therapy settings, and a raw
- * object dump (e.g. a ZodError's `issues`) could carry the value that failed
- * validation.
+ * bodies containing glucose, insulin, food, or therapy settings. Zod v4's
+ * default issue messages don't embed the rejected value for the schemas this
+ * app uses (verified against `CGMReadingSchema`/`InsulinEventSchema`/
+ * `CarbEventSchema`/`TherapyProfileSchema`), but this stays scoped to
+ * `.message` rather than `error.issues`/`error.cause`/the object itself on
+ * purpose, so that guarantee never has to be re-checked by hand every time a
+ * schema changes.
  */
 export function logSaveError(context: string, error: unknown): void {
   const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
