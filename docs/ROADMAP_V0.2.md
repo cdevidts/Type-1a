@@ -314,6 +314,7 @@ persistencia de datos de salud, o `packages/cgm`.
 | **10** | Alertas de glucosa alta/baja por umbral. | 7 (necesita datos frescos aunque la app esté cerrada) |
 | **11** | ✅ **Completada (2026-08-19).** Pantalla "Resumen" con tres sub-páginas (Días / Métricas / Comidas), abierta desde el botón ◔ de la barra superior. Time in Range real por las cinco bandas de consenso, HbA1c estimada (GMI, rotulada como *estimada* y separada de la `HbA1cLabResultSchema` de laboratorio), variabilidad (CV%), promedio, gráficos diarios y día promedio ponderado en formato AGP con selector de 7/14/30/90 días. Motor en `glucose-metrics.ts` + `agp.ts`; todo también incorporado al reporte PDF/Excel. Ver detalle abajo. | 1, 2, 7 |
 | **12** | 🟡 **Parte descriptiva completada (2026-08-19)**, en la sub-página "Comidas" del Resumen: patrones por franja horaria (`nutrition-insights.ts`) — promedio de carbohidratos confirmados e insulina por franja, y % de dosis rápidas seguidas de una lectura en rango a 1/2/3 h, con mínimo de muestra y advertencia de que es observacional. Pendiente el resto de la fase: insights conversacionales//adaptativos vía el chat (depende de la Fase 8). Nunca ajusta dosis. | 8, 11 |
+| **13** | Bugs de interfaz de la pantalla "Resumen" encontrados por Verónica probando el build real en el dispositivo (2026-08-19) — ver detalle abajo. No se tocaron en esta corrida a pedido explícito de Verónica ("en esta corrida quiero que revises exclusivamente lo del backend"). | 11 |
 
 No se numeró por prioridad de negocio sino por dependencia técnica — el
 orden de ejecución real se acuerda con Verónica fase por fase, no se asume.
@@ -937,6 +938,66 @@ Verónica** sin forma de recuperarlo.
 - El primer build de la cuenta nueva se disparó para validar justamente
   esto (que instale como actualización, sin pedir desinstalar). Confirmarlo
   en un dispositivo real antes de asumir que la migración quedó cerrada.
+
+## Detalle de la Fase 13 (2026-08-19) — bugs de interfaz del Resumen, encontrados en dispositivo
+
+Verónica probó el build real (el de la migración de cuenta EAS, arriba) en
+su teléfono e instaló la pantalla "Resumen" por primera vez. Reportó 5
+problemas con capturas. **A pedido explícito de ninguno se tocó en esta
+corrida** ("en esta corrida quiero que revises exclusivamente lo del
+backend") — quedan acá con hipótesis de causa para que la próxima corrida
+no tenga que re-investigar desde cero.
+
+1. **Los gráficos se salen del contenedor por la derecha.** Se ve el eje X
+   (horas) cortado contra el borde de la tarjeta blanca, entrando en el
+   fondo gris. Hipótesis de causa: doble padding. `ModalShell` aplica
+   `padding: spacing.lg` en su `content` **incluso con `scroll={false}`**
+   (que es como lo usa `SummaryModal`) — y `SummaryModal` además envuelve
+   sus tarjetas en su propio `<ScrollView contentContainerStyle=
+   {styles.scrollBody}>` con otro `padding: spacing.lg`. El ancho de
+   gráfico que se calcula (`chartWidth = width - spacing.lg*2 -
+   spacing.md*2` en `SummaryModal.tsx`) solo resta el padding **una vez**,
+   no las dos capas — así que el `width` que reciben `DayGlucoseChart`/
+   `AgpChart` (`SummaryCharts.tsx`) queda más ancho que el espacio real
+   disponible dentro de la tarjeta. Revisar si `ModalShell` debería no
+   aplicar padding cuando el hijo ya trae su propio scroll, o si
+   `chartWidth` tiene que restar una capa más.
+2. **Lugares donde no se puede scrollear hacia abajo** (texto explicativo
+   cortado). Puede ser síntoma del mismo problema de contenedores anidados
+   del punto 1 — un `ScrollView` dentro de un `View` con padding fijo puede
+   terminar con una altura de contenido mal calculada. Reproducir en
+   dispositivo con texto largo (ej. la nota de "Cómo leer estos números" en
+   la pestaña Métricas) antes de asumir la causa.
+3. **Botones superiores (ej. "Cerrar") tapados por la barra de estado de
+   Android** (batería, señal, hora). `ModalShell.tsx` usa `<SafeAreaView
+   style={styles.safeArea}>` sin `edges` explícito — a diferencia de
+   `App.tsx`, que sí fija `edges={['top']}` en su `SafeAreaView` de nivel
+   superior. Un `<Modal>` de React Native vive en una jerarquía nativa
+   separada; el cálculo de safe-area area ahí puede no heredar lo mismo que
+   la pantalla principal. Empezar por probar `edges={['top']}` explícito en
+   el `SafeAreaView` de `ModalShell` y `statusBarTranslucent` del `<Modal>`.
+4. **Contenedores de fecha mal dimensionados** — en la pestaña Días, el
+   encabezado de cada tarjeta (`cardHeader` en `SummaryModal.tsx`, fila con
+   `cardTitle` + `cardMeta`) envuelve la fecha letra por letra cuando el
+   texto de `cardMeta` es largo (ej. "79% en rango · 141 lecturas ·
+   incluye manual/importado"). Causa casi segura: `cardTitle` tiene
+   `flexShrink: 1` pero `cardMeta` no tiene ningún `flexShrink`/ancho
+   máximo, así que en una fila `justifyContent: 'space-between'` el título
+   se comprime hasta casi cero para dejarle todo el espacio al meta, que no
+   cede. Fix probable: darle `flexShrink`/`maxWidth` a `cardMeta` también, o
+   pasar el encabezado a dos líneas (fecha arriba, stats abajo) en vez de
+   una fila — más legible en pantallas angostas de todos modos.
+5. **Bug funcional, no solo visual**: al abrir el Resumen recién instalada
+   la actualización y cambiar el chip de rango de días, la app tiró un
+   error de que no se podían encontrar los datos y pidió cerrar y volver a
+   abrir — **cerrar la app entera resolvió el problema**, no alcanzó con
+   reabrir el modal. Eso sugiere una excepción de JS no capturada en algún
+   punto de la carga/recálculo al cambiar `rangeDays` (no el estado
+   `failed` ya manejado en `SummaryModal.tsx`, que es recuperable sin
+   cerrar la app) — no el mensaje "No se pudo leer el historial" que ya
+   existe en el código. Antes de tocar nada: reproducir con el Metro log o
+   un `adb logcat` abierto (mismo patrón que el bug de guardado anotado más
+   abajo) para capturar el stack trace real en vez de adivinar la causa.
 
 ## Verificación por fase
 
