@@ -13,7 +13,8 @@ Esas reglas de seguridad y arquitectura aplican a todo el repo y no son
 negociables — en particular todo lo relacionado a dosis de insulina, IOB,
 y qué puede o no decir la IA.
 
-Antes de construir o tocar cualquier pantalla de `apps/mobile`, lee también
+Antes de construir o tocar cualquier pantalla de `apps/mobile`, invoca la
+skill `/ui-screen`, que arranca por
 [`docs/UX_GUIDELINES.md`](docs/UX_GUIDELINES.md) (checklist al inicio del
 documento). Pedido explícito de Verónica (2026-08-18): la app tiene que
 empezar a ser cómoda, no solo funcional — este documento traduce las Apple
@@ -45,8 +46,7 @@ Otros documentos de contexto en `docs/`:
   aplicadas a los componentes reales de `apps/mobile/src/components/`.
 - `AI_CHAT_ARCHITECTURE.md` — documento vivo: qué funciones de la app debe
   poder alcanzar el futuro chat de IA y con qué arquitectura, sin cruzar las
-  fronteras de seguridad de `AGENTS.md`. Ver "Constancia para el chat de IA"
-  más abajo.
+  fronteras de seguridad de `AGENTS.md`. Ver "Cierre de corrida" más abajo.
 - `adr/` — decisiones de arquitectura (local-first, límite de IA).
 - `DEEPAGENT_REDEPLOY_PROMPT.md` — prompt listo para pedirle a DeepAgent el
   redeploy de `apps/api` a producción. Pedido explícito de Verónica
@@ -70,6 +70,10 @@ que el código compila y pasa tests.
 
 ## Skills de este repo
 
+- `/ui-screen` — **obligatoria antes de construir o revisar cualquier
+  pantalla, modal o gráfico de `apps/mobile`.** Instancia `UX_GUIDELINES.md`
+  y los tokens reales de `theme.ts` en reglas accionables, y dice qué cargar
+  además (la skill global `dataviz`) cuando el cambio incluye un gráfico.
 - `/verify` — corre `pnpm verify` y resume fallas de lint/typecheck/test por
   paquete, en vez de pegar el log completo.
 - `/new-cgm-provider` — scaffolding para un `CGMProvider` nuevo: crea el
@@ -97,20 +101,43 @@ que el código compila y pasa tests.
 - No hardcodees claves de Abacus/Junction/firma en ningún archivo que se
   empaquete en `apps/mobile`.
 
-## Constancia para el chat de IA (al final de cada corrida)
+## Cierre de corrida — checklist obligatorio
 
-Pedido explícito de Verónica (2026-08-18): mantener vivo
-[`docs/AI_CHAT_ARCHITECTURE.md`](docs/AI_CHAT_ARCHITECTURE.md). Al terminar
-cualquier corrida que **agregue o cambie una capacidad de la app** (una función
-de `db.ts`, un endpoint de `apps/api`, un módulo de `packages/domain`, una
-integración externa, un ajuste nuevo), actualiza ese documento en la **misma
-corrida**:
+Pedido explícito de Verónica (2026-08-18, ampliado 2026-08-19): la
+documentación se mantiene **en la misma corrida** que el código, no después.
+Si se desactualiza, la corrida siguiente gasta tokens re-explorando lo que ya
+estaba resuelto, y el chat de IA futuro nace ciego a media app.
 
-- agrega la capacidad nueva al catálogo (§3), marcada R (lectura) o W
-  (escritura), con de dónde sale y su nota de seguridad;
-- si aprendiste algo sobre la mejor arquitectura para que el chat acceda a las
-  funciones sin romper las fronteras de `AGENTS.md`, déjalo escrito en §2 o §5.
+Antes de dar por terminada cualquier corrida, repasa estos cinco puntos. Los
+que no apliquen, se saltan explícitamente — no en silencio.
 
-La idea es que, cuando armemos el chat en su fase, no se nos escape ninguna
-función y el chat nazca poderoso y con buenas prácticas. Si no se mantiene junto
-al código, se desactualiza y el chat nacerá ciego a media app.
+1. **`pnpm verify` en verde.** Sin excepciones.
+2. **`domain-safety-reviewer`** si tocaste `packages/domain`, `packages/ai`,
+   `packages/cgm`, `.env`/secretos, o **cualquier texto visible al usuario
+   que hable de dosis, insulina o una métrica derivada de ellas**. La
+   redacción que ve la usuaria es superficie de seguridad, no decoración.
+3. **`docs/CODE_MAP.md`** — módulo, paquete, componente o decisión nueva.
+4. **`docs/AI_CHAT_ARCHITECTURE.md`** — si la corrida **agrega o cambia una
+   capacidad de la app** (una función de `db.ts`, un endpoint de `apps/api`,
+   un módulo de `packages/domain`, una integración externa, un ajuste nuevo):
+   agrégala al catálogo (§3) marcada R (lectura) o W (escritura), con de
+   dónde sale y su nota de seguridad; y si aprendiste algo sobre cómo el chat
+   debería alcanzar esa función sin romper `AGENTS.md`, déjalo en §2 o §5.
+   La idea es que, cuando armemos el chat en su fase, no se nos escape
+   ninguna función y nazca poderoso y con buenas prácticas.
+5. **Los reportes y el prompt de redeploy.**
+   - Si la corrida produce **información que le sirve a un médico o a la
+     usuaria en un reporte** (una métrica, un agregado, un patrón, un
+     gráfico), incorpórala a `apps/mobile/src/reportExport.ts` — PDF **y**
+     Excel — en la misma corrida. Un dato que solo existe dentro de la app no
+     llega a la consulta médica.
+   - Si tocaste `apps/api`, evalúa si hace falta redeploy y sigue
+     `docs/DEEPAGENT_REDEPLOY_PROMPT.md` (**no lo dispares** salvo que sea
+     crítico — cada redeploy consume créditos de Abacus). Si **no** lo
+     tocaste, anótalo en la tabla "corridas que NO requirieron redeploy" de
+     ese mismo documento, para que la corrida siguiente no vuelva a
+     preguntárselo.
+
+Y si en el camino descubres que estas reglas o las skills del repo no
+alcanzaron para evitar un error, arregla la regla o la skill en la misma
+corrida: el sistema agéntico también es parte del entregable.

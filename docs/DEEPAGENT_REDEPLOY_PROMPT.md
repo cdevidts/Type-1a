@@ -4,6 +4,17 @@ Este documento existe para **no gastar créditos de Abacus en un redeploy
 hasta que sea realmente necesario**. Pedido explícito de Verónica
 (2026-08-18): preparar el prompt de antemano, no dispararlo ahora.
 
+## Registro de corridas que NO requirieron redeploy
+
+Se anota acá para que una corrida futura no tenga que re-derivar si el
+backend quedó atrás. Si tu cambio no tocó `apps/api`, agrégate a esta lista
+en vez de abrir la pregunta de nuevo.
+
+| Fecha | Corrida | Backend tocado |
+|---|---|---|
+| 2026-08-19 | Fase 9 reforzada: gráficos diarios en el reporte + Fase 11 (TIR, HbA1c estimada) | No — solo `packages/domain` y `apps/mobile`. |
+| 2026-08-19 | Pantalla "Resumen" (AGP, métricas, patrones por franja) y su integración a los reportes | No — solo `packages/domain` y `apps/mobile`. Todo el cálculo es local por diseño (`docs/adr/0001-local-first.md`). |
+
 ## Cuándo usarlo
 
 Solo cuando algo que ya está arreglado en este repo (`apps/api`) siga

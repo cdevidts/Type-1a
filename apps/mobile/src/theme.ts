@@ -18,6 +18,34 @@ export const colors = {
   warningSoft: '#FFF2C7',
 } as const;
 
+/**
+ * Bandas clínicas de glucosa (Time in Range). Son colores de **estado**, no
+ * una paleta categórica: tres hues de estado (bajo / en rango / alto), y
+ * dentro de bajo y alto un segundo paso más oscuro para el nivel severo,
+ * formando una mini rampa secuencial monótona en luminosidad
+ * (veryLow L.378 < low L.500; veryHigh L.456 < high L.648).
+ *
+ * Validados con el script de la skill `dataviz`
+ * (`scripts/validate_palette.js`), no a ojo: los tres hues base pasan banda
+ * de luminosidad, separación para daltonismo (peor par ΔE 14.1 protan) y
+ * contraste ≥3:1 contra la superficie. Se acepta a conciencia un único
+ * FAIL: el piso de croma del teal `#087E8B` — es el color de marca ya usado
+ * en `GlucoseCard`/`GlucoseChart`, y cambiarlo solo para esta pantalla
+ * rompería la consistencia de toda la app. Se compensa con la regla de
+ * abajo.
+ *
+ * **Regla (HIG + `docs/UX_GUIDELINES.md`): la identidad de una banda nunca
+ * descansa solo en el color.** Cada banda se muestra siempre con su etiqueta
+ * y su rango en mg/dL al lado.
+ */
+export const glucoseBands = {
+  veryLow: '#7A1610',
+  low: '#B42318',
+  target: '#087E8B',
+  high: '#D96B27',
+  veryHigh: '#8A3D10',
+} as const;
+
 export const spacing = {
   xs: 4,
   sm: 8,

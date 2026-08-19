@@ -13,7 +13,7 @@
 > IA". Si no se mantiene junto al código, el chat futuro nacerá ciego a la
 > mitad de la app.
 >
-> _Última actualización: 2026-08-19._
+> _Última actualización: 2026-08-19 (pantalla Resumen: AGP + patrones por franja)._
 
 ---
 
@@ -126,7 +126,9 @@ día es el objetivo del documento.
 | Parámetros de terapia + si están configurados | `getTherapyProfile`, `isTherapyConfigured` (db) | Solo mostrar; nunca proponer valores. |
 | Ajustes (alarmas, estilo de alerta, recordatorio capilar, privacidad) | `getMealAlarmOffsets`, `getCorrectionReminderSettings`, `getReminderAlertStyle`, `getCapillaryReminderSettings`, `getSetting` (db) | — |
 | Reporte tabular del historial en un rango (glucosa, insulina, carbos, comidas, actividad, notas, vitales, HbA1c) | `buildReportRows` (domain) + `getCGMReadings`/`getInsulinEvents`/`getCarbEvents`/`getMealEvents`/`getActivityEvents`/`getNoteEvents`/`getVitalsEvents`/`getHbA1cResults` (db) | Fase 9. Puro formato de eventos, sin agregados clínicos; si el chat llega a ofrecer "arma un reporte", debe generar el PDF/Excel en el dispositivo igual que `SettingsModal` (`apps/mobile/src/reportExport.ts`), nunca resumir los valores él mismo en prosa libre sin la guardia de `containsTherapyRecommendation`. |
-| Resumen clínico de glucosa: Time in Range por banda, promedio, variabilidad (CV%), HbA1c estimada (GMI) | `summarizeGlucose` (domain, `glucose-metrics.ts`) sobre `getCGMReadings` | Fase 11 (parcial — motor de cálculo + integrado al reporte PDF/Excel; **no** existe todavía una pantalla "Resumen" en la app). Excluye `origin:'synthetic'` del cálculo. El chat debe rotular la HbA1c siempre como "estimada (GMI)" y jamás mezclarla con `HbA1cLabResultSchema` (dato de laboratorio real) sin distinguirlas. |
+| Resumen clínico de glucosa: Time in Range por banda, promedio, variabilidad (CV%), HbA1c estimada (GMI) | `summarizeGlucose` (domain, `glucose-metrics.ts`) sobre `getCGMReadings` | Fase 11 ✅. Excluye `origin:'synthetic'` del cálculo. El chat debe rotular la HbA1c siempre como "estimada (GMI)" y jamás mezclarla con `HbA1cLabResultSchema` (dato de laboratorio real) sin distinguirlas. |
+| Día promedio ponderado (perfil ambulatorio AGP): percentiles p05/p25/p50/p75/p95 por franja de 30 min sobre 24 h | `buildAmbulatoryProfile` (domain, `agp.ts`) sobre `getCGMReadings` | Fase 11 ✅. Responde "¿cómo se ve un día típico mío?" y "¿a qué hora se me descontrola?" sin que el chat tenga que razonar sobre miles de lecturas crudas — **esta es la forma correcta de darle contexto temporal al modelo**: un perfil de ~48 franjas en vez de la serie completa, que además cumple la regla de mandar el mínimo necesario. Excluye sintéticas. |
+| Patrones por franja horaria: promedio de carbohidratos confirmados, de insulina rápida y basal, y % de dosis rápidas seguidas de una lectura en rango a 1/2/3 h | `buildNutritionInsights` (domain, `nutrition-insights.ts`) | Fase 11/12 descriptiva ✅. **La capacidad más delicada del catálogo.** El chat puede describirla ("en la mañana sueles registrar ~45 g y 6 U; el 70% de las veces quedaste en rango a la hora") pero **nunca** convertirla en consejo ("deberías ponerte más"), ni derivar de ahí un ratio, un factor o un objetivo — sería exactamente la inferencia de parámetros de terapia que prohíbe AGENTS.md. Debe arrastrar siempre el `sampleSize`, respetar `inTargetPct: undefined` como "no hay datos suficientes" (nunca leerlo como 0%), **y citar siempre los tres lados juntos** (`belowTargetPct` / `inTargetPct` / `aboveTargetPct`): decir solo "70% en rango" esconde si el 30% restante fueron hipoglucemias o hiperglucemias, que son problemas opuestos, e invita a la conclusión errónea de que falta insulina. Acompañar cualquier mención con el aviso de que es observacional y que las dosis se deciden con el equipo clínico. Toda salida del modelo que hable de esto pasa igual por `containsTherapyRecommendation`. |
 
 ### Escritura / acciones (W) — siempre con confirmación de la usuaria
 
@@ -150,6 +152,7 @@ día es el objetivo del documento.
 | Bolo de comida | `calculateMealBolus` (domain) | Requiere `carbRatio` ingresado; nunca inferido. |
 | Umbrales de glucosa, conversión de unidades, frescura | `glucose-thresholds`, `units`, `freshness` (domain) | Determinístico. |
 | HbA1c estimada a partir de un promedio de glucosa (GMI) | `estimateA1cFromMeanGlucose` (domain, `glucose-metrics.ts`) | Fórmula fija (Bergenstal et al. 2018), no un modelo — el chat puede mostrar el número pero nunca presentarlo como medición de laboratorio. |
+| Percentiles de una muestra de glucosa | `percentile` (domain, `agp.ts`) | Interpolación lineal determinística. |
 | Guardia anti-recomendación | `containsTherapyRecommendation` (domain) | Filtro obligatorio de toda salida del modelo. |
 
 ---

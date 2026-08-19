@@ -1,9 +1,14 @@
 import {
+  buildAmbulatoryProfile,
+  buildNutritionInsights,
   convertGlucose,
   HIGH_THRESHOLD,
   HYPOGLYCEMIA_THRESHOLD,
+  MIN_SAMPLE_FOR_RATE,
   summarizeGlucose,
+  type AmbulatoryProfile,
   type GlucoseSummary,
+  type MealWindowInsight,
 } from '@type1a/domain';
 import type { CGMReading } from '@type1a/schemas';
 import * as XLSX from 'xlsx';
@@ -125,22 +130,44 @@ function dailyChartSvg(dayReadings: readonly CGMReading[]): string {
   const axisLabels = `<text x="${PAD_LEFT - 4}" y="${(yLow + 3).toFixed(1)}" font-size="9" fill="${colors.muted}" text-anchor="end">70</text>` +
     `<text x="${PAD_LEFT - 4}" y="${(yHigh + 3).toFixed(1)}" font-size="9" fill="${colors.muted}" text-anchor="end">180</text>`;
 
+  // Cualquier lectura que no salió del feed del sensor (importada o manual)
+  // recibe el mismo trato "esto no es dato de sensor en vivo" — misma
+  // definición que `GlucoseChart`/`SummaryCharts`. Y la distinción vive
+  // también en el trazo, no solo en los puntos: una tirada larga de
+  // historial importado unida por una línea sólida se leería, en la
+  // consulta médica, como cobertura continua de sensor.
   const points = dayReadings.map((reading) => {
     const mgDl = convertGlucose(reading.glucose, reading.unit, 'mg/dL');
     return {
       x: xForMinutes(minutesOfLocalDay(reading.sourceTimestamp)),
       y: yForGlucose(mgDl),
       mgDl,
-      imported: reading.origin === 'imported',
+      nonSensor: reading.origin === 'imported' || reading.origin === 'manual',
     };
   });
 
-  const polyline = points.length > 1
-    ? `<polyline points="${points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')}" fill="none" stroke="${colors.navy}" stroke-width="1.1" opacity="0.4" />`
-    : '';
+  const segments: string[] = [];
+  let runStart = 0;
+  for (let i = 1; i <= points.length; i += 1) {
+    const atEnd = i === points.length;
+    if (atEnd || points[i]!.nonSensor !== points[runStart]!.nonSensor) {
+      const runEnd = atEnd ? i - 1 : i;
+      const run = points.slice(runStart, runEnd + 1);
+      if (run.length > 1) {
+        const nonSensor = points[runStart]!.nonSensor;
+        segments.push(
+          `<polyline points="${run.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')}" fill="none" stroke="${nonSensor ? colors.muted : colors.navy}" stroke-width="1.1" opacity="${nonSensor ? 0.55 : 0.4}"${nonSensor ? ' stroke-dasharray="3,3"' : ''} />`,
+        );
+      }
+      runStart = runEnd;
+    }
+  }
+  const polyline = segments.join('');
 
   const dots = points
-    .map((p) => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.1" fill="${colorForGlucose(p.mgDl)}" opacity="${p.imported ? 0.5 : 1}" />`)
+    .map((p) => p.nonSensor
+      ? `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.1" fill="#FFFFFF" stroke="${colorForGlucose(p.mgDl)}" stroke-width="1" opacity="0.85" />`
+      : `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.1" fill="${colorForGlucose(p.mgDl)}" />`)
     .join('');
 
   return `<svg width="${CHART_WIDTH}" height="${CHART_HEIGHT}" viewBox="0 0 ${CHART_WIDTH} ${CHART_HEIGHT}" xmlns="http://www.w3.org/2000/svg">
@@ -157,10 +184,10 @@ function dailyChartSvg(dayReadings: readonly CGMReading[]): string {
 
 function dayCardHtml(bucket: DayBucket): string {
   const summary = summarizeGlucose(bucket.readings);
-  const hasImported = bucket.readings.some((r) => r.origin === 'imported');
+  const hasImported = bucket.readings.some((r) => r.origin === 'imported' || r.origin === 'manual');
   const stats = summary === null
     ? `${bucket.readings.length} lectura(s)`
-    : `Promedio ${summary.meanGlucoseMgDl.toFixed(0)} mg/dL · En rango ${summary.range.targetPct.toFixed(0)}% · ${summary.readingCount} lectura(s)${hasImported ? ' · incluye historial importado' : ''}`;
+    : `Promedio ${summary.meanGlucoseMgDl.toFixed(0)} mg/dL · En rango ${summary.range.targetPct.toFixed(0)}% · ${summary.readingCount} lectura(s)${hasImported ? ' · incluye manual/importado' : ''}`;
   return `<div class="day-card">
     <div class="day-header">
       <span class="day-date">${escapeHtml(bucket.heading)}</span>
@@ -195,7 +222,7 @@ function summaryHtml(summary: GlucoseSummary | null): string {
     caveats.push(`Cobertura de ${summary.daysCovered} día(s) — la estimación de HbA1c es más confiable con 14 o más días de datos continuos.`);
   }
   if (summary.excludedSyntheticCount > 0) {
-    caveats.push(`Se excluyeron ${summary.excludedSyntheticCount} lectura(s) sintética(s) (modo desarrollo) de este resumen y de los gráficos diarios.`);
+    caveats.push(`Se excluyeron ${summary.excludedSyntheticCount} lectura(s) sintética(s) (modo desarrollo) de todo este reporte: del resumen, del día promedio, de los gráficos diarios y de los patrones por franja.`);
   }
   return `<div class="summary">
     <div class="summary-grid">
@@ -208,6 +235,89 @@ function summaryHtml(summary: GlucoseSummary | null): string {
     <p class="summary-footnote">* Estimación calculada por Type 1A a partir del promedio de glucosa (fórmula GMI — Bergenstal et al., Diabetes Care 2018), sobre ${summary.readingCount} lectura(s) en ${summary.daysCovered} día(s). No reemplaza una medición de laboratorio: si hay alguna registrada en este rango, aparece por separado como "HbA1c (laboratorio)" en el detalle.</p>
     ${caveats.map((c) => `<p class="summary-caveat">${escapeHtml(c)}</p>`).join('')}
   </div>`;
+}
+
+/**
+ * Perfil ambulatorio (AGP) para el PDF: el "día promedio ponderado", en el
+ * mismo formato de percentiles que la pantalla Resumen y que los reportes
+ * de CGM estándar, para que el equipo clínico lo lea sin explicación.
+ */
+function agpChartSvg(profile: AmbulatoryProfile): string {
+  const { buckets, bucketMinutes } = profile;
+  if (buckets.length === 0) return '';
+  const centre = (b: AmbulatoryProfile['buckets'][number]): number =>
+    xForMinutes(b.startMinute + bucketMinutes / 2);
+
+  const band = (lower: (b: typeof buckets[number]) => number, upper: (b: typeof buckets[number]) => number): string => {
+    const top = buckets.map((b) => `${centre(b).toFixed(1)},${yForGlucose(upper(b)).toFixed(1)}`);
+    const bottom = [...buckets].reverse().map((b) => `${centre(b).toFixed(1)},${yForGlucose(lower(b)).toFixed(1)}`);
+    return `M${top.join('L')}L${bottom.join('L')}Z`;
+  };
+
+  const yLow = yForGlucose(HYPOGLYCEMIA_THRESHOLD);
+  const yHigh = yForGlucose(HIGH_THRESHOLD);
+  const hourMarks = HOUR_TICKS.map((hour) => {
+    const x = xForMinutes(hour * 60).toFixed(1);
+    return `<line x1="${x}" y1="${PAD_TOP}" x2="${x}" y2="${PAD_TOP + PLOT_HEIGHT}" stroke="${colors.line}" stroke-width="0.75" />` +
+      `<text x="${x}" y="${CHART_HEIGHT - 4}" font-size="9" fill="${colors.muted}" text-anchor="middle">${String(hour % 24).padStart(2, '0')}:00</text>`;
+  }).join('');
+
+  return `<svg width="${CHART_WIDTH}" height="${CHART_HEIGHT}" viewBox="0 0 ${CHART_WIDTH} ${CHART_HEIGHT}" xmlns="http://www.w3.org/2000/svg">
+    <rect x="${PAD_LEFT}" y="${PAD_TOP}" width="${PLOT_WIDTH}" height="${PLOT_HEIGHT}" fill="#FFFFFF" stroke="${colors.line}" />
+    <rect x="${PAD_LEFT}" y="${yHigh.toFixed(1)}" width="${PLOT_WIDTH}" height="${(yLow - yHigh).toFixed(1)}" fill="${colors.tealSoft}" />
+    ${hourMarks}
+    <text x="${PAD_LEFT - 4}" y="${(yLow + 3).toFixed(1)}" font-size="9" fill="${colors.muted}" text-anchor="end">70</text>
+    <text x="${PAD_LEFT - 4}" y="${(yHigh + 3).toFixed(1)}" font-size="9" fill="${colors.muted}" text-anchor="end">180</text>
+    <path d="${band((b) => b.p05, (b) => b.p95)}" fill="${colors.navy}" opacity="0.12" />
+    <path d="${band((b) => b.p25, (b) => b.p75)}" fill="${colors.navy}" opacity="0.26" />
+    <polyline points="${buckets.map((b) => `${centre(b).toFixed(1)},${yForGlucose(b.p50).toFixed(1)}`).join(' ')}" fill="none" stroke="${colors.navy}" stroke-width="1.6" />
+  </svg>`;
+}
+
+function agpSectionHtml(profile: AmbulatoryProfile | null): string {
+  if (profile === null || profile.buckets.length === 0) {
+    return '<p class="summary-empty">Sin lecturas suficientes para construir el perfil de día promedio.</p>';
+  }
+  return `<p class="chart-legend">Todas las lecturas de ${profile.daysCovered} día(s) superpuestas sobre 24 h. Línea = mediana; franja oscura = 50% central (p25–p75); franja clara = 90% central (p05–p95). Formato de perfil ambulatorio (AGP), el estándar de los reportes de CGM.</p>
+    ${agpChartSvg(profile)}`;
+}
+
+function nutritionSectionHtml(insights: MealWindowInsight[]): string {
+  const withData = insights.filter(
+    (w) => w.mealCount > 0 || w.rapidDoseCount > 0 || w.confirmedCarbsSampleSize > 0,
+  );
+  if (withData.length === 0) {
+    return '<p class="summary-empty">Sin comidas ni insulina registradas en este rango.</p>';
+  }
+  const rows = withData
+    .map((w) => {
+      const outcome = (hours: number): string => {
+        const found = w.outcomes.find((o) => o.horizonHours === hours);
+        if (found === undefined || found.inTargetPct === undefined) {
+          return `<td class="num muted">n=${found?.sampleSize ?? 0}</td>`;
+        }
+        // Los tres lados, no solo el "en rango": un único porcentaje al lado
+        // del promedio de insulina de la franja se lee como una nota de
+        // desempeño, y esconde si los fallos fueron hipos o hipers.
+        return `<td class="num">${found.inTargetPct.toFixed(0)}%<br /><span class="muted">↓${found.belowTargetPct!.toFixed(0)} ↑${found.aboveTargetPct!.toFixed(0)} · n=${found.sampleSize}</span></td>`;
+      };
+      return `<tr>
+        <td>${escapeHtml(w.label)} <span class="muted">${String(w.startHour).padStart(2, '0')}–${String(w.endHour % 24).padStart(2, '0')} h</span></td>
+        <td class="num">${w.avgConfirmedCarbsG === undefined ? '—' : `${w.avgConfirmedCarbsG.toFixed(0)} g`}</td>
+        <td class="num">${w.avgRapidUnits === undefined ? '—' : `${w.avgRapidUnits.toFixed(1)} U`}</td>
+        <td class="num">${w.avgBasalUnits === undefined ? '—' : `${w.avgBasalUnits.toFixed(1)} U`}</td>
+        ${outcome(1)}${outcome(2)}${outcome(3)}
+      </tr>`;
+    })
+    .join('');
+  return `<table>
+    <thead><tr>
+      <th>Franja</th><th class="num">Carbos confirmados</th><th class="num">Rápida</th><th class="num">Basal</th>
+      <th class="num">En rango 1 h</th><th class="num">2 h</th><th class="num">3 h</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <p class="summary-footnote">Promedios de lo registrado por franja horaria. "En rango" = porcentaje de dosis rápidas tras las cuales había una lectura entre 70 y 180 mg/dL a esa hora; ↓ y ↑ son el porcentaje que quedó por debajo de 70 y por encima de 180, y se muestran a propósito porque quedar fuera de rango por abajo y por arriba son cosas opuestas. Es una observación descriptiva, no una medida de si la dosis fue adecuada, y depende también de comida, actividad, estrés y basal. Solo se muestra un porcentaje con al menos ${MIN_SAMPLE_FOR_RATE} dosis. Type 1A nunca calcula ni recomienda insulina.</p>`;
 }
 
 function eventTableHtml(rows: ReportRow[]): string {
@@ -231,10 +341,12 @@ function eventTableHtml(rows: ReportRow[]): string {
 
 export function reportHtml(data: ReportExport, rangeLabel: string): string {
   const summary = summarizeGlucose(data.readings);
+  const profile = buildAmbulatoryProfile(data.readings);
+  const insights = buildNutritionInsights(data);
   const dayBuckets = groupReadingsByDay(data.readings);
   const chartsSection = dayBuckets.length === 0
     ? '<p class="summary-empty">Sin lecturas de glucosa en este rango.</p>'
-    : `<p class="chart-legend">Cada punto es una lectura de glucosa (rojo &lt;70, teal 70–180, naranjo &gt;180 mg/dL). Puntos atenuados = historial importado.</p>${dayBuckets.map(dayCardHtml).join('')}`;
+    : `<p class="chart-legend">Cada punto es una lectura de glucosa (rojo &lt;70, teal 70–180, naranjo &gt;180 mg/dL). Los puntos huecos unidos por línea punteada no vienen del sensor: son lecturas manuales o historial importado.</p>${dayBuckets.map(dayCardHtml).join('')}`;
 
   return `<!doctype html>
 <html>
@@ -263,6 +375,8 @@ export function reportHtml(data: ReportExport, rangeLabel: string): string {
   table { width: 100%; border-collapse: collapse; font-size: 11px; }
   th, td { border-bottom: 1px solid ${colors.line}; padding: 6px 8px; text-align: left; vertical-align: top; }
   th { background: #F4F7F8; font-weight: 700; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  .muted { color: ${colors.muted}; font-weight: 400; }
 </style>
 </head>
 <body>
@@ -270,6 +384,10 @@ export function reportHtml(data: ReportExport, rangeLabel: string): string {
   <p class="range">${escapeHtml(rangeLabel)} · generado ${escapeHtml(formatReportTimestamp(new Date().toISOString()))}</p>
   <h2>Resumen clínico</h2>
   ${summaryHtml(summary)}
+  <h2>Día promedio (perfil ambulatorio)</h2>
+  ${agpSectionHtml(profile)}
+  <h2>Patrones por franja horaria</h2>
+  ${nutritionSectionHtml(insights)}
   <h2>Glucosa por día</h2>
   ${chartsSection}
   <h2>Insulina, carbohidratos y otros eventos</h2>
@@ -304,8 +422,34 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
     ...data.rows.map((row) => [formatReportTimestamp(row.timestamp), row.kindLabel, row.detail, row.provenance]),
   ];
 
+  const insights = buildNutritionInsights(data);
+  const outcomeCell = (window: MealWindowInsight, hours: number): string => {
+    const found = window.outcomes.find((o) => o.horizonHours === hours);
+    if (found === undefined || found.inTargetPct === undefined) return `sin dato (n=${found?.sampleSize ?? 0})`;
+    return `en rango ${found.inTargetPct.toFixed(0)}% / bajo ${found.belowTargetPct!.toFixed(0)}% / alto ${found.aboveTargetPct!.toFixed(0)}% (n=${found.sampleSize})`;
+  };
+  const patternsSheetData: (string | number)[][] = [
+    ['Franja', 'Horario', 'Carbos confirmados prom. (g)', 'Rápida prom. (U)', 'Basal prom. (U)', 'En rango 1 h', 'En rango 2 h', 'En rango 3 h'],
+    ...insights.map((w) => [
+      w.label,
+      `${String(w.startHour).padStart(2, '0')}:00-${String(w.endHour % 24).padStart(2, '0')}:00`,
+      w.avgConfirmedCarbsG === undefined ? '—' : Number(w.avgConfirmedCarbsG.toFixed(0)),
+      w.avgRapidUnits === undefined ? '—' : Number(w.avgRapidUnits.toFixed(1)),
+      w.avgBasalUnits === undefined ? '—' : Number(w.avgBasalUnits.toFixed(1)),
+      outcomeCell(w, 1),
+      outcomeCell(w, 2),
+      outcomeCell(w, 3),
+    ]),
+    [],
+    ['"En rango" = % de dosis rápidas tras las cuales había una lectura entre 70 y 180 mg/dL a esa hora.'],
+    ['"Bajo" (<70) y "alto" (>180) se muestran por separado: quedar fuera de rango por abajo y por arriba son cosas opuestas.'],
+    [`Observación descriptiva, no una medida de si la dosis fue adecuada. Solo se muestra con al menos ${MIN_SAMPLE_FOR_RATE} dosis.`],
+    ['Type 1A nunca calcula ni recomienda insulina.'],
+  ];
+
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(summarySheetData), 'Resumen');
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(patternsSheetData), 'Patrones');
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(reportSheetData), 'Reporte');
   return XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as Uint8Array;
 }

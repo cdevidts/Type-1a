@@ -1,3 +1,4 @@
+export * from './agp';
 export * from './ai-safety';
 export * from './bolus';
 export * from './correction';
@@ -6,5 +7,6 @@ export * from './glucose-metrics';
 export * from './glucose-thresholds';
 export * from './meal';
 export * from './mysugr-import';
+export * from './nutrition-insights';
 export * from './report';
 export * from './units';

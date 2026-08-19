@@ -94,6 +94,26 @@ docs/
   quedar visualmente separado. Consumido por
   `apps/mobile/src/reportExport.ts` para el resumen clínico del reporte
   PDF/Excel; candidato natural para una futura pantalla "Resumen" en la app.
+- `agp.ts` — Fase 11 (2026-08-19): `buildAmbulatoryProfile()` construye el
+  "día promedio ponderado" — todas las lecturas del rango colapsadas sobre un
+  único día de 24 h, resumidas por franjas de 30 min con percentiles
+  (p05/p25/p50/p75/p95) en vez de un promedio simple, que escondería la
+  variabilidad. Es el formato AGP del consenso ATTD/ADA, el mismo que
+  muestran LibreView y Dexcom Clarity, así que un equipo clínico lo lee sin
+  explicación. Exporta también `percentile()` (interpolación lineal, tipo 7).
+  Excluye `origin:'synthetic'`. Consumido por `SummaryModal` y por el PDF.
+- `nutrition-insights.ts` — Fase 11/12 descriptiva (2026-08-19). **Archivo
+  con frontera de seguridad explícita: leer su cabecera antes de tocarlo.**
+  `buildNutritionInsights()` agrupa por franja horaria del día
+  (`MEAL_TIME_WINDOWS`: madrugada/mañana/mediodía/tarde/noche) el promedio de
+  carbohidratos **confirmados** (nunca los estimados por IA), el promedio de
+  insulina rápida y basal registrada, y el % de dosis rápidas tras las cuales
+  había una lectura en rango 70–180 mg/dL a 1, 2 y 3 horas. Es estadística
+  observacional de lo ya registrado: **no evalúa si una dosis fue adecuada,
+  no sugiere cambiarla, y no infiere ningún parámetro de terapia.** Por
+  debajo de `MIN_SAMPLE_FOR_RATE` (3) devuelve `inTargetPct: undefined` en
+  vez de un porcentaje — con 1-2 dosis el número sería ruido presentado como
+  patrón. Excluye sintéticas.
 - `ai-safety.ts` — `containsTherapyRecommendation()`: filtro regex (español)
   que **rechaza** cualquier salida de IA que suene a consejo de dosis. Este es
   el guardrail técnico detrás de la regla "Never let an LLM calculate, infer,
@@ -228,6 +248,17 @@ docs/
 - `src/components/` — `Timeline`, `TimelineDetailModal` (editar/eliminar
   por tipo, ver `db.ts` arriba para qué es editable), `GlucoseCard`,
   `GlucoseChart`, `EntryModal`, `CorrectionModal`, `MealModal`,
+  `SummaryModal` + `SummaryCharts` (Fase 11, 2026-08-19: pantalla "Resumen",
+  se abre desde el botón ◔ de la barra superior. Tres sub-páginas en una
+  barra de pestañas dentro del mismo `ModalShell` — la app no tiene librería
+  de navegación y no se agregó una: **Días** (un gráfico por día, 00:00–24:00,
+  banda objetivo sombreada), **Métricas** (HbA1c estimada/GMI, promedio,
+  Time in Range con las cinco bandas y sus metas de consenso, CV, y el día
+  promedio ponderado en formato AGP) y **Comidas** (patrones por franja
+  horaria de `nutrition-insights.ts`). Un único selector de rango
+  7/14/30/90 días para las tres, como en los reportes de CGM. `SummaryCharts`
+  tiene los SVG (`DayGlucoseChart`, `AgpChart`, `RangeBar`) y `TIR_BANDS`;
+  todo el cálculo vive en `packages/domain`, el componente solo dibuja),
   `InsulinAssociationModal`, `NumericEntryModal`, `SettingsModal` (incl.
   sección "Reportes", Fase 9 + Fase 11: exporta el historial local a
   PDF/Excel — construcción del HTML/SVG y del workbook vive en
@@ -243,7 +274,11 @@ docs/
 - `src/theme.ts`, `src/format.ts` (incl. `parseMinuteOffsets` para las
   alarmas y `capillaryReminderTimes`/`parseClockToMinutes` para el
   recordatorio capilar, con tests en `format.test.ts`), `src/types.ts` (incl.
-  `TimelineEditPayload`, `ReminderAlertStyle` y `ReportExport`) — soporte de UI.
+  `TimelineEditPayload`, `ReminderAlertStyle`, `ReportExport` y `SummaryData`)
+  — soporte de UI. `theme.ts` incluye además `glucoseBands`, la paleta de las
+  cinco bandas clínicas de glucosa, **validada con el script de la skill
+  `dataviz`** (no elegida a ojo); su único FAIL aceptado a conciencia está
+  documentado ahí mismo con su razón.
 - `src/reportExport.ts` — Fase 9 + Fase 11 (2026-08-19): arma el HTML/SVG del
   PDF y el workbook del Excel exportables desde `SettingsModal`, a partir de
   un `ReportExport` (`{ rows, readings }`, ver `types.ts`). Reemplazó la tabla
@@ -253,9 +288,14 @@ docs/
   resumen clínico de la Fase 11 (`summarizeGlucose`, domain) al inicio del
   reporte. `groupReadingsByDay()` excluye `origin:'synthetic'` igual que
   `summarizeGlucose` — un reporte para el equipo médico no debe graficar
-  datos fabricados de desarrollo. Tests en `reportExport.test.ts` (incluye
-  los casos de seguridad: exclusión de sintéticos, HbA1c estimada vs. de
-  laboratorio nunca mezcladas).
+  datos fabricados de desarrollo. **2026-08-19**: incorpora además el perfil
+  AGP (`agpSectionHtml`) y la tabla de patrones por franja horaria
+  (`nutritionSectionHtml`), y el Excel ganó una hoja "Patrones" — el reporte
+  siempre muestra lo mismo que la pantalla Resumen, incluidas sus
+  advertencias. Tests en `reportExport.test.ts` (casos de seguridad:
+  exclusión de sintéticos, HbA1c estimada vs. de laboratorio nunca
+  mezcladas, y que la nota "Type 1A nunca calcula ni recomienda insulina"
+  viaja al PDF y al Excel).
 - `src/log.ts` — `logSaveError(context, error)`: cada modal de guardado
   (`EntryModal`, `MealModal`, `NumericEntryModal`, `CorrectionModal`,
   `SettingsModal`, `InsulinAssociationModal`) atrapa sus errores con un

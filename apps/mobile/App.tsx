@@ -36,6 +36,7 @@ import { InsulinAssociationModal } from './src/components/InsulinAssociationModa
 import { MealModal, type ConfirmedMealDraft } from './src/components/MealModal';
 import { NumericEntryModal } from './src/components/NumericEntryModal';
 import { SettingsModal } from './src/components/SettingsModal';
+import { SummaryModal } from './src/components/SummaryModal';
 import { Timeline } from './src/components/Timeline';
 import {
   getCGMReadings,
@@ -105,7 +106,7 @@ import {
 } from './src/notifications';
 import { capillaryReminderTimes } from './src/format';
 import { colors, radius, spacing } from './src/theme';
-import type { PendingInsulinAssociation, QuickRoute, ReminderAlertStyle, ReportExport, TimelineEditPayload, TimelineItem } from './src/types';
+import type { PendingInsulinAssociation, QuickRoute, ReminderAlertStyle, ReportExport, SummaryData, TimelineEditPayload, TimelineItem } from './src/types';
 
 const EMPTY_PROFILE: TherapyProfile = {
   glucoseUnit: 'mg/dL',
@@ -132,6 +133,7 @@ function Type1AApp() {
   const [mealOpen, setMealOpen] = useState(false);
   const [entryOpen, setEntryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
   const [showGlucoseOnLockScreen, setShowGlucoseOnLockScreen] = useState(false);
   const [mealAlarmOffsets, setMealAlarmOffsets] = useState<number[]>([...DEFAULT_MEAL_ALARM_OFFSETS_MINUTES]);
   const [correctionReminder, setCorrectionReminder] = useState<CorrectionReminderSettings>({
@@ -397,6 +399,19 @@ function Type1AApp() {
     await loadLocalState();
   }
 
+  const loadSummary = useCallback(
+    async (range: { from: Date; to: Date }): Promise<SummaryData> => {
+      const [readings, insulin, carbs, meals] = await Promise.all([
+        getCGMReadings(db, range.from, range.to),
+        getInsulinEvents(db, range.from, range.to),
+        getCarbEvents(db, range.from, range.to),
+        getMealEvents(db, range.from, range.to),
+      ]);
+      return { readings, insulin, carbs, meals };
+    },
+    [db],
+  );
+
   async function exportReport(range: { from: Date; to: Date }): Promise<ReportExport> {
     const [readings, insulin, carbs, meals, activities, notes, vitals, hba1c] = await Promise.all([
       getCGMReadings(db, range.from, range.to),
@@ -410,6 +425,9 @@ function Type1AApp() {
     ]);
     return {
       readings,
+      insulin,
+      carbs,
+      meals,
       rows: buildReportRows({ readings, insulin, carbs, meals, activities, notes, vitals, hba1c }),
     };
   }
@@ -567,9 +585,14 @@ function Type1AApp() {
             <Text style={styles.brand}>Type 1A</Text>
             <Text style={styles.mode}>{sourceLabel}</Text>
           </View>
-          <Pressable style={styles.settingsButton} onPress={() => { setSettingsOpen(true); }} accessibilityLabel="Conexiones y privacidad">
-            <Text style={styles.settingsGlyph}>•••</Text>
-          </Pressable>
+          <View style={styles.topBarActions}>
+            <Pressable style={styles.settingsButton} onPress={() => { setSummaryOpen(true); }} accessibilityRole="button" accessibilityLabel="Resumen: métricas y patrones">
+              <Text style={styles.settingsGlyph}>◔</Text>
+            </Pressable>
+            <Pressable style={styles.settingsButton} onPress={() => { setSettingsOpen(true); }} accessibilityLabel="Conexiones y privacidad">
+              <Text style={styles.settingsGlyph}>•••</Text>
+            </Pressable>
+          </View>
         </View>
 
         {notice === null ? null : (
@@ -680,6 +703,11 @@ function Type1AApp() {
         onSaveCapillaryReminder={updateCapillaryReminder}
         onExportReport={exportReport}
       />
+      <SummaryModal
+        visible={summaryOpen}
+        onClose={() => { setSummaryOpen(false); }}
+        onLoadSummary={loadSummary}
+      />
       <InsulinAssociationModal
         pending={pendingAssociations[0] ?? null}
         onConfirm={confirmInsulinAssociation}
@@ -725,6 +753,7 @@ const styles = StyleSheet.create({
   topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.lg },
   brand: { color: colors.ink, fontSize: 30, fontWeight: '900', letterSpacing: -1 },
   mode: { color: colors.teal, fontSize: 10, fontWeight: '900', letterSpacing: 1.2, marginTop: 2 },
+  topBarActions: { flexDirection: 'row', gap: spacing.sm },
   settingsButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' },
   settingsGlyph: { color: colors.navy, fontSize: 20, fontWeight: '900', letterSpacing: 2, marginTop: -8 },
   notice: { borderRadius: radius.sm, padding: spacing.md, marginBottom: spacing.md },

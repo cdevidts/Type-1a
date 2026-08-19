@@ -289,6 +289,66 @@ existente, repasa esto:
 
 ---
 
+## Gráficos y visualización de datos
+
+Agregado 2026-08-19, al construir la pantalla "Resumen". Antes de escribir
+código de gráfico nuevo, carga además la skill global `dataviz` (método
+completo: elegir la forma, asignar color por su trabajo, validar la paleta,
+especificaciones de marca, anti-patrones). Esta sección es cómo ese método
+quedó instanciado contra este repo — no lo re-derives cada vez.
+
+- **Motor**: `react-native-svg` en la app (`GlucoseChart`, `SummaryCharts`),
+  SVG inline en el PDF (`src/reportExport.ts`). No agregues una librería de
+  gráficos: todo lo que la app necesita se dibuja con estas dos.
+- **Un solo eje.** Nunca dos escalas Y en el mismo gráfico — es el error de
+  gráficos más común. Dos medidas de escala distinta son dos gráficos.
+- **La grilla y los ejes son recesivos** (`colors.line`, `colors.muted`,
+  trazos de 1px); el peso visual es del dato. Las etiquetas de eje Y se
+  limitan a los umbrales que importan clínicamente (70/180/250), no a una
+  escala completa: en una pantalla de 390 pt, más marcas es ruido.
+- **Leyenda siempre que haya más de una serie.** Una sola serie no necesita
+  caja de leyenda; el título ya la nombra.
+- **El texto lleva tokens de texto, nunca el color de la serie.** El color
+  vive en la marca (el punto, la franja, el swatch) que va al lado.
+- **La identidad nunca descansa solo en el color** — vale doble acá, porque
+  es a la vez regla de accesibilidad y frontera de seguridad de `AGENTS.md`:
+  una banda de glucosa siempre muestra su etiqueta y su rango en mg/dL, y un
+  dato importado/sintético siempre se distingue por algo más que el tono
+  (opacidad + texto, o directamente no se grafica).
+- **Los umbrales vienen de `packages/domain`**
+  (`glucose-thresholds.ts`: 54/70/180/250 mg/dL). Ningún componente los
+  redeclara.
+- **Formato clínico estándar antes que uno propio.** Para un perfil de
+  glucosa multi-día se usa el formato AGP (mediana + p25–p75 + p05–p95 sobre
+  un día compuesto de 24 h), que es el que ya muestran LibreView y Dexcom
+  Clarity y que un equipo médico lee sin explicación previa. Inventar una
+  visualización propia para algo que ya tiene un estándar clínico le cuesta
+  al usuario tener que traducirla en la consulta.
+- **La paleta de bandas se valida, no se elige a ojo.** `glucoseBands` en
+  `theme.ts` pasó por `scripts/validate_palette.js` de la skill `dataviz`
+  (banda de luminosidad, separación para daltonismo, contraste). El único
+  FAIL aceptado a conciencia está documentado en el propio `theme.ts` con su
+  razón. Si cambias esos colores, vuelve a correr el validador y actualiza
+  ese comentario.
+- **Si otro componente ya resolvió una distinción de seguridad, copia su
+  predicado — no escribas uno más laxo.** Pasó en esta corrida: el gráfico
+  diario nuevo atenuaba solo `origin:'imported'` y dejaba un capilar manual
+  idéntico a una lectura del sensor, cuando `GlucoseChart.tsx` ya usaba
+  `imported || manual` y ya había documentado por qué. Hoy ese predicado es
+  `isNonSensorReading()` en `SummaryCharts.tsx`, compartido.
+- **Una métrica que puede leerse como nota de desempeño al lado de una dosis
+  se descompone, no se aclara con una nota al pie.** Un "% en rango después
+  de una dosis" que colapsa hipo e hiper, dibujado como barra que se llena,
+  invita a "poca barra = me falta insulina" aunque el texto diga lo
+  contrario. La regla es dejar la inferencia equivocada *imposible* (mostrar
+  bajo / en rango / alto por separado), no solo desaconsejada.
+- **Ningún componente calcula una métrica de salud.** Time in Range,
+  percentiles, promedios y HbA1c estimada viven en `packages/domain` con
+  test; el `.tsx` elige rango, formatea y dibuja. Si te descubres promediando
+  glucosa dentro de un componente, el cálculo está en el lugar equivocado.
+
+---
+
 ## Fuentes
 
 - [Apple HIG — Layout (Foundations)](https://developers.apple.com/design/human-interface-guidelines/foundations/layout/)
@@ -306,3 +366,6 @@ existente, repasa esto:
 - [Designing Effective Medical Notifications to Counter Alert Fatigue — Invene](https://www.invene.com/blog/designing-experiences-to-counter-alert-fatigue)
 - [Using mHealth to Reduce Alarm Fatigue and Improve Care Coordination — mHealthIntelligence](https://mhealthintelligence.com/news/using-mhealth-to-reduce-alarm-fatigue-and-improve-care-coordination)
 - [Healthcare UX Design: Patient and Provider App Principles — Momentum](https://www.themomentum.ai/blog/healthcare-ux-design-principles-patient-provider-apps)
+- [Understanding the Ambulatory Glucose Profile (AGP) — Accu-Chek](https://www.accu-cheklatam.com/en/training/cgm/agp-report)
+- [The Ambulatory Glucose Profile (AGP) for Diabetes — novoMEDLINK](https://www.novomedlink.com/diabetes/hcp-education/clinical/time-in-range/clinical-use/understand-ambulatory-glucose-profile.html)
+- [How to take action beyond the ambulatory glucose profile: Latin American expert recommendations on CGM data interpretation — PMC](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12060294/)

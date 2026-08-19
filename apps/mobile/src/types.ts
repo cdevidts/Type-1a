@@ -1,4 +1,5 @@
 import type {
+  CarbEvent,
   CGMReading,
   GlucoseInsight,
   InsulinEvent,
@@ -9,6 +10,20 @@ import type {
 import type { ReportRow } from '@type1a/domain';
 
 /**
+ * Lo que la pantalla "Resumen" necesita para un rango de fechas. Se pasan
+ * los eventos crudos (no filas ya formateadas) porque los tres cálculos que
+ * hace la pantalla — `summarizeGlucose`, `buildAmbulatoryProfile` y
+ * `buildNutritionInsights` — necesitan valor, timestamp y `origin`, no
+ * texto.
+ */
+export interface SummaryData {
+  readings: CGMReading[];
+  insulin: InsulinEvent[];
+  carbs: CarbEvent[];
+  meals: MealEvent[];
+}
+
+/**
  * Fase 9/11: what `exportReport` hands to `SettingsModal`. `readings` stays
  * structured (not flattened into `rows`) so the report can build daily
  * glucose charts and the Fase 11 clinical summary (Time in Range, HbA1c
@@ -17,6 +32,15 @@ import type { ReportRow } from '@type1a/domain';
 export interface ReportExport {
   rows: ReportRow[];
   readings: CGMReading[];
+  /**
+   * Eventos crudos, además de las filas ya formateadas: el reporte incluye
+   * los insights alimentarios por franja horaria
+   * (`buildNutritionInsights`), que necesitan unidades y gramos como
+   * números, no como el texto de `ReportRow.detail`.
+   */
+  insulin: InsulinEvent[];
+  carbs: CarbEvent[];
+  meals: MealEvent[];
 }
 
 export type QuickRoute = 'carbs' | 'rapid' | 'basal' | 'correction';

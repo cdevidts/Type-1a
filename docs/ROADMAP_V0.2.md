@@ -312,8 +312,8 @@ persistencia de datos de salud, o `packages/cgm`.
 | **8** | Chat de IA: endpoint nuevo en `apps/api` sobre RouteLLM, sin autenticación de por medio (el cliente manda el contexto histórico relevante en cada request, el backend sigue sin estado), guardrail extendido de `ai-safety.ts`, y todo lo que el chat "proponga" pasa por confirmación explícita del usuario antes de tocar SQLite — mismo patrón que ya existe en todo el resto de la app. | 1, 6 (para poder proponer recordatorios) |
 | **9** | ✅ **Completada (2026-08-19), reforzada (2026-08-19).** Reportes Excel/PDF, generados en el dispositivo (`expo-print` para PDF, `xlsx`/SheetJS para Excel, `expo-sharing` para compartir) para mantener el local-first. **Pedido explícito de Verónica**: la tabla original (una fila por lectura de glucosa) hacía que 7 días fueran ~11 páginas solo de glucosa — reemplazada por un gráfico diario. Ver detalle abajo. | 1, 2 |
 | **10** | Alertas de glucosa alta/baja por umbral. | 7 (necesita datos frescos aunque la app esté cerrada) |
-| **11** | 🟡 **Motor de cálculo completado e integrado al reporte (2026-08-19); pantalla "Resumen" en la app todavía no existe.** Time in Range real (agregado multi-día sobre `cgm_readings`), HbA1c estimada (fórmula GMI estándar, rotulada explícitamente como *estimada*, separada de la `HbA1cLabResultSchema` de laboratorio), variabilidad (CV%) y promedio — implementados en `summarizeGlucose()`/`estimateA1cFromMeanGlucose()` (`packages/domain/src/glucose-metrics.ts`) y ya consumidos por el reporte PDF/Excel de la Fase 9. Pendiente: exponerlos también como pantalla propia dentro de la app (no solo en el reporte exportado) y los eventos de hipo/hiperglucemia que la fase original también preveía. | 1, 2, 7 |
-| **12** | Capa de aprendizaje/insight adaptativo (ver el límite de seguridad arriba) — patrones descriptivos, nunca ajusta dosis. | 8, 11 |
+| **11** | ✅ **Completada (2026-08-19).** Pantalla "Resumen" con tres sub-páginas (Días / Métricas / Comidas), abierta desde el botón ◔ de la barra superior. Time in Range real por las cinco bandas de consenso, HbA1c estimada (GMI, rotulada como *estimada* y separada de la `HbA1cLabResultSchema` de laboratorio), variabilidad (CV%), promedio, gráficos diarios y día promedio ponderado en formato AGP con selector de 7/14/30/90 días. Motor en `glucose-metrics.ts` + `agp.ts`; todo también incorporado al reporte PDF/Excel. Ver detalle abajo. | 1, 2, 7 |
+| **12** | 🟡 **Parte descriptiva completada (2026-08-19)**, en la sub-página "Comidas" del Resumen: patrones por franja horaria (`nutrition-insights.ts`) — promedio de carbohidratos confirmados e insulina por franja, y % de dosis rápidas seguidas de una lectura en rango a 1/2/3 h, con mínimo de muestra y advertencia de que es observacional. Pendiente el resto de la fase: insights conversacionales//adaptativos vía el chat (depende de la Fase 8). Nunca ajusta dosis. | 8, 11 |
 
 No se numeró por prioridad de negocio sino por dependencia técnica — el
 orden de ejecución real se acuerda con Verónica fase por fase, no se asume.
@@ -440,6 +440,141 @@ de la app, no solo en el PDF/Excel exportado.
 - Pendiente real de la Fase 11 original: pantalla "Resumen" en la app (fuera
   del flujo de exportar reporte) y conteo de eventos de hipo/hiperglucemia
   como métrica aparte — no se hicieron en esta corrida.
+
+## Detalle de la pantalla "Resumen" (2026-08-19) — Fases 11 y 12 descriptiva
+
+**Pedido explícito de Verónica**: "haz la pantalla nueva, es muy importante",
+dividida en tres sub-páginas. Se construyó como `SummaryModal`, un
+`ModalShell` con barra de pestañas — **no se agregó librería de navegación**;
+la app sigue siendo una pantalla con modales. Se entra por un botón ◔ nuevo
+en la barra superior, al lado del de ajustes (no compite con "Nueva entrada",
+que sigue siendo la única acción primaria dominante).
+
+Un **único selector de rango 7/14/30/90 días** gobierna las tres sub-páginas,
+en vez de uno por gráfico: es como funcionan los reportes de CGM
+(LibreView/Clarity), donde el período de reporte es uno solo. Por defecto 14
+días, que es el mínimo de consenso para que la HbA1c estimada y el perfil
+promedio sean representativos.
+
+- **Días** — un gráfico por día, 00:00 a 24:00, con la banda objetivo 70–180
+  sombreada, grilla cada 6 h y etiquetas de hora; cada punto coloreado por su
+  banda y atenuado si es historial importado. Encabezado por día con su % en
+  rango y su número de lecturas. Tope de 30 días dibujados
+  (`MAX_DAY_CHARTS`) para no montar 90 gráficos de una.
+- **Métricas** — cuatro *stat tiles* (HbA1c estimada, promedio, tiempo en
+  rango, CV), la barra apilada de Time in Range con las cinco bandas y sus
+  metas de consenso ATTD/ADA al lado, y el **día promedio ponderado**.
+- **Comidas** — los patrones por franja horaria de `nutrition-insights.ts`.
+
+### Decisiones que conviene no volver a discutir
+
+- **El día promedio es un AGP, no un promedio simple.** Verónica pidió "cómo
+  se vería un día cualquiera promediando tus valores a las distintas horas".
+  Un promedio aritmético por franja horaria habría sido lo literal, pero
+  esconde justamente lo que importa: dos días, uno a 60 y otro a 240 mg/dL,
+  promedian 150 = "en rango". Se implementó el formato **AGP** (percentiles
+  p05/p25/p50/p75/p95 sobre un día compuesto de 24 h, `packages/domain/src/agp.ts`),
+  que es el estándar del consenso ATTD/ADA y lo que ya muestran LibreView y
+  Dexcom Clarity — así el gráfico se lee en una consulta médica sin traducción.
+  La mediana responde la pregunta original ("un día cualquiera"); las franjas
+  agregan la variabilidad que un promedio habría borrado.
+- **Franjas de 30 min** (48 por día): con CGM cada 5 min, 14 días dan ~84
+  lecturas por franja — suficiente para percentiles estables sin aplanar el
+  pico post-desayuno.
+- **La paleta de bandas se validó, no se eligió a ojo.** `glucoseBands` en
+  `theme.ts` pasó por el validador de la skill `dataviz`. El primer intento
+  (dos rojos para bajo/muy bajo) **falló**: ΔE de 13.1 para visión normal,
+  bajo el piso de 15 — dos bandas clínicas distintas que se veían casi
+  iguales. Se reencuadró como tres hues de estado (bajo/en rango/alto), cada
+  uno con un segundo paso más oscuro para el nivel severo, formando rampas
+  secuenciales monótonas en luminosidad. Se acepta a conciencia un único
+  FAIL: el piso de croma del teal de marca, documentado en `theme.ts`.
+  **Aprendizaje general: validar la paleta con el script antes de escribir el
+  gráfico, no después** — rehacer el color con el SVG ya escrito cuesta el
+  doble.
+
+### La sub-página "Comidas" y su frontera de seguridad
+
+Es la parte más delicada de toda la app hasta ahora, porque roza el límite
+que `AGENTS.md` protege. Muestra, por franja horaria: promedio de
+carbohidratos **confirmados** (nunca los estimados por IA), promedio de
+insulina rápida y basal registrada, y el **% de dosis rápidas tras las cuales
+había una lectura en rango 70–180 mg/dL a 1, 2 y 3 horas**.
+
+Cómo se mantuvo del lado correcto de la línea:
+
+- Se redacta siempre como **descripción de lo que pasó**, nunca como
+  evaluación de si una dosis fue adecuada ni como sugerencia de cambiarla.
+  El título es "Glucosa en rango objetivo después de una rápida", no
+  "eficacia de tu insulina" — esa segunda formulación implica causalidad y
+  adecuación de dosis, y era exactamente la trampa a evitar.
+- **Nunca se deriva un parámetro de terapia** de estos porcentajes. Sería la
+  inferencia que `AGENTS.md` prohíbe.
+- **Mínimo de muestra** (`MIN_SAMPLE_FOR_RATE = 3`): con menos dosis no se
+  muestra porcentaje, se muestra cuántas faltan. Con 1-2 dosis, "50% en
+  rango" es ruido presentado como patrón — en una app de salud eso es
+  peligroso, no solo impreciso. El `n` viaja siempre junto al porcentaje.
+- Una dosis sin lectura cerca del horizonte (±20 min) **no cuenta**, en vez
+  de asumir un valor.
+- Aviso visible y permanente de que es observacional, que la glucosa a esa
+  hora también depende de comida, actividad, estrés, basal y sitio de
+  inyección, y que **Type 1A nunca calcula ni recomienda insulina**: los
+  cambios se deciden con el equipo clínico. El mismo aviso viaja al PDF y a
+  la hoja "Patrones" del Excel (con test que lo verifica).
+
+### Hallazgos del `domain-safety-reviewer` en esta corrida (y qué enseñan)
+
+La revisión encontró tres cosas reales. Vale registrarlas porque las tres son
+tipos de error que se van a repetir:
+
+1. **Doble conteo de carbohidratos.** `buildNutritionInsights` sumaba los
+   `CarbEvent` de la franja *más* los `confirmedCarbsG` de las comidas — pero
+   `writeMealWithEpisode` (db.ts) escribe **siempre** un `CarbEvent` con
+   `source:'meal_confirmed'` al mismo timestamp que el `MealEvent`, y el
+   importador de MySugr hace lo mismo. Cada plato confirmado se contaba dos
+   veces: un promedio ~20% inflado, con un `n` inflado que además lo hacía
+   parecer mejor respaldado. Y se imprimía en el PDF que va al control
+   médico. **Lección: en este esquema hay datos duplicados a propósito
+   (`db.ts` lo documenta como "a second copy of the same fact"). Antes de
+   agregar dos fuentes de lo mismo, verificar en `db.ts` si una ya incluye a
+   la otra.** Corregido: la comida solo aporta si no hay `CarbEvent` a su
+   timestamp, con test de regresión del par exacto.
+2. **Una métrica de "logro" que escondía la dirección del fallo.** El
+   "% en rango a 1/2/3 h" colapsaba hipoglucemia e hiperglucemia en el mismo
+   número, dibujado como una barra teal que se llena, justo debajo del
+   promedio de insulina de la franja. Aunque el texto no sugería nada, la
+   lectura inevitable era "poca barra = me falta insulina" — cuando los
+   fallos podían haber sido hipos. **Lección: en esta app, un disclaimer no
+   arregla una visualización que invita a la inferencia equivocada. Si un
+   número puede leerse como una nota de desempeño al lado de una dosis, hay
+   que descomponerlo hasta que la inferencia equivocada sea imposible, no
+   solo desaconsejada.** Corregido: los tres lados (bajo / en rango / alto)
+   en pantalla, PDF y Excel, con los colores de `glucoseBands`.
+3. **Lecturas manuales dibujadas como si fueran del sensor.** El gráfico
+   diario nuevo atenuaba solo `origin:'imported'`, dejando un capilar
+   tecleado a mano idéntico a una lectura del CGM, y unía todos los puntos
+   con una única polyline continua. `GlucoseChart.tsx` ya había resuelto
+   exactamente esto (su comentario de 2026-08-18 lo explica) y el componente
+   nuevo no heredó la convención. **Lección: cuando ya existe un componente
+   que resolvió una distinción de seguridad, el componente nuevo copia su
+   predicado, no reinventa uno más laxo.** Corregido en la pantalla **y** en
+   el gráfico del PDF, que tenía el mismo bug: predicado compartido
+   (`isNonSensorReading`), línea partida en tramos por origen, puntos huecos.
+
+### Reportes actualizados en la misma corrida
+
+Regla de trabajo pedida por Verónica: si una corrida produce información útil
+para los reportes, los reportes se actualizan en la misma corrida. El PDF
+ganó las secciones "Día promedio (perfil ambulatorio)" y "Patrones por franja
+horaria"; el Excel ganó la hoja "Patrones". Quedó registrado en `CLAUDE.md`
+como regla permanente.
+
+### Backend
+
+**No se tocó.** `apps/api`, `packages/ai` y `packages/cgm` quedaron
+intactos: todo el cálculo nuevo es local (`packages/domain` + `apps/mobile`),
+coherente con `docs/adr/0001-local-first.md`. **No hace falta redeploy a
+Abacus** por esta corrida — ver `docs/DEEPAGENT_REDEPLOY_PROMPT.md`.
 
 ## Diagnóstico de guardado (2026-08-19) — `logSaveError`
 
