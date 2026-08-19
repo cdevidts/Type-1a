@@ -314,7 +314,7 @@ persistencia de datos de salud, o `packages/cgm`.
 | **10** | Alertas de glucosa alta/baja por umbral. | 7 (necesita datos frescos aunque la app esté cerrada) |
 | **11** | ✅ **Completada (2026-08-19).** Pantalla "Resumen" con tres sub-páginas (Días / Métricas / Comidas), abierta desde el botón ◔ de la barra superior. Time in Range real por las cinco bandas de consenso, HbA1c estimada (GMI, rotulada como *estimada* y separada de la `HbA1cLabResultSchema` de laboratorio), variabilidad (CV%), promedio, gráficos diarios y día promedio ponderado en formato AGP con selector de 7/14/30/90 días. Motor en `glucose-metrics.ts` + `agp.ts`; todo también incorporado al reporte PDF/Excel. Ver detalle abajo. | 1, 2, 7 |
 | **12** | 🟡 **Parte descriptiva completada (2026-08-19)**, en la sub-página "Comidas" del Resumen: patrones por franja horaria (`nutrition-insights.ts`) — promedio de carbohidratos confirmados e insulina por franja, y % de dosis rápidas seguidas de una lectura en rango a 1/2/3 h, con mínimo de muestra y advertencia de que es observacional. Pendiente el resto de la fase: insights conversacionales//adaptativos vía el chat (depende de la Fase 8). Nunca ajusta dosis. | 8, 11 |
-| **13** | 🟡 **Grupo A completado (2026-08-19)**: ítems 1, 2, 4, 9 y 11 de la lista de abajo, aprobados por Verónica como "la ruta más larga sin gastar otro build". Grupo B (botones tapados por la barra de estado, reorganización de Ajustes, nutrición/cetonas/onboarding, crash al cambiar rango) sigue pendiente — necesita confirmación en dispositivo antes de seguir. Ver detalle abajo. | 11 |
+| **13** | 🟡 **Grupos A y B completados (2026-08-19)**. Grupo A: ítems 1, 2, 4, 9 y 11. Grupo B: ítems 3, 5, 10a y 12. Queda **Grupo C**: ítem 7 (nutrición más allá de carbos), ítem 8 (cetonas) y ítem **10b** (elegir mmol/L, que resultó ser un cambio de modelo de datos y no de presentación — ver su detalle). El ítem 6 no es construible hasta la Fase 8 (chat). Ver detalle abajo. | 11 |
 
 No se numeró por prioridad de negocio sino por dependencia técnica — el
 orden de ejecución real se acuerda con Verónica fase por fase, no se asume.
@@ -962,14 +962,18 @@ no tenga que re-investigar desde cero.
 2. ✅ **Resuelto junto con el punto 1 (2026-08-19).** Era el mismo problema
    de contenedores anidados — el `tabBar`/`rangeRow` de `SummaryModal`
    también tenían doble inset horizontal por la misma causa. Mismo fix.
-3. **Botones superiores (ej. "Cerrar") tapados por la barra de estado de
-   Android** (batería, señal, hora). `ModalShell.tsx` usa `<SafeAreaView
-   style={styles.safeArea}>` sin `edges` explícito — a diferencia de
-   `App.tsx`, que sí fija `edges={['top']}` en su `SafeAreaView` de nivel
-   superior. Un `<Modal>` de React Native vive en una jerarquía nativa
-   separada; el cálculo de safe-area area ahí puede no heredar lo mismo que
-   la pantalla principal. Empezar por probar `edges={['top']}` explícito en
-   el `SafeAreaView` de `ModalShell` y `statusBarTranslucent` del `<Modal>`.
+3. ✅ **Resuelto (2026-08-19, Grupo B).** Botones superiores (ej. "Cerrar")
+   tapados por la barra de estado de Android. La hipótesis original (`edges`
+   sin fijar) era **incorrecta**; la causa real es más simple y más grave:
+   `ModalShell.tsx` importaba `SafeAreaView` de **`react-native`**, que es
+   iOS-only — en Android se comporta como un `View` común y no aplica ningún
+   inset. `App.tsx` siempre usó el correcto, el de
+   `react-native-safe-area-context`, y por eso la pantalla principal nunca
+   tuvo el problema y los modales sí. Con edge-to-edge obligatorio desde
+   Expo SDK 54, la app dibuja bajo la barra de estado, así que el header de
+   cada modal quedaba tapado. Fix: importar de `react-native-safe-area-context`
+   con `edges={['top', 'bottom']}`. Afecta a **todos** los modales, no solo
+   al Resumen. Pendiente confirmar en dispositivo.
 4. ✅ **Resuelto (2026-08-19).** Contenedores de fecha mal dimensionados —
    causa confirmada: `cardTitle` tenía `flexShrink: 1` pero `cardMeta` no
    tenía ningún límite de ancho, así que en una fila `justifyContent:
@@ -977,17 +981,43 @@ no tenga que re-investigar desde cero.
    todo el espacio al meta largo. Fix: `cardHeader` pasó de fila a columna
    (fecha arriba, stats abajo) — más robusto que ajustar `flexShrink` en
    ambos lados, y más legible en pantallas angostas en general.
-5. **Bug funcional, no solo visual**: al abrir el Resumen recién instalada
-   la actualización y cambiar el chip de rango de días, la app tiró un
-   error de que no se podían encontrar los datos y pidió cerrar y volver a
-   abrir — **cerrar la app entera resolvió el problema**, no alcanzó con
-   reabrir el modal. Eso sugiere una excepción de JS no capturada en algún
-   punto de la carga/recálculo al cambiar `rangeDays` (no el estado
-   `failed` ya manejado en `SummaryModal.tsx`, que es recuperable sin
-   cerrar la app) — no el mensaje "No se pudo leer el historial" que ya
-   existe en el código. Antes de tocar nada: reproducir con el Metro log o
-   un `adb logcat` abierto (mismo patrón que el bug de guardado anotado más
-   abajo) para capturar el stack trace real en vez de adivinar la causa.
+5. ✅ **Resuelto (2026-08-19, Grupo B), y no hacía falta `adb logcat`.** Al
+   cambiar el chip de rango de días, la app mostró un error de que no se
+   podían encontrar los datos y pidió cerrar y volver a abrir; **solo cerrar
+   la app entera lo resolvía**. Resultaron ser **dos defectos encadenados**,
+   ambos identificables leyendo el código:
+
+   **(a) Por qué falló la carga.** Los ~12 getters de rango de `db.ts`
+   hacían `Schema.safeParse(JSON.parse(row.payload))`. El `safeParse` estaba
+   ahí justamente para tolerar una fila inválida, pero el `JSON.parse` que lo
+   alimentaba quedaba **fuera** de esa red: una sola fila con el JSON corrupto
+   (una importación de MySugr cortada a media escritura, una fila de un
+   esquema viejo) lanza un `SyntaxError` que rechaza la consulta **entera**.
+   Por eso fallaba al ampliar el rango y no en 14 días: el rango más ancho
+   alcanzaba la fila mala. Y no afectaba solo al Resumen — la exportación del
+   reporte usa los mismos getters. Fix: `safeJsonParse()` + `decodeRow()` en
+   `db.ts`; una fila ilegible se descarta y el resto se lee. Los 6 sitios que
+   usan `.parse()` estricto son rutas de **mutación** de una fila y se
+   dejaron lanzando a propósito: nunca sobrescribir una fila que no pudiste
+   leer.
+
+   **(b) Por qué había que cerrar la app.** `SummaryModal` se renderiza
+   siempre (solo alterna `visible`), así que **nunca se desmonta** y
+   `rangeDays` sobrevive a cerrar y reabrir el modal. El mensaje decía
+   "cierra y vuelve a abrir el resumen", pero al reabrir se reintentaba
+   exactamente el mismo rango que ya había fallado. Cerrar la app no
+   "arreglaba" nada: reiniciaba el estado a los 14 días por defecto, que
+   sí funcionaban. Fix: botón **"Reintentar"** real (un `reloadToken` en las
+   dependencias del efecto), mensaje honesto que nombra el rango que falló, y
+   una pista de probar un rango más corto.
+
+   **(c) Además, red de seguridad.** Se agregó `ErrorBoundary.tsx`: una
+   excepción lanzada **durante el render** (no dentro del `await`, que ya
+   tenía su `.catch`) desmontaba el árbol de React entero y dejaba la app
+   inservible hasta cerrarla. Los cálculos de `packages/domain` lanzan a
+   propósito ante un dato que no pueden interpretar y eso **no se relajó** —
+   lo que se arregló es la consecuencia desproporcionada. Si vuelve a pasar,
+   el stack real queda en `logSaveError` en vez de requerir `adb logcat`.
 
 ### Notas de WhatsApp de Verónica (18-19/8), interpretaciones confirmadas
 
@@ -1004,13 +1034,13 @@ Se interpretaron una por una y ella confirmó cada una antes de agregarlas acá
    ("Programar/ajustar alarmas y recordatorios") — este ítem es el
    recordatorio de que ese catálogo tiene que cubrir alarmas *a medida*, no
    solo las 3 fijas, cuando se implemente el chat.
-7. **Seguimiento nutricional más allá de carbohidratos.** `MealEventSchema`
+7. **(Grupo C)** **Seguimiento nutricional más allá de carbohidratos.** `MealEventSchema`
    ya tiene `proteinG`/`fatG`/`fiberG`/`caloriesKcal`, pero ningún flujo de
    registro los pide ni ninguna pantalla los muestra. Construir: campos en
    el registro de comida (`EntryModal`/`MealModal`) y sumarlos como
    dimensión de los insights alimentarios de la pestaña Comidas del Resumen
    (hoy solo mira carbohidratos e insulina).
-8. **Registro de mediciones de cetonas.** `VitalsEventSchema` ya tiene
+8. **(Grupo C)** **Registro de mediciones de cetonas.** `VitalsEventSchema` ya tiene
    `ketonesMmolL` y aparece en el reporte PDF/Excel, pero no hay ningún
    punto de entrada en la app para cargarlas — hoy solo llegan si vienen de
    una importación de MySugr. Construir un flujo de registro real (atajo
@@ -1021,12 +1051,43 @@ Se interpretaron una por una y ella confirmó cada una antes de agregarlas acá
    (`GlucoseChart.tsx`, pantalla de inicio). Antes solo marcaba cambios de
    día; ahora agrega una línea + etiqueta cada `HOUR_TICK_STEP` (6) horas
    dentro del día, mismo criterio visual recesivo que `SummaryCharts.tsx`.
-10. **Flujo de configuración inicial (onboarding), empezando por unidad de
-    glucosa** (mg/dL vs. mmol/L). `TherapyProfile.glucoseUnit` ya existe en
-    el modelo de datos pero nada la pregunta en el primer uso — queda en el
-    default hasta que alguien la encuentre en Ajustes. Construir una
-    pantalla de primer uso real (unidad de glucosa como primer campo, y
-    evaluar si conviene sumar ahí los demás parámetros de terapia).
+10. ✅ **Resuelto en parte (2026-08-19, Grupo B)** — el onboarding sí, el
+    selector de unidad no, y el motivo importa.
+
+    **10a — Flujo de primer uso: hecho.** `OnboardingModal.tsx`, 4 pasos,
+    se muestra una sola vez (flag `onboardingSeenAt` en `settings`). Cubre
+    qué hace la app y qué no (nunca calcula ni recomienda insulina), que
+    todo es local y cifrado, en qué unidades trabaja, y que las calculadoras
+    quedan bloqueadas hasta cargar los parámetros en Ajustes → Terapia.
+    **No pide parámetros de terapia en el onboarding a propósito**:
+    `AGENTS.md` prohíbe inferirlos, y un formulario de bienvenida con campos
+    prellenados es la forma más fácil de que alguien "confirme" de un toque
+    unos números que nunca eligió. Ajustes → Terapia sigue siendo el único
+    lugar que marca el perfil como configurado.
+
+    **10b — Elegir mg/dL vs. mmol/L: PENDIENTE, y es más grande de lo que
+    parece.** Se intentó en esta corrida y se revirtió con causa. El
+    bloqueador no es la capa de presentación —para eso ya quedaron listos y
+    con test `formatGlucose()` / `formatGlucoseWithUnit()` en
+    `packages/domain/src/units.ts`— sino el **modelo de datos**:
+    `TherapyProfile.targetGlucose` y `TherapyProfile.correctionFactor` **no
+    llevan campo de unidad**, son mg/dL implícito. Y un factor de corrección
+    no se "reformatea": 45 mg/dL/U son 2,5 mmol/L/U, un número distinto.
+    Mostrar mmol/L sin migrar antes esos parámetros dejaría la calculadora de
+    dosis operando en una unidad y el resto de la app en otra — exactamente
+    la clase de bug del ítem 11, pero de fábrica. Lo que hace falta, en su
+    propia corrida y con prueba en dispositivo:
+    - agregar unidad explícita a `TherapyProfile` (o fijar por contrato que
+      se persiste siempre en mg/dL y se convierte solo al mostrar/recibir);
+    - una migración para los perfiles ya guardados;
+    - convertir en los ~47 sitios de presentación, incluidos los campos de
+      entrada de `CorrectionModal`/`EntryModal`;
+    - `domain-safety-reviewer` sobre el resultado, porque toca la ruta de
+      dosis.
+
+    Mientras tanto el onboarding **declara** la unidad ("esta versión trabaja
+    en mg/dL") en vez de ofrecer una opción que la app no respetaría. Un
+    selector que no se cumple es peor que no tenerlo.
 11. ✅ **Resuelto (2026-08-19), y bastante más grande de lo reportado.** El
     síntoma original: con la app en mg/dL, el resumen de IA post-comida
     ("te partió en X y alcanzó un máximo de Y, 25 minutos después") mostró
@@ -1093,13 +1154,22 @@ Se interpretaron una por una y ella confirmó cada una antes de agregarlas acá
       `packages/domain`**: nunca usar extensión `.js` en imports
       relativos ahí — `pnpm verify` no lo va a atrapar, solo un build real
       o un `expo export:embed --eager` local lo detecta.
-12. **Reorganizar `SettingsModal` en agrupaciones lógicas** (ej. Sincronizar
-    dispositivos / Alarmas / Reportes), en vez de la lista larga y plana
-    actual (CGM, conexión FreeStyle, privacidad, 3 tipos de alarma, terapia,
-    importar MySugr, reportes). Antes de tocarlo, invocar `/ui-screen` —
-    afecta directamente el punto 3 (botones tapados por la barra de
-    estado) y probablemente el punto 2 (scroll cortado) de la lista de
-    arriba, así que conviene resolverlos juntos.
+12. ✅ **Resuelto (2026-08-19, Grupo B).** `SettingsModal` pasó de ocho
+    secciones planas en un modal de ~660 líneas a **cuatro pestañas**, con el
+    mismo patrón y los mismos tokens que la barra de `SummaryModal` (la app
+    no tiene librería de navegación y no se agregó una para esto):
+    - **Dispositivos** — estado CGM, conectar FreeStyle, importar historial.
+    - **Alarmas** — post-comida, corrección, capilar, sonido/vibración,
+      notificación de pantalla bloqueada.
+    - **Terapia** — parámetros de terapia, sola en su pestaña **a propósito**:
+      es la única cuyos valores alimentan un cálculo de dosis, y mezclada
+      entre recordatorios y exportaciones era fácil de tocar de paso.
+    - **Reportes** — exportar PDF/Excel y diagnóstico.
+
+    De paso, el título del modal era "Conexiones y privacidad", que hacía
+    rato no describía la mitad de lo que contenía; ahora es "Ajustes"
+    (y se corrigió el `accessibilityLabel` del botón que lo abre). El
+    contenido de cada sección se movió tal cual, sin reescribir textos.
 
 ## Verificación por fase
 

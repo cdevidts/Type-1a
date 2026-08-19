@@ -29,6 +29,7 @@ import {
   type VitalsEvent,
 } from '@type1a/schemas';
 
+import { decodeRow, safeJsonParse, tallyParsed, type DecodeTally } from './rowDecode';
 import type { PendingInsulinAssociation, ReminderAlertStyle, StoredMealEpisode, TimelineItem } from './types';
 
 const DATABASE_KEY_NAME = 'type1a.database-key.v1';
@@ -43,6 +44,10 @@ const DEFAULT_PROFILE: TherapyProfile = {
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
+
+// La decodificación tolerante de filas vive en `./rowDecode` (lógica pura,
+// con test propio) — ver la cabecera de ese archivo para el porqué.
+export { createDecodeTally, type DecodeTally } from './rowDecode';
 
 async function getDatabaseKey(): Promise<string> {
   const stored = await SecureStore.getItemAsync(DATABASE_KEY_NAME);
@@ -171,9 +176,25 @@ export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
 
 export async function getTherapyProfile(db: SQLiteDatabase): Promise<TherapyProfile> {
   const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM therapy_profile WHERE id = 1');
+  // Sin fila = instalación nueva. Ahí el placeholder es correcto: la app
+  // necesita algo que renderizar y `THERAPY_CONFIGURED_KEY` sigue ausente,
+  // así que las calculadoras quedan bloqueadas igual.
   if (row === null) return DEFAULT_PROFILE;
-  const parsed = TherapyProfileSchema.safeParse(JSON.parse(row.payload));
-  return parsed.success ? parsed.data : DEFAULT_PROFILE;
+
+  const parsed = TherapyProfileSchema.safeParse(safeJsonParse(row.payload));
+  if (!parsed.success) {
+    // Fila presente pero ilegible: acá NO se puede caer al placeholder.
+    // `THERAPY_CONFIGURED_KEY` vive en `settings`, en otra fila, así que
+    // seguiría diciendo "configurado" mientras devolvemos 110/45/0.5 —
+    // números que la usuaria nunca eligió. `CorrectionModal` los precargaría
+    // como suyos y "Guardar parámetros y calcular" los escribiría de vuelta
+    // como parámetros clínicos confirmados. Eso es inferir un parámetro de
+    // terapia, que `AGENTS.md` prohíbe explícitamente. Fallar ruidoso es la
+    // única opción segura: es lo que hacía el `JSON.parse` crudo antes de que
+    // se agregara `safeJsonParse`, y esa parte hay que conservarla.
+    throw new Error('El perfil de terapia guardado no se pudo leer.');
+  }
+  return parsed.data;
 }
 
 /**
@@ -944,6 +965,7 @@ export async function getCGMReadings(
   db: SQLiteDatabase,
   from: Date,
   to: Date,
+  tally?: DecodeTally,
 ): Promise<CGMReading[]> {
   const rows = await db.getAllAsync<{ payload: string }>(
     `SELECT payload FROM cgm_readings
@@ -951,10 +973,7 @@ export async function getCGMReadings(
     from.toISOString(),
     to.toISOString(),
   );
-  return rows.flatMap((row) => {
-    const parsed = CGMReadingSchema.safeParse(JSON.parse(row.payload));
-    return parsed.success ? [parsed.data] : [];
-  });
+  return rows.flatMap((row) => decodeRow(row.payload, CGMReadingSchema, tally));
 }
 
 /**
@@ -964,19 +983,16 @@ export async function getCGMReadings(
  * and meal in an arbitrary date range, same as `getCGMReadings` already does
  * for glucose. Same safe-parse-and-drop pattern as every other `get*` here.
  */
-export async function getInsulinEvents(db: SQLiteDatabase, from: Date, to: Date): Promise<InsulinEvent[]> {
+export async function getInsulinEvents(db: SQLiteDatabase, from: Date, to: Date, tally?: DecodeTally): Promise<InsulinEvent[]> {
   const rows = await db.getAllAsync<{ payload: string }>(
     'SELECT payload FROM insulin_events WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp ASC',
     from.toISOString(),
     to.toISOString(),
   );
-  return rows.flatMap((row) => {
-    const parsed = InsulinEventSchema.safeParse(JSON.parse(row.payload));
-    return parsed.success ? [parsed.data] : [];
-  });
+  return rows.flatMap((row) => decodeRow(row.payload, InsulinEventSchema, tally));
 }
 
-export async function getCarbEvents(db: SQLiteDatabase, from: Date, to: Date): Promise<CarbEvent[]> {
+export async function getCarbEvents(db: SQLiteDatabase, from: Date, to: Date, tally?: DecodeTally): Promise<CarbEvent[]> {
   const rows = await db.getAllAsync<{ id: string; timestamp: string; carbs_g: number; source: CarbEvent['source']; created_at: string }>(
     'SELECT id, timestamp, carbs_g, source, created_at FROM carb_events WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp ASC',
     from.toISOString(),
@@ -990,20 +1006,17 @@ export async function getCarbEvents(db: SQLiteDatabase, from: Date, to: Date): P
       source: row.source,
       createdAt: row.created_at,
     });
-    return parsed.success ? [parsed.data] : [];
+    return tallyParsed(parsed, tally);
   });
 }
 
-export async function getMealEvents(db: SQLiteDatabase, from: Date, to: Date): Promise<MealEvent[]> {
+export async function getMealEvents(db: SQLiteDatabase, from: Date, to: Date, tally?: DecodeTally): Promise<MealEvent[]> {
   const rows = await db.getAllAsync<{ payload: string }>(
     'SELECT payload FROM meal_events WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp ASC',
     from.toISOString(),
     to.toISOString(),
   );
-  return rows.flatMap((row) => {
-    const parsed = MealEventSchema.safeParse(JSON.parse(row.payload));
-    return parsed.success ? [parsed.data] : [];
-  });
+  return rows.flatMap((row) => decodeRow(row.payload, MealEventSchema, tally));
 }
 
 export async function saveActivityEvent(db: SQLiteDatabase, event: ActivityEvent): Promise<void> {
@@ -1023,10 +1036,7 @@ export async function getActivityEvents(db: SQLiteDatabase, from: Date, to: Date
     from.toISOString(),
     to.toISOString(),
   );
-  return rows.flatMap((row) => {
-    const parsed = ActivityEventSchema.safeParse(JSON.parse(row.payload));
-    return parsed.success ? [parsed.data] : [];
-  });
+  return rows.flatMap((row) => decodeRow(row.payload, ActivityEventSchema));
 }
 
 export async function saveNoteEvent(db: SQLiteDatabase, note: NoteEvent, entryGroupId?: string): Promise<void> {
@@ -1059,10 +1069,7 @@ export async function getNoteEvents(db: SQLiteDatabase, from: Date, to: Date): P
     from.toISOString(),
     to.toISOString(),
   );
-  return rows.flatMap((row) => {
-    const parsed = NoteEventSchema.safeParse(JSON.parse(row.payload));
-    return parsed.success ? [parsed.data] : [];
-  });
+  return rows.flatMap((row) => decodeRow(row.payload, NoteEventSchema));
 }
 
 export async function saveVitalsEvent(db: SQLiteDatabase, vitals: VitalsEvent): Promise<void> {
@@ -1082,10 +1089,7 @@ export async function getVitalsEvents(db: SQLiteDatabase, from: Date, to: Date):
     from.toISOString(),
     to.toISOString(),
   );
-  return rows.flatMap((row) => {
-    const parsed = VitalsEventSchema.safeParse(JSON.parse(row.payload));
-    return parsed.success ? [parsed.data] : [];
-  });
+  return rows.flatMap((row) => decodeRow(row.payload, VitalsEventSchema));
 }
 
 export async function saveHbA1cResult(db: SQLiteDatabase, result: HbA1cLabResult): Promise<void> {
@@ -1105,10 +1109,7 @@ export async function getHbA1cResults(db: SQLiteDatabase, from: Date, to: Date):
     from.toISOString(),
     to.toISOString(),
   );
-  return rows.flatMap((row) => {
-    const parsed = HbA1cLabResultSchema.safeParse(JSON.parse(row.payload));
-    return parsed.success ? [parsed.data] : [];
-  });
+  return rows.flatMap((row) => decodeRow(row.payload, HbA1cLabResultSchema));
 }
 
 /**
@@ -1213,6 +1214,7 @@ export async function getRecentRapidInsulin(
   db: SQLiteDatabase,
   before = new Date(),
   lookbackHours = 6,
+  tally?: DecodeTally,
 ): Promise<InsulinEvent[]> {
   const from = new Date(before.getTime() - lookbackHours * 60 * 60_000).toISOString();
   const rows = await db.getAllAsync<{ payload: string }>(
@@ -1221,10 +1223,7 @@ export async function getRecentRapidInsulin(
     from,
     before.toISOString(),
   );
-  return rows.flatMap((row) => {
-    const parsed = InsulinEventSchema.safeParse(JSON.parse(row.payload));
-    return parsed.success ? [parsed.data] : [];
-  });
+  return rows.flatMap((row) => decodeRow(row.payload, InsulinEventSchema, tally));
 }
 
 export async function getInsulinEventsForMeal(
@@ -1240,10 +1239,7 @@ export async function getInsulinEventsForMeal(
     from,
     to,
   );
-  return rows.flatMap((row) => {
-    const parsed = InsulinEventSchema.safeParse(JSON.parse(row.payload));
-    return parsed.success ? [parsed.data] : [];
-  });
+  return rows.flatMap((row) => decodeRow(row.payload, InsulinEventSchema));
 }
 
 export async function getCollectingEpisodes(db: SQLiteDatabase): Promise<Array<{ episode: StoredMealEpisode; meal: MealEvent }>> {
@@ -1263,7 +1259,7 @@ export async function getCollectingEpisodes(db: SQLiteDatabase): Promise<Array<{
      WHERE e.status = 'collecting' ORDER BY e.meal_timestamp ASC`,
   );
   return rows.flatMap((row) => {
-    const meal = MealEventSchema.safeParse(JSON.parse(row.meal_payload));
+    const meal = MealEventSchema.safeParse(safeJsonParse(row.meal_payload));
     if (!meal.success) return [];
     return [{
       meal: meal.data,
@@ -1439,7 +1435,7 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
   }
 
   for (const row of insulinRows) {
-    const event = InsulinEventSchema.safeParse(JSON.parse(row.payload));
+    const event = InsulinEventSchema.safeParse(safeJsonParse(row.payload));
     if (!event.success) continue;
     if (row.entry_group_id !== null) {
       const group = groupFor(row.entry_group_id, event.data.timestamp);
@@ -1473,7 +1469,7 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
     });
   }
   for (const row of mealRows) {
-    const meal = MealEventSchema.safeParse(JSON.parse(row.payload));
+    const meal = MealEventSchema.safeParse(safeJsonParse(row.payload));
     if (!meal.success) continue;
     if (row.entry_group_id !== null) {
       groupFor(row.entry_group_id, meal.data.timestamp).meal = meal.data;
@@ -1492,7 +1488,7 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
     });
   }
   for (const row of glucoseRows) {
-    const reading = CGMReadingSchema.safeParse(JSON.parse(row.payload));
+    const reading = CGMReadingSchema.safeParse(safeJsonParse(row.payload));
     if (!reading.success) continue;
     if (row.entry_group_id !== null) {
       groupFor(row.entry_group_id, reading.data.sourceTimestamp).glucose = reading.data;
@@ -1518,7 +1514,7 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
     });
   }
   for (const row of noteRows) {
-    const note = NoteEventSchema.safeParse(JSON.parse(row.payload));
+    const note = NoteEventSchema.safeParse(safeJsonParse(row.payload));
     if (!note.success) continue;
     if (row.entry_group_id !== null) {
       groupFor(row.entry_group_id, note.data.timestamp).note = note.data;

@@ -13,6 +13,7 @@ import type { CGMReading } from '@type1a/schemas';
 import { logSaveError } from '../log';
 import { colors, glucoseBands, radius, spacing } from '../theme';
 import type { SummaryData } from '../types';
+import { ErrorBoundary } from './ErrorBoundary';
 import { ModalShell } from './ModalShell';
 import { AgpChart, AgpLegend, DayGlucoseChart, isNonSensorReading, RangeBar } from './SummaryCharts';
 
@@ -76,6 +77,15 @@ export function SummaryModal({
   const [data, setData] = useState<SummaryData | null>(null);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  // `SummaryModal` nunca se desmonta (se renderiza siempre, con `visible`
+  // alternando), así que `rangeDays` y `failed` sobreviven a cerrar y volver
+  // a abrir el modal. Por eso el mensaje viejo ("cierra y vuelve a abrir el
+  // resumen") no podía funcionar: al reabrir se reintentaba exactamente el
+  // mismo rango que ya había fallado, y solo cerrar la app entera —que
+  // reinicia el estado a 14 días— lo "arreglaba". Este contador da una
+  // salida real: reintentar el mismo rango sin depender del ciclo de vida
+  // del modal. Ver `docs/ROADMAP_V0.2.md` § Fase 13, ítem 5.
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     if (!visible) return;
@@ -101,7 +111,7 @@ export function SummaryModal({
     return () => {
       cancelled = true;
     };
-  }, [visible, rangeDays, onLoadSummary]);
+  }, [visible, rangeDays, onLoadSummary, reloadToken]);
 
   const summary = useMemo(() => (data === null ? null : summarizeGlucose(data.readings)), [data]);
   const profile = useMemo(() => (data === null ? null : buildAmbulatoryProfile(data.readings)), [data]);
@@ -172,16 +182,55 @@ export function SummaryModal({
       ) : failed ? (
         <View style={styles.centered}>
           <Text style={styles.emptyTitle}>No se pudo leer el historial</Text>
-          <Text style={styles.mutedText}>Cierra y vuelve a abrir el resumen. Si sigue fallando, tus registros están intactos: esto solo afecta a esta pantalla.</Text>
+          <Text style={styles.mutedText}>
+            Falló la lectura de los últimos {rangeDays} días. Tus registros están intactos: esto solo afecta a
+            esta pantalla.
+          </Text>
+          <Pressable
+            style={styles.retryButton}
+            onPress={() => { setReloadToken((token) => token + 1); }}
+            accessibilityRole="button"
+            accessibilityLabel="Reintentar"
+          >
+            <Text style={styles.retryButtonText}>Reintentar</Text>
+          </Pressable>
+          {rangeDays > RANGE_OPTIONS[0] ? (
+            <Text style={styles.mutedText}>
+              Si vuelve a fallar, prueba con un rango más corto — puede haber un registro ilegible en la parte
+              más antigua del historial.
+            </Text>
+          ) : null}
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.scrollBody}>
-          {tab === 'days' ? <DaysTab days={days} chartWidth={chartWidth} rangeDays={rangeDays} /> : null}
-          {tab === 'metrics' ? (
-            <MetricsTab summary={summary} profile={profile} chartWidth={chartWidth} rangeDays={rangeDays} />
-          ) : null}
-          {tab === 'food' ? <FoodTab insights={insights} rangeDays={rangeDays} /> : null}
-        </ScrollView>
+        // Una excepción durante el render (no dentro del `await`, que ya
+        // tiene su `.catch`) desmontaría la app entera sin esta frontera.
+        <ErrorBoundary
+          title="No se pudo dibujar el resumen"
+          body={`Algo en los últimos ${rangeDays} días no se pudo interpretar. Prueba con un rango más corto.`}
+          onReset={() => { setReloadToken((token) => token + 1); }}
+        >
+          <ScrollView contentContainerStyle={styles.scrollBody}>
+            {/*
+              Si se descartaron filas ilegibles, hay que decirlo antes de
+              cualquier número: un TIR o una HbA1c estimada sobre una muestra
+              recortada en silencio es un número inventado, no un dato
+              omitido. Ver `DecodeTally` en `db.ts`.
+            */}
+            {data !== null && data.unreadableCount > 0 ? (
+              <View style={styles.integrityBox}>
+                <Text style={styles.integrityText}>
+                  {data.unreadableCount} registro(s) de este rango no se pudieron leer y quedaron fuera. Las
+                  métricas de abajo están calculadas sin ellos.
+                </Text>
+              </View>
+            ) : null}
+            {tab === 'days' ? <DaysTab days={days} chartWidth={chartWidth} rangeDays={rangeDays} /> : null}
+            {tab === 'metrics' ? (
+              <MetricsTab summary={summary} profile={profile} chartWidth={chartWidth} rangeDays={rangeDays} />
+            ) : null}
+            {tab === 'food' ? <FoodTab insights={insights} rangeDays={rangeDays} /> : null}
+          </ScrollView>
+        </ErrorBoundary>
       )}
     </ModalShell>
   );
@@ -477,7 +526,18 @@ const styles = StyleSheet.create({
   rangeChipText: { color: colors.muted, fontSize: 13, fontWeight: '700' },
   rangeChipTextActive: { color: colors.teal },
   scrollBody: { padding: spacing.lg, paddingBottom: 44 },
+  integrityBox: { backgroundColor: colors.warningSoft, borderRadius: radius.sm, padding: spacing.md, marginBottom: spacing.md },
+  integrityText: { color: colors.warning, fontSize: 12, lineHeight: 18, fontWeight: '600' },
   centered: { alignItems: 'center', gap: spacing.md, padding: spacing.xl },
+  retryButton: {
+    minHeight: 44,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.sm,
+    backgroundColor: colors.teal,
+  },
+  retryButtonText: { color: colors.surface, fontSize: 15, fontWeight: '800' },
   empty: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.lg, gap: spacing.sm },
   emptyTitle: { color: colors.ink, fontSize: 15, fontWeight: '800', textAlign: 'center' },
   mutedText: { color: colors.muted, fontSize: 13, textAlign: 'center', lineHeight: 19 },

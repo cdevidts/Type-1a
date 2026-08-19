@@ -21,6 +21,13 @@ export interface SummaryData {
   insulin: InsulinEvent[];
   carbs: CarbEvent[];
   meals: MealEvent[];
+  /**
+   * Filas del historial que no se pudieron decodificar en este rango y se
+   * descartaron. Se muestra a la usuaria cuando es > 0: un agregado sobre una
+   * muestra silenciosamente recortada es un número inventado, no un dato
+   * omitido. Ver `DecodeTally` en `db.ts`.
+   */
+  unreadableCount: number;
 }
 
 /**
@@ -41,6 +48,8 @@ export interface ReportExport {
   insulin: InsulinEvent[];
   carbs: CarbEvent[];
   meals: MealEvent[];
+  /** Ver la nota homónima en `SummaryData`. El reporte lo declara al médico. */
+  unreadableCount: number;
 }
 
 export type QuickRoute = 'carbs' | 'rapid' | 'basal' | 'correction';

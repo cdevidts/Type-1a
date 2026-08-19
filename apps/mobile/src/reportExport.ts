@@ -213,11 +213,19 @@ function rangeBarHtml(summary: GlucoseSummary): string {
     <p class="range-legend">Muy bajo &lt;54 · Bajo 54–69 · Objetivo 70–180 · Alto 181–250 · Muy alto &gt;250 mg/dL</p>`;
 }
 
-function summaryHtml(summary: GlucoseSummary | null): string {
+function summaryHtml(summary: GlucoseSummary | null, unreadableCount: number): string {
+  // Se declara aunque no haya resumen: el médico tiene que saber que el
+  // rango venía incompleto, exista o no un número que mostrarle.
+  const unreadableCaveat = unreadableCount > 0
+    ? `${unreadableCount} registro(s) del historial en este rango no se pudieron leer y quedaron fuera del reporte. Todo lo que sigue está calculado sin ellos.`
+    : null;
   if (summary === null) {
-    return `<div class="summary"><p class="summary-empty">Sin lecturas de glucosa reales, manuales o importadas en este rango — no se puede calcular un resumen.</p></div>`;
+    return `<div class="summary"><p class="summary-empty">Sin lecturas de glucosa reales, manuales o importadas en este rango — no se puede calcular un resumen.</p>${
+      unreadableCaveat === null ? '' : `<p class="summary-caveat">${escapeHtml(unreadableCaveat)}</p>`
+    }</div>`;
   }
   const caveats: string[] = [];
+  if (unreadableCaveat !== null) caveats.push(unreadableCaveat);
   if (summary.daysCovered < 14) {
     caveats.push(`Cobertura de ${summary.daysCovered} día(s) — la estimación de HbA1c es más confiable con 14 o más días de datos continuos.`);
   }
@@ -383,7 +391,7 @@ export function reportHtml(data: ReportExport, rangeLabel: string): string {
   <h1>Type 1A — Reporte</h1>
   <p class="range">${escapeHtml(rangeLabel)} · generado ${escapeHtml(formatReportTimestamp(new Date().toISOString()))}</p>
   <h2>Resumen clínico</h2>
-  ${summaryHtml(summary)}
+  ${summaryHtml(summary, data.unreadableCount)}
   <h2>Día promedio (perfil ambulatorio)</h2>
   ${agpSectionHtml(profile)}
   <h2>Patrones por franja horaria</h2>
@@ -413,6 +421,7 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
       ['Días cubiertos', summary.daysCovered],
       ['Lecturas incluidas', summary.readingCount],
       ['Lecturas sintéticas excluidas', summary.excludedSyntheticCount],
+      ['Registros ilegibles excluidos', data.unreadableCount],
       [],
       ['* Estimación calculada por Type 1A a partir del promedio de glucosa (fórmula GMI). No reemplaza una medición de laboratorio.'],
     ];

@@ -70,7 +70,12 @@ docs/
   **siempre mg/dL** de acá en más (ver JSDoc en
   `packages/schemas/src/index.ts`); ningún consumidor debe volver a
   convertir.
-- `units.ts` — conversión mg/dL ↔ mmol/L.
+- `units.ts` — conversión mg/dL ↔ mmol/L (`convertGlucose`, lanza ante un
+  valor no positivo, a propósito), más `formatGlucose`/`formatGlucoseWithUnit`
+  para presentar un valor que **ya está en mg/dL** en la unidad elegida.
+  Estos dos últimos todavía no los usa ninguna pantalla: son la base lista y
+  con test del ítem 10b (elegir mmol/L), que quedó bloqueado por el modelo de
+  datos — ver `docs/ROADMAP_V0.2.md` § Fase 13, ítem 10b.
 - `mysugr-import.ts` — parseo/mapeo puro (sin I/O) del CSV exportado de
   MySugr: `parseMySugrCsv`, `parseMySugrTimestamp` (fecha/hora en español +
   offset `GMT±HH:MM`, sin depender del huso horario del runtime),
@@ -272,7 +277,17 @@ docs/
   `src/reportExport.ts` (no en el componente), vía `packages/domain`'s
   `buildReportRows`/`summarizeGlucose`, `expo-print`, `xlsx`, y
   `expo-sharing` — todo generado y compartido en el dispositivo, nada sube a
-  ningún servidor), `ModalShell` (shell común de modal). `EntryModal` es la entrada
+  ningún servidor; desde la Fase 13 el modal está dividido en 4 pestañas —
+  Dispositivos / Alarmas / Terapia / Reportes — y "Terapia" va sola a
+  propósito, por ser la única cuyos valores alimentan un cálculo de dosis),
+  `ModalShell` (shell común de modal; **su `SafeAreaView` tiene que venir de
+  `react-native-safe-area-context`, no de `react-native`** — el de RN es
+  iOS-only y en Android deja el header bajo la barra de estado),
+  `OnboardingModal` (Fase 13: bienvenida de 4 pasos, una sola vez, flag
+  `onboardingSeenAt` en `settings`; **no pide parámetros de terapia**, solo
+  explica que se cargan en Ajustes → Terapia), `ErrorBoundary` (frontera de
+  error de React: evita que una excepción en render desmonte la app entera;
+  hoy envuelve el cuerpo del Resumen). `EntryModal` es la entrada
   principal estilo MySugr (glucosa + comida + carbos + insulina + nota en
   un solo registro, con calculadora de dosis, y estimación de IA por foto
   **o por texto**); los demás modales de registro quedan como atajos de un
@@ -295,6 +310,16 @@ docs/
   desde que se escribieron. Antes de agregar un lugar nuevo que lea
   `.glucose` de un `CGMReading`, convertir siempre — no asumir que el
   proveedor activo siempre entrega mg/dL.
+- `src/rowDecode.ts` (2026-08-19) — decodificación tolerante de filas de
+  SQLite, **aparte de `db.ts` a propósito**: es lógica pura sin imports de
+  Expo, así que tiene test propio (`rowDecode.test.ts`) mientras que `db.ts`
+  no es testeable bajo vitest por sus módulos nativos. Exporta
+  `safeJsonParse`, `decodeRow`, `tallyParsed` y `DecodeTally`. La regla que
+  encapsula: una fila ilegible se descarta para no tumbar la consulta entera,
+  **pero el descarte no puede ser invisible** si el resultado alimenta un
+  agregado o una afirmación de completitud — para eso está el tally, que
+  aceptan `getCGMReadings`/`getInsulinEvents`/`getCarbEvents`/`getMealEvents`/
+  `getRecentRapidInsulin`. Ver `docs/ROADMAP_V0.2.md` § Fase 13, ítem 5.
 - **Convención de imports en `packages/domain` (2026-08-19)**: los imports
   relativos van **sin** extensión (`from './units'`, no `from './units.js'`).
   `tsc`/`vitest` resuelven ambas formas igual, así que `pnpm verify` no

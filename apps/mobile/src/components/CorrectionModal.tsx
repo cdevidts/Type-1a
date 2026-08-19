@@ -43,6 +43,7 @@ export function CorrectionModal({
   profile,
   therapyConfigured,
   recentRapid,
+  recentRapidUnreadable,
   onClose,
   onSaveProfile,
   onRegister,
@@ -53,6 +54,13 @@ export function CorrectionModal({
   /** False while the therapy values are still the placeholders shipped with the app. */
   therapyConfigured: boolean;
   recentRapid: readonly InsulinEvent[];
+  /**
+   * Registros de insulina rápida de esta ventana que no se pudieron leer. Si
+   * es > 0, el panel NO puede afirmar que la lista está completa: diría "no
+   * hay eventos" justo encima de una calculadora de dosis mientras hay una
+   * dosis reciente que no pudo decodificar. Ver `DecodeTally` en `db.ts`.
+   */
+  recentRapidUnreadable: number;
   onClose: () => void;
   onSaveProfile: (profile: TherapyProfile) => Promise<void>;
   onRegister: (units: number) => Promise<void>;
@@ -240,10 +248,18 @@ export function CorrectionModal({
       <View style={styles.recentBox}>
         <Text style={styles.recentTitle}>Insulina rápida registrada · últimas 6 h</Text>
         {recentRapid.length === 0 ? (
-          <Text style={styles.recentText}>No hay eventos registrados.</Text>
+          <Text style={styles.recentText}>
+            {recentRapidUnreadable > 0 ? 'Sin eventos legibles.' : 'No hay eventos registrados.'}
+          </Text>
         ) : recentRapid.map((event) => (
           <Text key={event.id} style={styles.recentText}>{event.units} U · {formatDayTime(event.timestamp)}</Text>
         ))}
+        {recentRapidUnreadable > 0 ? (
+          <Text style={styles.recentWarning}>
+            {recentRapidUnreadable} registro(s) de esta ventana no se pudieron leer, así que esta lista puede estar
+            incompleta. Revisa tu registro antes de corregir.
+          </Text>
+        ) : null}
         <Text style={styles.recentFoot}>Contexto informativo; no es una estimación de IOB.</Text>
       </View>
 
@@ -293,6 +309,7 @@ const styles = StyleSheet.create({
   recentBox: { borderLeftWidth: 3, borderLeftColor: colors.blue, paddingLeft: spacing.md, marginTop: spacing.xl },
   recentTitle: { color: colors.navy, fontSize: 13, fontWeight: '800' },
   recentText: { color: colors.ink, fontSize: 13, marginTop: 5 },
+  recentWarning: { color: colors.warning, fontSize: 12, lineHeight: 18, fontWeight: '700', marginTop: spacing.sm },
   recentFoot: { color: colors.muted, fontSize: 11, marginTop: 7 },
   error: { color: colors.red, fontSize: 13, marginTop: spacing.md },
   calculateButton: { backgroundColor: colors.teal, borderRadius: radius.md, padding: spacing.lg, alignItems: 'center', marginTop: spacing.xl },

@@ -214,6 +214,15 @@ existente, repasa esto:
 
 ## Navegación
 
+- **`SafeAreaView` viene de `react-native-safe-area-context`, nunca de
+  `react-native`.** El de React Native es **iOS-only**: en Android se comporta
+  como un `View` cualquiera y no aplica ningún inset. Con edge-to-edge
+  obligatorio desde Expo SDK 54, la app dibuja bajo la barra de estado, así
+  que el import equivocado deja el header —y con él el botón "Cerrar"— tapado
+  por la hora y la batería. Pasó en `ModalShell.tsx` y afectaba a todos los
+  modales a la vez, mientras la pantalla principal se veía bien porque
+  `App.tsx` sí usaba el correcto. Fase 13, ítem 3.
+
 - Máximo ~5 destinos en una barra de navegación inferior (si se agrega una
   en el futuro) — más que eso obliga a un menú "Más" que rompe la
   previsibilidad.
@@ -248,6 +257,33 @@ existente, repasa esto:
 - Los `disabled` de botones deben tener una señal visual clara además de la
   opacidad (`styles.disabled: { opacity: 0.55 }` ya existe y es un buen
   mínimo) — mantenlo consistente al agregar botones nuevos.
+- **Un estado de error tiene que ofrecer una salida dentro de la pantalla.**
+  No basta con explicar qué pasó: si el único camino que propone el texto es
+  "cierra y vuelve a abrir", verifica que eso *realmente* funcione. En este
+  repo no funcionaba: los modales se renderizan siempre (solo alterna
+  `visible`), así que **nunca se desmontan** y su estado sobrevive a cerrar y
+  reabrir — el Resumen reintentaba para siempre el mismo rango que había
+  fallado, y solo cerrar la app entera lo "arreglaba", porque reiniciaba el
+  estado. Todo estado de error necesita un botón que reintente de verdad
+  (un contador en las dependencias del efecto, ver `reloadToken` en
+  `SummaryModal.tsx`). Fase 13, ítem 5.
+- **Una excepción durante el render tumba la app entera.** Un `.catch()` en
+  una promesa no cubre lo que lanza al dibujar (un `useMemo`, un cálculo de
+  `packages/domain` con un dato que no puede interpretar). Sin frontera de
+  error, React desmonta todo y la app queda inservible hasta cerrarla.
+  Cualquier pantalla que corra cálculos sobre el historial va envuelta en
+  `ErrorBoundary` (`src/components/ErrorBoundary.tsx`). Ojo: la frontera
+  arregla la consecuencia, no la causa — los cálculos del dominio **siguen
+  lanzando a propósito** ante un dato inválido, porque no mostrar un número
+  es mejor que mostrar uno inventado.
+- **Nunca afirmes completitud sobre datos que se leyeron parcialmente.**
+  Si al leer el historial se descartaron filas ilegibles, un "No hay eventos
+  registrados" es una afirmación falsa, y al lado de una calculadora de dosis
+  es una falsa negativa peligrosa. Lo mismo con los agregados: un
+  "Tiempo en rango 82%" sobre una muestra silenciosamente recortada es un
+  número inventado, no un dato omitido. Los getters de `db.ts` aceptan un
+  `DecodeTally` para esto — si es > 0, dilo antes del número. Ver el banner
+  del Resumen, la advertencia de `CorrectionModal` y el pie del reporte.
 
 ## Patrones específicos de apps de salud/diabetes
 

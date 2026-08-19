@@ -4,12 +4,18 @@ import {
   Modal,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+// `SafeAreaView` tiene que venir de `react-native-safe-area-context`, NO de
+// `react-native`: el de RN es iOS-only y en Android se comporta como un
+// `View` cualquiera, sin insets. Con edge-to-edge (obligatorio desde Expo
+// SDK 54) la app dibuja debajo de la barra de estado, así que el header de
+// cada modal — y con él el botón "Cerrar" — quedaba tapado por la hora, la
+// batería y la señal. `App.tsx` ya usaba el correcto; este archivo no.
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, spacing } from '../theme';
 
@@ -42,7 +48,7 @@ export function ModalShell({
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
         <KeyboardAvoidingView
           style={styles.flex}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}

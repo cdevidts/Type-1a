@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { File, Paths } from 'expo-file-system';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import type { CGMProviderStatus, TherapyProfile } from '@type1a/schemas';
 
@@ -88,6 +88,22 @@ function importSummaryText(outcome: MySugrImportOutcome): string {
     : `Importado: ${parts.join(', ')}, de ${outcome.rowsTotal} filas${skipped}. Repetir con el mismo archivo no duplica datos.`;
 }
 
+type SettingsGroup = 'devices' | 'alarms' | 'therapy' | 'reports';
+
+/**
+ * El orden importa: "Dispositivos" primero porque es donde se llega cuando
+ * algo no está sincronizando (el motivo más frecuente para abrir Ajustes), y
+ * "Terapia" separado en su propia pestaña porque es la única cuyos valores
+ * alimentan un cálculo de dosis — mezclarla con recordatorios y exportaciones
+ * la volvía fácil de tocar de paso.
+ */
+const SETTINGS_GROUPS: { key: SettingsGroup; label: string }[] = [
+  { key: 'devices', label: 'Dispositivos' },
+  { key: 'alarms', label: 'Alarmas' },
+  { key: 'therapy', label: 'Terapia' },
+  { key: 'reports', label: 'Reportes' },
+];
+
 export function SettingsModal({
   visible,
   onClose,
@@ -132,6 +148,7 @@ export function SettingsModal({
   /** Fase 9: reads the local history for a range and normalizes it to report rows — never generates the file itself, that stays here (UI-only concern). */
   onExportReport: (range: { from: Date; to: Date }) => Promise<ReportExport>;
 }) {
+  const [group, setGroup] = useState<SettingsGroup>('devices');
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -381,239 +398,305 @@ export function SettingsModal({
   }
 
   return (
-    <ModalShell visible={visible} title="Conexiones y privacidad" onClose={onClose}>
-      <Text style={styles.sectionTitle}>Estado CGM</Text>
-      <View style={styles.statusCard}>
-        <View style={styles.statusRow}>
-          <View style={[styles.statusDot, { backgroundColor: status?.state === 'connected' ? colors.green : colors.warning }]} />
-          <Text style={styles.statusName}>{status?.provider ?? 'Sin proveedor'}</Text>
-        </View>
-        <Text style={styles.statusDetail}>{status?.detail ?? 'Abre el backend para sincronizar o usa el modo local.'}</Text>
-        {status?.isSynthetic === true ? <Text style={styles.synthetic}>Los datos actuales son sintéticos y están marcados en toda la app.</Text> : null}
+    <ModalShell visible={visible} title="Ajustes" onClose={onClose} scroll={false}>
+      {/*
+        Antes era una sola lista plana de ocho secciones en un modal de ~660
+        líneas, con un título ("Conexiones y privacidad") que ya no describía
+        la mitad de lo que contenía. Agrupado en cuatro pestañas por pedido
+        de Verónica (Fase 13, ítem 12) usando el mismo patrón de `SummaryModal`
+        — la app no tiene librería de navegación y no se agrega una para esto.
+      */}
+      <View style={styles.tabBar}>
+        {SETTINGS_GROUPS.map((entry) => {
+          const active = entry.key === group;
+          return (
+            <Pressable
+              key={entry.key}
+              style={[styles.tab, active && styles.tabActive]}
+              onPress={() => { setGroup(entry.key); }}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+            >
+              <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{entry.label}</Text>
+            </Pressable>
+          );
+        })}
       </View>
 
-      <Text style={styles.sectionTitle}>Conectar FreeStyle</Text>
-      <Text style={styles.copy}>Ruta elegida para el MVP: LibreView mediante una práctica autorizada en Junction EU. Chile usa la región EU.</Text>
-      <TextInput
-        style={styles.input}
-        value={email}
-        onChangeText={setEmail}
-        keyboardType="email-address"
-        autoCapitalize="none"
-        autoCorrect={false}
-        placeholder="Email de LibreView"
-        placeholderTextColor={colors.muted}
-      />
-      <Pressable style={[styles.connectButton, busy && styles.disabled]} disabled={busy} onPress={() => { void link(); }}>
-        <Text style={styles.connectText}>Iniciar conexión LibreView</Text>
-      </Pressable>
-      <View style={styles.optionsBox}>
-        <Text style={styles.option}><Text style={styles.optionStrong}>LibreView:</Text> ruta principal; permite compartir con la práctica.</Text>
-        <Text style={styles.option}><Text style={styles.optionStrong}>LibreLinkUp:</Text> útil para familiares, pero sin API pública general; no se usa ocultamente.</Text>
-        <Text style={styles.option}><Text style={styles.optionStrong}>Libre Data Share:</Text> acceso temporal clínico; no sirve como sincronización continua.</Text>
-      </View>
-
-      <Text style={styles.sectionTitle}>Pantalla bloqueada</Text>
-      <View style={styles.switchRow}>
-        <View style={styles.switchCopy}>
-          <Text style={styles.switchTitle}>Mostrar glucosa en la notificación</Text>
-          <Text style={styles.switchFoot}>Desactivado oculta el valor, pero mantiene los accesos rápidos.</Text>
-        </View>
-        <Switch
-          value={showGlucoseOnLockScreen}
-          onValueChange={(value) => { void onPrivacyChange(value); }}
-          trackColor={{ false: colors.line, true: colors.teal }}
-        />
-      </View>
-      <Pressable style={[styles.notificationButton, busy && styles.disabled]} disabled={busy} onPress={() => { void notifications(); }}>
-        <Text style={styles.notificationText}>Activar notificación de acceso rápido</Text>
-      </Pressable>
-
-      <Text style={styles.sectionTitle}>Alarmas</Text>
-      <Text style={styles.copy}>Controles post-comida, en minutos separados por coma. El último se usa para avisar que el episodio está listo para revisar.</Text>
-      <TextInput
-        style={styles.input}
-        value={mealOffsetsInput}
-        onChangeText={setMealOffsetsInput}
-        keyboardType="numbers-and-punctuation"
-        placeholder="60, 120, 180"
-        placeholderTextColor={colors.muted}
-      />
-      <View style={styles.switchRow}>
-        <View style={styles.switchCopy}>
-          <Text style={styles.switchTitle}>Recordatorio tras una corrección</Text>
-          <Text style={styles.switchFoot}>Solo te avisa que revises tu glucosa — no calcula ni sugiere una nueva dosis.</Text>
-        </View>
-        <Switch
-          value={correctionReminderEnabled}
-          onValueChange={setCorrectionReminderEnabled}
-          trackColor={{ false: colors.line, true: colors.teal }}
-        />
-      </View>
-      {correctionReminderEnabled ? (
-        <TextInput
-          style={styles.input}
-          value={correctionOffsetInput}
-          onChangeText={setCorrectionOffsetInput}
-          keyboardType="number-pad"
-          placeholder="60"
-          placeholderTextColor={colors.muted}
-        />
-      ) : null}
-
-      <Text style={styles.subheading}>Sonido y vibración</Text>
-      <Text style={styles.copy}>Cómo te avisan los recordatorios (post-comida, corrección y capilar). La notificación de glucosa fija sigue siendo silenciosa.</Text>
-      <View style={styles.styleGrid}>
-        {ALERT_STYLE_OPTIONS.map((option) => (
-          <Pressable
-            key={option.value}
-            style={[styles.styleChip, alertStyle === option.value && styles.styleChipActive]}
-            onPress={() => { setAlertStyle(option.value); }}
-          >
-            <Text style={[styles.styleChipText, alertStyle === option.value && styles.styleChipTextActive]}>{option.label}</Text>
-          </Pressable>
-        ))}
-      </View>
-
-      <View style={styles.switchRow}>
-        <View style={styles.switchCopy}>
-          <Text style={styles.switchTitle}>Recordar mediciones capilares</Text>
-          <Text style={styles.switchFoot}>Reparte X avisos por día dentro de tu horario despierto para que te pinches el dedo.</Text>
-        </View>
-        <Switch
-          value={capEnabled}
-          onValueChange={setCapEnabled}
-          trackColor={{ false: colors.line, true: colors.teal }}
-        />
-      </View>
-      {capEnabled ? (
-        <>
-          <View style={styles.row}>
-            <View style={styles.therapyField}>
-              <Text style={styles.therapyFieldLabel}>Veces al día</Text>
-              <View style={styles.therapyFieldInputWrap}>
-                <TextInput
-                  value={capCountInput}
-                  onChangeText={setCapCountInput}
-                  keyboardType="number-pad"
-                  style={styles.therapyFieldInput}
-                  placeholder="4"
-                  placeholderTextColor={colors.muted}
-                  selectTextOnFocus
-                />
-              </View>
+      <ScrollView contentContainerStyle={styles.groupBody} keyboardShouldPersistTaps="handled">
+        {group === 'devices' ? (
+          <>
+          <Text style={styles.sectionTitle}>Estado CGM</Text>
+          <View style={styles.statusCard}>
+            <View style={styles.statusRow}>
+              <View style={[styles.statusDot, { backgroundColor: status?.state === 'connected' ? colors.green : colors.warning }]} />
+              <Text style={styles.statusName}>{status?.provider ?? 'Sin proveedor'}</Text>
             </View>
-            <View style={styles.therapyField}>
-              <Text style={styles.therapyFieldLabel}>Despierto desde</Text>
-              <View style={styles.therapyFieldInputWrap}>
-                <TextInput
-                  value={capStartInput}
-                  onChangeText={setCapStartInput}
-                  keyboardType="numbers-and-punctuation"
-                  style={styles.therapyFieldInput}
-                  placeholder="08:00"
-                  placeholderTextColor={colors.muted}
-                />
-              </View>
-            </View>
-            <View style={styles.therapyField}>
-              <Text style={styles.therapyFieldLabel}>Hasta</Text>
-              <View style={styles.therapyFieldInputWrap}>
-                <TextInput
-                  value={capEndInput}
-                  onChangeText={setCapEndInput}
-                  keyboardType="numbers-and-punctuation"
-                  style={styles.therapyFieldInput}
-                  placeholder="22:00"
-                  placeholderTextColor={colors.muted}
-                />
-              </View>
-            </View>
+            <Text style={styles.statusDetail}>{status?.detail ?? 'Abre el backend para sincronizar o usa el modo local.'}</Text>
+            {status?.isSynthetic === true ? <Text style={styles.synthetic}>Los datos actuales son sintéticos y están marcados en toda la app.</Text> : null}
           </View>
-          <Text style={styles.hint}>
-            {capillaryPreview === null
-              ? 'Ingresa una cantidad entre 1 y 12 y horas válidas "HH:MM", con el fin después del inicio.'
-              : `Te avisará a las ${capillaryPreview.map((time) => formatMinutesAsClock(time.hour * 60 + time.minute)).join(', ')}.`}
-          </Text>
-        </>
-      ) : null}
 
-      <Pressable style={[styles.connectButton, alarmBusy && styles.disabled]} disabled={alarmBusy} onPress={() => { void saveAlarms(); }}>
-        <Text style={styles.connectText}>Guardar alarmas</Text>
-      </Pressable>
-      {alarmMessage === null ? null : <Text style={styles.message}>{alarmMessage}</Text>}
-
-      <Text style={styles.sectionTitle}>Parámetros de terapia</Text>
-      <Text style={styles.copy}>Estos valores los define tu equipo clínico — Type 1A nunca los calcula ni los sugiere. También puedes editar objetivo/factor/incremento dentro de “Corrección”; es el mismo valor guardado en ambos lados.</Text>
-      {therapyConfigured ? null : (
-        <View style={styles.unconfiguredBox}>
-          <Text style={styles.unconfiguredText}>
-            Todavía no has confirmado tus parámetros. Los campos están vacíos a propósito: la app no propone valores de terapia.
-            Las calculadoras de dosis quedan bloqueadas hasta que completes objetivo, factor e incremento con lo que te indicó tu equipo clínico.
-          </Text>
-        </View>
-      )}
-      <View style={styles.row}>
-        <TherapyField label="Objetivo" unit="mg/dL" value={targetInput} onChange={setTargetInput} />
-        <TherapyField label="Factor corrección" unit="mg/dL/U" value={factorInput} onChange={setFactorInput} />
-      </View>
-      <View style={styles.row}>
-        <TherapyField label="Incremento pluma" unit="U" value={incrementInput} onChange={setIncrementInput} />
-        <TherapyField label="Carbs por unidad" unit="g/U" value={carbRatioInput} onChange={setCarbRatioInput} />
-      </View>
-      <Text style={styles.hint}>"Carbs por unidad" es opcional — déjalo vacío si aún no lo tienes definido con tu equipo clínico. Se usa para el registro combinado de comida + corrección.</Text>
-      <Pressable style={[styles.connectButton, therapyBusy && styles.disabled]} disabled={therapyBusy} onPress={() => { void saveTherapy(); }}>
-        <Text style={styles.connectText}>Guardar parámetros de terapia</Text>
-      </Pressable>
-      {therapyMessage === null ? null : <Text style={styles.message}>{therapyMessage}</Text>}
-
-      <Text style={styles.sectionTitle}>Importar historial</Text>
-      <Text style={styles.copy}>Carga un CSV exportado desde MySugr (glucosa, insulina, carbohidratos, comidas, actividad, vitales, HbA1c). Se guarda como historial local; importar el mismo archivo dos veces no duplica datos.</Text>
-      <Pressable style={[styles.connectButton, busy && styles.disabled]} disabled={busy} onPress={() => { void importCsv(); }}>
-        <Text style={styles.connectText}>Elegir archivo CSV de MySugr</Text>
-      </Pressable>
-
-      <Text style={styles.sectionTitle}>Reportes</Text>
-      <Text style={styles.copy}>Exporta el historial guardado (glucosa, insulina, carbohidratos, comidas, actividad, notas, vitales, HbA1c) a un archivo para llevar a un control médico. Se genera en el dispositivo — nada se sube a ningún servidor.</Text>
-      <View style={styles.styleGrid}>
-        {REPORT_RANGES.map((range) => (
-          <Pressable
-            key={range.label}
-            style={[styles.styleChip, reportRangeDays === range.days && styles.styleChipActive]}
-            onPress={() => { setReportRangeDays(range.days); }}
-          >
-            <Text style={[styles.styleChipText, reportRangeDays === range.days && styles.styleChipTextActive]}>{range.label}</Text>
+          <Text style={styles.sectionTitle}>Conectar FreeStyle</Text>
+          <Text style={styles.copy}>Ruta elegida para el MVP: LibreView mediante una práctica autorizada en Junction EU. Chile usa la región EU.</Text>
+          <TextInput
+            style={styles.input}
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+            placeholder="Email de LibreView"
+            placeholderTextColor={colors.muted}
+          />
+          <Pressable style={[styles.connectButton, busy && styles.disabled]} disabled={busy} onPress={() => { void link(); }}>
+            <Text style={styles.connectText}>Iniciar conexión LibreView</Text>
           </Pressable>
-        ))}
-      </View>
-      <View style={styles.reportButtonRow}>
-        <Pressable
-          style={[styles.reportButton, reportBusy && styles.disabled]}
-          disabled={reportBusy}
-          onPress={() => { void exportReportPdf(); }}
-        >
-          <Text style={styles.connectText}>{reportBusy ? 'Generando…' : 'Exportar PDF'}</Text>
-        </Pressable>
-        <Pressable
-          style={[styles.reportButton, styles.reportButtonOutline, reportBusy && styles.disabled]}
-          disabled={reportBusy}
-          onPress={() => { void exportReportXlsx(); }}
-        >
-          <Text style={styles.reportButtonOutlineText}>{reportBusy ? 'Generando…' : 'Exportar Excel'}</Text>
-        </Pressable>
-      </View>
-      {reportMessage === null ? null : <Text style={styles.message}>{reportMessage}</Text>}
+          <View style={styles.optionsBox}>
+            <Text style={styles.option}><Text style={styles.optionStrong}>LibreView:</Text> ruta principal; permite compartir con la práctica.</Text>
+            <Text style={styles.option}><Text style={styles.optionStrong}>LibreLinkUp:</Text> útil para familiares, pero sin API pública general; no se usa ocultamente.</Text>
+            <Text style={styles.option}><Text style={styles.optionStrong}>Libre Data Share:</Text> acceso temporal clínico; no sirve como sincronización continua.</Text>
+          </View>
 
-      <Text style={styles.sectionTitle}>Diagnóstico</Text>
-      <Text style={styles.diagnostic}>Backend: {API_BASE_URL}</Text>
-      <Text style={styles.diagnostic}>Type 1A 0.1.0 · almacenamiento local-first</Text>
+          <Text style={styles.sectionTitle}>Importar historial</Text>
+          <Text style={styles.copy}>Carga un CSV exportado desde MySugr (glucosa, insulina, carbohidratos, comidas, actividad, vitales, HbA1c). Se guarda como historial local; importar el mismo archivo dos veces no duplica datos.</Text>
+          <Pressable style={[styles.connectButton, busy && styles.disabled]} disabled={busy} onPress={() => { void importCsv(); }}>
+            <Text style={styles.connectText}>Elegir archivo CSV de MySugr</Text>
+          </Pressable>
 
-      {message === null ? null : <Text style={styles.message}>{message}</Text>}
+          </>
+        ) : null}
+
+        {group === 'alarms' ? (
+          <>
+          <Text style={styles.sectionTitle}>Alarmas</Text>
+          <Text style={styles.copy}>Controles post-comida, en minutos separados por coma. El último se usa para avisar que el episodio está listo para revisar.</Text>
+          <TextInput
+            style={styles.input}
+            value={mealOffsetsInput}
+            onChangeText={setMealOffsetsInput}
+            keyboardType="numbers-and-punctuation"
+            placeholder="60, 120, 180"
+            placeholderTextColor={colors.muted}
+          />
+          <View style={styles.switchRow}>
+            <View style={styles.switchCopy}>
+              <Text style={styles.switchTitle}>Recordatorio tras una corrección</Text>
+              <Text style={styles.switchFoot}>Solo te avisa que revises tu glucosa — no calcula ni sugiere una nueva dosis.</Text>
+            </View>
+            <Switch
+              value={correctionReminderEnabled}
+              onValueChange={setCorrectionReminderEnabled}
+              trackColor={{ false: colors.line, true: colors.teal }}
+            />
+          </View>
+          {correctionReminderEnabled ? (
+            <TextInput
+              style={styles.input}
+              value={correctionOffsetInput}
+              onChangeText={setCorrectionOffsetInput}
+              keyboardType="number-pad"
+              placeholder="60"
+              placeholderTextColor={colors.muted}
+            />
+          ) : null}
+
+          <Text style={styles.subheading}>Sonido y vibración</Text>
+          <Text style={styles.copy}>Cómo te avisan los recordatorios (post-comida, corrección y capilar). La notificación de glucosa fija sigue siendo silenciosa.</Text>
+          <View style={styles.styleGrid}>
+            {ALERT_STYLE_OPTIONS.map((option) => (
+              <Pressable
+                key={option.value}
+                style={[styles.styleChip, alertStyle === option.value && styles.styleChipActive]}
+                onPress={() => { setAlertStyle(option.value); }}
+              >
+                <Text style={[styles.styleChipText, alertStyle === option.value && styles.styleChipTextActive]}>{option.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <View style={styles.switchRow}>
+            <View style={styles.switchCopy}>
+              <Text style={styles.switchTitle}>Recordar mediciones capilares</Text>
+              <Text style={styles.switchFoot}>Reparte X avisos por día dentro de tu horario despierto para que te pinches el dedo.</Text>
+            </View>
+            <Switch
+              value={capEnabled}
+              onValueChange={setCapEnabled}
+              trackColor={{ false: colors.line, true: colors.teal }}
+            />
+          </View>
+          {capEnabled ? (
+            <>
+              <View style={styles.row}>
+                <View style={styles.therapyField}>
+                  <Text style={styles.therapyFieldLabel}>Veces al día</Text>
+                  <View style={styles.therapyFieldInputWrap}>
+                    <TextInput
+                      value={capCountInput}
+                      onChangeText={setCapCountInput}
+                      keyboardType="number-pad"
+                      style={styles.therapyFieldInput}
+                      placeholder="4"
+                      placeholderTextColor={colors.muted}
+                      selectTextOnFocus
+                    />
+                  </View>
+                </View>
+                <View style={styles.therapyField}>
+                  <Text style={styles.therapyFieldLabel}>Despierto desde</Text>
+                  <View style={styles.therapyFieldInputWrap}>
+                    <TextInput
+                      value={capStartInput}
+                      onChangeText={setCapStartInput}
+                      keyboardType="numbers-and-punctuation"
+                      style={styles.therapyFieldInput}
+                      placeholder="08:00"
+                      placeholderTextColor={colors.muted}
+                    />
+                  </View>
+                </View>
+                <View style={styles.therapyField}>
+                  <Text style={styles.therapyFieldLabel}>Hasta</Text>
+                  <View style={styles.therapyFieldInputWrap}>
+                    <TextInput
+                      value={capEndInput}
+                      onChangeText={setCapEndInput}
+                      keyboardType="numbers-and-punctuation"
+                      style={styles.therapyFieldInput}
+                      placeholder="22:00"
+                      placeholderTextColor={colors.muted}
+                    />
+                  </View>
+                </View>
+              </View>
+              <Text style={styles.hint}>
+                {capillaryPreview === null
+                  ? 'Ingresa una cantidad entre 1 y 12 y horas válidas "HH:MM", con el fin después del inicio.'
+                  : `Te avisará a las ${capillaryPreview.map((time) => formatMinutesAsClock(time.hour * 60 + time.minute)).join(', ')}.`}
+              </Text>
+            </>
+          ) : null}
+
+          <Pressable style={[styles.connectButton, alarmBusy && styles.disabled]} disabled={alarmBusy} onPress={() => { void saveAlarms(); }}>
+            <Text style={styles.connectText}>Guardar alarmas</Text>
+          </Pressable>
+          {alarmMessage === null ? null : <Text style={styles.message}>{alarmMessage}</Text>}
+
+          <Text style={styles.sectionTitle}>Pantalla bloqueada</Text>
+          <View style={styles.switchRow}>
+            <View style={styles.switchCopy}>
+              <Text style={styles.switchTitle}>Mostrar glucosa en la notificación</Text>
+              <Text style={styles.switchFoot}>Desactivado oculta el valor, pero mantiene los accesos rápidos.</Text>
+            </View>
+            <Switch
+              value={showGlucoseOnLockScreen}
+              onValueChange={(value) => { void onPrivacyChange(value); }}
+              trackColor={{ false: colors.line, true: colors.teal }}
+            />
+          </View>
+          <Pressable style={[styles.notificationButton, busy && styles.disabled]} disabled={busy} onPress={() => { void notifications(); }}>
+            <Text style={styles.notificationText}>Activar notificación de acceso rápido</Text>
+          </Pressable>
+
+          </>
+        ) : null}
+
+        {group === 'therapy' ? (
+          <>
+          <Text style={styles.sectionTitle}>Parámetros de terapia</Text>
+          <Text style={styles.copy}>Estos valores los define tu equipo clínico — Type 1A nunca los calcula ni los sugiere. También puedes editar objetivo/factor/incremento dentro de “Corrección”; es el mismo valor guardado en ambos lados.</Text>
+          {therapyConfigured ? null : (
+            <View style={styles.unconfiguredBox}>
+              <Text style={styles.unconfiguredText}>
+                Todavía no has confirmado tus parámetros. Los campos están vacíos a propósito: la app no propone valores de terapia.
+                Las calculadoras de dosis quedan bloqueadas hasta que completes objetivo, factor e incremento con lo que te indicó tu equipo clínico.
+              </Text>
+            </View>
+          )}
+          <View style={styles.row}>
+            <TherapyField label="Objetivo" unit="mg/dL" value={targetInput} onChange={setTargetInput} />
+            <TherapyField label="Factor corrección" unit="mg/dL/U" value={factorInput} onChange={setFactorInput} />
+          </View>
+          <View style={styles.row}>
+            <TherapyField label="Incremento pluma" unit="U" value={incrementInput} onChange={setIncrementInput} />
+            <TherapyField label="Carbs por unidad" unit="g/U" value={carbRatioInput} onChange={setCarbRatioInput} />
+          </View>
+          <Text style={styles.hint}>"Carbs por unidad" es opcional — déjalo vacío si aún no lo tienes definido con tu equipo clínico. Se usa para el registro combinado de comida + corrección.</Text>
+          <Pressable style={[styles.connectButton, therapyBusy && styles.disabled]} disabled={therapyBusy} onPress={() => { void saveTherapy(); }}>
+            <Text style={styles.connectText}>Guardar parámetros de terapia</Text>
+          </Pressable>
+          {therapyMessage === null ? null : <Text style={styles.message}>{therapyMessage}</Text>}
+
+          </>
+        ) : null}
+
+        {group === 'reports' ? (
+          <>
+          <Text style={styles.sectionTitle}>Reportes</Text>
+          <Text style={styles.copy}>Exporta el historial guardado (glucosa, insulina, carbohidratos, comidas, actividad, notas, vitales, HbA1c) a un archivo para llevar a un control médico. Se genera en el dispositivo — nada se sube a ningún servidor.</Text>
+          <View style={styles.styleGrid}>
+            {REPORT_RANGES.map((range) => (
+              <Pressable
+                key={range.label}
+                style={[styles.styleChip, reportRangeDays === range.days && styles.styleChipActive]}
+                onPress={() => { setReportRangeDays(range.days); }}
+              >
+                <Text style={[styles.styleChipText, reportRangeDays === range.days && styles.styleChipTextActive]}>{range.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <View style={styles.reportButtonRow}>
+            <Pressable
+              style={[styles.reportButton, reportBusy && styles.disabled]}
+              disabled={reportBusy}
+              onPress={() => { void exportReportPdf(); }}
+            >
+              <Text style={styles.connectText}>{reportBusy ? 'Generando…' : 'Exportar PDF'}</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.reportButton, styles.reportButtonOutline, reportBusy && styles.disabled]}
+              disabled={reportBusy}
+              onPress={() => { void exportReportXlsx(); }}
+            >
+              <Text style={styles.reportButtonOutlineText}>{reportBusy ? 'Generando…' : 'Exportar Excel'}</Text>
+            </Pressable>
+          </View>
+          {reportMessage === null ? null : <Text style={styles.message}>{reportMessage}</Text>}
+
+          <Text style={styles.sectionTitle}>Diagnóstico</Text>
+          <Text style={styles.diagnostic}>Backend: {API_BASE_URL}</Text>
+          <Text style={styles.diagnostic}>Type 1A 0.1.0 · almacenamiento local-first</Text>
+
+          </>
+        ) : null}
+
+        {/*
+          `message` es el resultado de conectar LibreView o de importar el CSV
+          — ambas acciones viven en "Dispositivos". Sin acotarlo, un resumen de
+          importación aparecía al pie de la pestaña de Reportes.
+        */}
+        {group === 'devices' && message !== null ? <Text style={styles.message}>{message}</Text> : null}
+      </ScrollView>
     </ModalShell>
   );
 }
 
 const styles = StyleSheet.create({
+  // Mismos tokens y medidas que la barra de pestañas de `SummaryModal`: las
+  // dos pantallas con sub-páginas de la app tienen que leerse igual.
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: colors.line,
+    borderRadius: radius.sm,
+    padding: 3,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+  },
+  tab: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.sm, minHeight: 44, borderRadius: radius.sm - 3 },
+  tabActive: { backgroundColor: colors.surface },
+  tabLabel: { color: colors.muted, fontSize: 13, fontWeight: '700' },
+  tabLabelActive: { color: colors.ink },
+  groupBody: { padding: spacing.lg, paddingBottom: 44 },
   sectionTitle: { color: colors.ink, fontSize: 18, fontWeight: '800', marginTop: spacing.xl },
   subheading: { color: colors.ink, fontSize: 14, fontWeight: '800', marginTop: spacing.lg },
   styleGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },

@@ -36,6 +36,8 @@ import { InsulinAssociationModal } from './src/components/InsulinAssociationModa
 import { MealModal, type ConfirmedMealDraft } from './src/components/MealModal';
 import { NumericEntryModal } from './src/components/NumericEntryModal';
 import { SettingsModal } from './src/components/SettingsModal';
+import { logSaveError } from './src/log';
+import { OnboardingModal } from './src/components/OnboardingModal';
 import { SummaryModal } from './src/components/SummaryModal';
 import { Timeline } from './src/components/Timeline';
 import {
@@ -63,6 +65,7 @@ import {
   getMealEvents,
   getNoteEvents,
   getPendingInsulinAssociations,
+  createDecodeTally,
   getRecentRapidInsulin,
   getReminderAlertStyle,
   getSetting,
@@ -108,6 +111,9 @@ import { capillaryReminderTimes } from './src/format';
 import { colors, radius, spacing } from './src/theme';
 import type { PendingInsulinAssociation, QuickRoute, ReminderAlertStyle, ReportExport, SummaryData, TimelineEditPayload, TimelineItem } from './src/types';
 
+/** Flag de "ya vio la bienvenida"; vive en `settings`, no en el perfil de terapia. */
+const ONBOARDING_SEEN_KEY = 'onboardingSeenAt';
+
 const EMPTY_PROFILE: TherapyProfile = {
   glucoseUnit: 'mg/dL',
   targetGlucose: 110,
@@ -127,7 +133,9 @@ function Type1AApp() {
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [profile, setProfile] = useState<TherapyProfile>(EMPTY_PROFILE);
   const [therapyConfigured, setTherapyConfigured] = useState(false);
+  const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
   const [recentRapid, setRecentRapid] = useState<InsulinEvent[]>([]);
+  const [recentRapidUnreadable, setRecentRapidUnreadable] = useState(0);
   const [pendingAssociations, setPendingAssociations] = useState<PendingInsulinAssociation[]>([]);
   const [quickRoute, setQuickRoute] = useState<QuickRoute | null>(null);
   const [mealOpen, setMealOpen] = useState(false);
@@ -151,6 +159,10 @@ function Type1AApp() {
   const latest = latestLiveReading(readings);
 
   const loadLocalState = useCallback(async (): Promise<void> => {
+    // Solo para la insulina reciente: ese panel afirma completitud ("No hay
+    // eventos registrados") justo encima de una calculadora de dosis, así que
+    // una fila ilegible no puede pasar por "no hay nada".
+    const rapidTally = createDecodeTally();
     const to = new Date();
     // 30 days, not 3 hours: the chart is now a scrollable multi-day trend
     // (swipe back to see older/imported history), not just "right now".
@@ -158,30 +170,33 @@ function Type1AApp() {
     // latestLiveReading() finds the true latest live point regardless of
     // how wide this window is.
     const from = new Date(to.getTime() - 30 * 24 * 60 * 60_000);
-    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending, mealOffsets, correctionSettings, alertStyle, capillarySettings] = await Promise.all([
+    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending, mealOffsets, correctionSettings, alertStyle, capillarySettings, onboardingSeen] = await Promise.all([
       getCGMReadings(db, from, to),
       getTimeline(db),
       getTherapyProfile(db),
       isTherapyConfigured(db),
-      getRecentRapidInsulin(db),
+      getRecentRapidInsulin(db, undefined, undefined, rapidTally),
       getSetting(db, 'showGlucoseOnLockScreen'),
       getPendingInsulinAssociations(db),
       getMealAlarmOffsets(db),
       getCorrectionReminderSettings(db),
       getReminderAlertStyle(db),
       getCapillaryReminderSettings(db),
+      getSetting(db, ONBOARDING_SEEN_KEY),
     ]);
     setReadings(cached);
     setTimeline(nextTimeline);
     setProfile(nextProfile);
     setTherapyConfigured(configured);
     setRecentRapid(rapid);
+    setRecentRapidUnreadable(rapidTally.unreadable);
     setShowGlucoseOnLockScreen(privacy === 'true');
     setPendingAssociations(pending);
     setMealAlarmOffsets(mealOffsets);
     setCorrectionReminder(correctionSettings);
     setReminderAlertStyle(alertStyle);
     setCapillaryReminder(capillarySettings);
+    setOnboardingDone(onboardingSeen === 'true');
   }, [db]);
 
   const refresh = useCallback(async (manual = false): Promise<void> => {
@@ -401,23 +416,27 @@ function Type1AApp() {
 
   const loadSummary = useCallback(
     async (range: { from: Date; to: Date }): Promise<SummaryData> => {
+      // Un solo contador para las cuatro consultas: a la usuaria le importa
+      // "faltan N registros de este rango", no cuál tabla los perdió.
+      const tally = createDecodeTally();
       const [readings, insulin, carbs, meals] = await Promise.all([
-        getCGMReadings(db, range.from, range.to),
-        getInsulinEvents(db, range.from, range.to),
-        getCarbEvents(db, range.from, range.to),
-        getMealEvents(db, range.from, range.to),
+        getCGMReadings(db, range.from, range.to, tally),
+        getInsulinEvents(db, range.from, range.to, tally),
+        getCarbEvents(db, range.from, range.to, tally),
+        getMealEvents(db, range.from, range.to, tally),
       ]);
-      return { readings, insulin, carbs, meals };
+      return { readings, insulin, carbs, meals, unreadableCount: tally.unreadable };
     },
     [db],
   );
 
   async function exportReport(range: { from: Date; to: Date }): Promise<ReportExport> {
+    const tally = createDecodeTally();
     const [readings, insulin, carbs, meals, activities, notes, vitals, hba1c] = await Promise.all([
-      getCGMReadings(db, range.from, range.to),
-      getInsulinEvents(db, range.from, range.to),
-      getCarbEvents(db, range.from, range.to),
-      getMealEvents(db, range.from, range.to),
+      getCGMReadings(db, range.from, range.to, tally),
+      getInsulinEvents(db, range.from, range.to, tally),
+      getCarbEvents(db, range.from, range.to, tally),
+      getMealEvents(db, range.from, range.to, tally),
       getActivityEvents(db, range.from, range.to),
       getNoteEvents(db, range.from, range.to),
       getVitalsEvents(db, range.from, range.to),
@@ -429,6 +448,7 @@ function Type1AApp() {
       carbs,
       meals,
       rows: buildReportRows({ readings, insulin, carbs, meals, activities, notes, vitals, hba1c }),
+      unreadableCount: tally.unreadable,
     };
   }
 
@@ -589,7 +609,7 @@ function Type1AApp() {
             <Pressable style={styles.settingsButton} onPress={() => { setSummaryOpen(true); }} accessibilityRole="button" accessibilityLabel="Resumen: métricas y patrones">
               <Text style={styles.settingsGlyph}>◔</Text>
             </Pressable>
-            <Pressable style={styles.settingsButton} onPress={() => { setSettingsOpen(true); }} accessibilityLabel="Conexiones y privacidad">
+            <Pressable style={styles.settingsButton} onPress={() => { setSettingsOpen(true); }} accessibilityLabel="Ajustes">
               <Text style={styles.settingsGlyph}>•••</Text>
             </Pressable>
           </View>
@@ -654,6 +674,7 @@ function Type1AApp() {
         profile={profile}
         therapyConfigured={therapyConfigured}
         recentRapid={recentRapid}
+        recentRapidUnreadable={recentRapidUnreadable}
         onClose={() => { setQuickRoute(null); }}
         onSaveProfile={async (nextProfile) => {
           // Deliberately not `markConfigured` — see saveTherapyProfile.
@@ -711,6 +732,23 @@ function Type1AApp() {
       <InsulinAssociationModal
         pending={pendingAssociations[0] ?? null}
         onConfirm={confirmInsulinAssociation}
+      />
+      {/*
+        Se monta al final para quedar por encima del resto, y solo una vez
+        que `loadLocalState` resolvió el flag (`null` = todavía no sabemos):
+        sin esa espera, la bienvenida parpadearía en cada arranque antes de
+        que la base de datos conteste que ya se vio.
+      */}
+      <OnboardingModal
+        visible={onboardingDone === false}
+        onFinish={() => {
+          setOnboardingDone(true);
+          void setSetting(db, ONBOARDING_SEEN_KEY, 'true').catch((error: unknown) => {
+            // Que no se pueda persistir no debe bloquear el arranque: lo peor
+            // que pasa es que la bienvenida vuelva a aparecer la próxima vez.
+            logSaveError('App.onboardingSeen', error);
+          });
+        }}
       />
     </SafeAreaView>
   );
