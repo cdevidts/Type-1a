@@ -3,7 +3,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { AppState, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { assessFreshness, calculateCorrection, calculateMealBolus, isSensorReading } from '@type1a/domain';
+import { assessFreshness, calculateCorrection, calculateMealBolus, convertGlucose, isSensorReading } from '@type1a/domain';
 import type { CGMReading, MealAnalysisResult, TherapyProfile } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api';
@@ -140,9 +140,12 @@ export function EntryModal({
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
       const canUseReading = latest !== null && assessFreshness(latest.sourceTimestamp).state === 'connected';
+      // Convertido a mg/dL: este valor precarga el campo que alimenta la
+      // calculadora de dosis (calculateMealBolus/calculateCorrection) — un
+      // mmol/L crudo ahí arruina el cálculo, no solo la lectura en pantalla.
       const snapshot = canUseReading && latest !== null
         ? {
-            glucose: latest.glucose,
+            glucose: convertGlucose(latest.glucose, latest.unit, 'mg/dL'),
             sourceTimestamp: latest.sourceTimestamp,
             isSensor: isSensorReading(latest),
             isSynthetic: latest.origin === 'synthetic',
@@ -157,7 +160,7 @@ export function EntryModal({
       // over an old manual value keeps this from looking like a fresh
       // measurement when it isn't one.
       const canUseAsSensor = snapshot !== null && (snapshot.isSensor || snapshot.isSynthetic);
-      setGlucose(canUseAsSensor && latest !== null ? String(latest.glucose) : '');
+      setGlucose(canUseAsSensor && snapshot !== null ? String(snapshot.glucose) : '');
       setPrefilled(canUseAsSensor ? snapshot : null);
       setOriginalPrefill(canUseAsSensor ? snapshot : null);
       setGlucoseSource(canUseAsSensor ? 'sensor' : 'capillary');

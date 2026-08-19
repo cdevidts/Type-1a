@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { assessFreshness, calculateCorrection, isSensorReading, type CorrectionResult } from '@type1a/domain';
+import { assessFreshness, calculateCorrection, convertGlucose, isSensorReading, type CorrectionResult } from '@type1a/domain';
 import type { CGMReading, InsulinEvent, TherapyProfile } from '@type1a/schemas';
 
 import { formatClock, formatDayTime, parsePositiveNumber } from '../format';
@@ -90,15 +90,23 @@ export function CorrectionModal({
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
       const canUseReading = latest !== null && assessFreshness(latest.sourceTimestamp).state === 'connected';
-      setCurrent(canUseReading ? String(latest.glucose) : '');
-      setPrefilled(canUseReading && latest !== null
-        ? {
-            glucose: latest.glucose,
+      // Convertido a mg/dL antes de precargar: este valor entra directo al
+      // cálculo de dosis de corrección, así que tiene que quedar en la misma
+      // unidad en la que la usuaria escribió target/factor — mezclar mmol/L
+      // crudo con parámetros pensados en mg/dL arruina el cálculo, no solo
+      // la lectura.
+      const currentGlucoseMgDl = canUseReading && latest !== null
+        ? convertGlucose(latest.glucose, latest.unit, 'mg/dL')
+        : null;
+      setCurrent(currentGlucoseMgDl === null ? '' : String(currentGlucoseMgDl));
+      setPrefilled(currentGlucoseMgDl === null || latest === null
+        ? null
+        : {
+            glucose: currentGlucoseMgDl,
             sourceTimestamp: latest.sourceTimestamp,
             isSensor: isSensorReading(latest),
             isSynthetic: latest.origin === 'synthetic',
-          }
-        : null);
+          });
       setTarget(therapyConfigured ? String(profile.targetGlucose) : '');
       setFactor(therapyConfigured ? String(profile.correctionFactor) : '');
       setIncrement(therapyConfigured ? String(profile.doseIncrement) : '');

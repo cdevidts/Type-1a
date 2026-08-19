@@ -26,12 +26,18 @@ export function ModalShell({
   children: ReactNode;
   scroll?: boolean;
 }) {
+  // `scroll={false}` hands the child full control of its own scrolling and
+  // padding (see SummaryModal: fixed tab bar + range row, then its own
+  // ScrollView for the tab content) — applying `styles.content`'s padding
+  // here too used to double it up wherever the child added its own,
+  // throwing off any width computed from the screen width minus a single
+  // padding layer (charts rendering wider than their card, e.g.).
   const body = scroll ? (
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       {children}
     </ScrollView>
   ) : (
-    <View style={styles.content}>{children}</View>
+    <View style={styles.flex}>{children}</View>
   );
 
   return (

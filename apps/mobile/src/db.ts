@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { z } from 'zod';
 
-import { planMySugrImport } from '@type1a/domain';
+import { convertGlucose, planMySugrImport } from '@type1a/domain';
 import {
   ActivityEventSchema,
   CGMReadingSchema,
@@ -1505,7 +1505,10 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
       kind: 'glucose',
       timestamp: reading.data.sourceTimestamp,
       title: 'Glucosa',
-      detail: `${reading.data.glucose} mg/dL${glucoseOriginSuffix(reading.data.origin)}`,
+      // Convertido a mg/dL antes de mostrarse: una lectura importada puede
+      // venir en mmol/L (ej. un CSV de LibreView exportado en esa unidad),
+      // y esta etiqueta siempre dijo "mg/dL" sin chequearlo.
+      detail: `${convertGlucose(reading.data.glucose, reading.data.unit, 'mg/dL')} mg/dL${glucoseOriginSuffix(reading.data.origin)}`,
       tone: reading.data.origin === 'synthetic'
         ? 'warning'
         : reading.data.origin === 'imported' || reading.data.origin === 'manual'
@@ -1551,7 +1554,7 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
       // be an auto-saved sensor reading Verónica attached carbs/insulin to
       // after the fact — so the provenance suffix is derived from the reading,
       // never hardcoded, keeping every glucose display honest about its source.
-      group.glucose === undefined ? null : `${group.glucose.glucose} mg/dL${glucoseOriginSuffix(group.glucose.origin)}`,
+      group.glucose === undefined ? null : `${convertGlucose(group.glucose.glucose, group.glucose.unit, 'mg/dL')} mg/dL${glucoseOriginSuffix(group.glucose.origin)}`,
       group.meal?.confirmedCarbsG === undefined ? null : `${group.meal.confirmedCarbsG} g`,
       group.rapid === undefined ? null : `${group.rapid.units} U rápida`,
       group.basal === undefined ? null : `${group.basal.units} U basal`,
@@ -1566,7 +1569,10 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
       tone: 'teal',
       raw: {
         entryGroupId,
-        ...(group.glucose === undefined ? {} : { glucose: group.glucose.glucose, glucoseOrigin: group.glucose.origin }),
+        // Convertido a mg/dL acá también — TimelineDetailModal muestra
+        // `raw.glucose` con la etiqueta "mg/dL" fija, sin volver a
+        // convertir, así que el valor tiene que serlo ya en este punto.
+        ...(group.glucose === undefined ? {} : { glucose: convertGlucose(group.glucose.glucose, group.glucose.unit, 'mg/dL'), glucoseOrigin: group.glucose.origin }),
         ...(group.meal?.note === undefined ? {} : { description: group.meal.note }),
         ...(group.meal?.confirmedCarbsG === undefined ? {} : { carbsG: group.meal.confirmedCarbsG }),
         ...(group.meal?.aiEstimatedCarbsG === undefined ? {} : { aiEstimatedCarbsG: group.meal.aiEstimatedCarbsG }),

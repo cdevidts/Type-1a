@@ -69,6 +69,27 @@ existente, repasa esto:
   de un bloque de texto largo sin al menos `spacing.lg` de separación.
 - En listas (Timeline), la fila completa debe ser tocable si lleva a un
   detalle — no solo el ícono o el texto.
+- **El padding de un contenedor lo posee un solo nivel — nunca dos capas
+  anidadas lo aplican por separado "por si acaso".** Bug real (2026-08-19):
+  `ModalShell` aplicaba `padding: spacing.lg` en su `content` incluso
+  cuando el hijo (`SummaryModal`, `scroll={false}`) ya traía su propio
+  `ScrollView` con su propio `padding: spacing.lg` — dos capas de inset
+  horizontal, mientras el ancho de gráfico calculado (`width - spacing.lg*2
+  - spacing.md*2`) solo restaba una, así que los gráficos se dibujaban más
+  anchos que el espacio real y se salían del contenedor. Regla: si un hijo
+  trae su propio scroll/padding, el contenedor padre (acá, `ModalShell` en
+  su rama `scroll={false}`) no debe agregar el suyo — y cualquier `width`
+  calculado a partir del ancho de pantalla tiene que restar exactamente las
+  capas de padding que de verdad existen entre la pantalla y el elemento,
+  ni una más ni una menos.
+- **Un `flexShrink: 1` en un solo lado de una fila `space-between` no
+  alcanza si el otro lado no tiene límite de ancho.** Bug real
+  (2026-08-19): un encabezado con título (`flexShrink: 1`) + meta de texto
+  largo (sin `flexShrink` ni `maxWidth`) en una fila comprimía el título
+  hasta casi cero, envolviéndolo letra por letra. Con dos textos de largo
+  variable en la misma fila, o los dos llevan `flexShrink`/`maxWidth`, o
+  — más simple y más legible en pantallas angostas — se apilan en columna
+  en vez de compartir una fila.
 
 ## Tipografía
 

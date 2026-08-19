@@ -13,7 +13,7 @@
 > IA". Si no se mantiene junto al código, el chat futuro nacerá ciego a la
 > mitad de la app.
 >
-> _Última actualización: 2026-08-19 (pantalla Resumen: AGP + patrones por franja; §2.1 mecanismo de implementación en Abacus)._
+> _Última actualización: 2026-08-19 (pantalla Resumen: AGP + patrones por franja; §2.1 mecanismo de implementación en Abacus; unidad mg/dL garantizada en MealEpisodeMetrics)._
 
 ---
 
@@ -192,7 +192,7 @@ día es el objetivo del documento.
 | Estado del proveedor CGM | `fetchCGMStatus` (api) | — |
 | Timeline unificado (eventos, comidas, episodios, notas, entradas empaquetadas) | `getTimeline(db)` | Respeta el empaquetado por `entry_group_id`. |
 | Insulina rápida reciente (contexto, sin IOB) | `getRecentRapidInsulin(db)` | **Nunca** derivar insulina activa/IOB. |
-| Métricas y análisis de un episodio de comida | `meal_episodes` vía `getTimeline`; `MealEpisodeMetrics` | El análisis es descriptivo, no prescriptivo. |
+| Métricas y análisis de un episodio de comida | `meal_episodes` vía `getTimeline`; `MealEpisodeMetrics` | El análisis es descriptivo, no prescriptivo. Todos los valores de glucosa de `MealEpisodeMetrics` son **siempre mg/dL** (2026-08-19, `calculateMealEpisodeMetrics` normaliza al calcular) — el chat puede citarlos tal cual, pero si alguna vez muestra la unidad, que diga "mg/dL", nunca la deje sin declarar (fue justo el bug: el modelo la inventaba). |
 | Parámetros de terapia + si están configurados | `getTherapyProfile`, `isTherapyConfigured` (db) | Solo mostrar; nunca proponer valores. |
 | Ajustes (alarmas, estilo de alerta, recordatorio capilar, privacidad) | `getMealAlarmOffsets`, `getCorrectionReminderSettings`, `getReminderAlertStyle`, `getCapillaryReminderSettings`, `getSetting` (db) | — |
 | Reporte tabular del historial en un rango (glucosa, insulina, carbos, comidas, actividad, notas, vitales, HbA1c) | `buildReportRows` (domain) + `getCGMReadings`/`getInsulinEvents`/`getCarbEvents`/`getMealEvents`/`getActivityEvents`/`getNoteEvents`/`getVitalsEvents`/`getHbA1cResults` (db) | Fase 9. Puro formato de eventos, sin agregados clínicos; si el chat llega a ofrecer "arma un reporte", debe generar el PDF/Excel en el dispositivo igual que `SettingsModal` (`apps/mobile/src/reportExport.ts`), nunca resumir los valores él mismo en prosa libre sin la guardia de `containsTherapyRecommendation`. |

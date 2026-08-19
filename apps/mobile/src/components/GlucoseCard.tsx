@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { assessFreshness, isSensorReading, latestLiveReading } from '@type1a/domain';
+import { assessFreshness, convertGlucose, isSensorReading, latestLiveReading } from '@type1a/domain';
 import type { CGMProviderStatus, CGMReading } from '@type1a/schemas';
 
 import { formatClock, relativeAge, trendArrow } from '../format';
@@ -15,6 +15,10 @@ export function GlucoseCard({
   status: CGMProviderStatus | null;
 }) {
   const latest = latestLiveReading(readings);
+  // Junction/LibreView pueden reportar en mmol/L según la región de la
+  // cuenta (Chile usa la región EU) — el valor hero de toda la app siempre
+  // se muestra en mg/dL, sin importar en qué unidad llegó la lectura.
+  const displayGlucose = latest === null ? null : convertGlucose(latest.glucose, latest.unit, 'mg/dL');
   const freshness = latest === null ? null : assessFreshness(latest.sourceTimestamp);
   const isStale = freshness?.state !== 'connected';
   const isSynthetic = latest?.origin === 'synthetic' || status?.isSynthetic === true;
@@ -68,7 +72,7 @@ export function GlucoseCard({
       ) : (
         <>
           <View style={styles.valueRow}>
-            <Text style={[styles.value, isStale && styles.staleValue]}>{latest.glucose}</Text>
+            <Text style={[styles.value, isStale && styles.staleValue]}>{displayGlucose}</Text>
             <View style={styles.valueMeta}>
               <Text style={[styles.arrow, isStale && styles.staleValue]}>{trendArrow[latest.trend]}</Text>
               <Text style={styles.unit}>mg/dL</Text>

@@ -488,8 +488,13 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     marginBottom: spacing.md,
   },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: spacing.sm },
-  cardTitle: { color: colors.ink, fontSize: 15, fontWeight: '800', textTransform: 'capitalize', flexShrink: 1 },
+  // Columna, no fila: un meta largo ("79% en rango · 141 lecturas ·
+  // incluye manual/importado") junto al título en una sola fila sin
+  // flexShrink en ambos lados empujaba el título a un ancho casi nulo,
+  // envolviéndolo letra por letra. Apilado es además más legible en
+  // pantallas angostas.
+  cardHeader: { marginBottom: spacing.sm, gap: 2 },
+  cardTitle: { color: colors.ink, fontSize: 15, fontWeight: '800', textTransform: 'capitalize' },
   cardMeta: { color: colors.muted, fontSize: 11 },
   statRow: { flexDirection: 'row', gap: spacing.md, marginBottom: spacing.md },
   statTile: { flex: 1, backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md },

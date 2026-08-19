@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Line, Polyline, Text as SvgText } from 'react-native-svg';
 
-import { latestLiveReading } from '@type1a/domain';
+import { convertGlucose, latestLiveReading } from '@type1a/domain';
 import type { CGMReading } from '@type1a/schemas';
 
 import { colors } from '../theme';
@@ -22,6 +22,8 @@ const HIGH_THRESHOLD = 180;
 // multi-day view from asking react-native-svg to lay out thousands of
 // circles at once.
 const MAX_MARKERS = 300;
+/** Horas entre marcas intradía (pedido de Verónica, 18/8: "mostrar horas en el gráfico"). */
+const HOUR_TICK_STEP = 6;
 
 function yForGlucose(glucose: number): number {
   const clamped = Math.max(MIN_GLUCOSE, Math.min(MAX_GLUCOSE, glucose));
@@ -68,15 +70,22 @@ export function GlucoseChart({ readings }: { readings: readonly CGMReading[] }) 
     const span = Math.max(1, lastMs - firstMs);
     const xFor = (ms: number): number => ((ms - firstMs) / span) * plotWidth;
 
-    const coordinates = points.map((reading) => ({
-      x: xFor(Date.parse(reading.sourceTimestamp)),
-      y: yForGlucose(reading.glucose),
-      glucose: reading.glucose,
-      // Anything that didn't come off the sensor feed gets the same
-      // "not live sensor data" treatment: hollow marker, dashed muted line.
-      imported: reading.origin === 'imported' || reading.origin === 'manual',
-      id: reading.id,
-    }));
+    const coordinates = points.map((reading) => {
+      // Junction/LibreView pueden reportar en mmol/L según la región de la
+      // cuenta (Chile usa la región EU) — el gráfico siempre grafica en
+      // mg/dL, la misma escala que MIN_GLUCOSE/MAX_GLUCOSE/LOW_THRESHOLD/
+      // HIGH_THRESHOLD de este archivo, sin importar la unidad de origen.
+      const mgDl = convertGlucose(reading.glucose, reading.unit, 'mg/dL');
+      return {
+        x: xFor(Date.parse(reading.sourceTimestamp)),
+        y: yForGlucose(mgDl),
+        glucose: mgDl,
+        // Anything that didn't come off the sensor feed gets the same
+        // "not live sensor data" treatment: hollow marker, dashed muted line.
+        imported: reading.origin === 'imported' || reading.origin === 'manual',
+        id: reading.id,
+      };
+    });
 
     // The line itself must carry the imported/live distinction, not just
     // the (thinned-out) markers — at multi-day density most points don't
@@ -105,19 +114,24 @@ export function GlucoseChart({ readings }: { readings: readonly CGMReading[] }) 
     const markers = coordinates.filter((_, index) => index % markerStep === 0);
 
     const dayBoundaries: { x: number; label: string }[] = [];
+    const hourTicks: { x: number; label: string }[] = [];
     for (let dayStart = startOfDay(firstMs); dayStart <= lastMs; dayStart += 24 * 60 * 60_000) {
-      if (dayStart < firstMs) continue;
-      dayBoundaries.push({ x: xFor(dayStart), label: formatDayLabel(dayStart) });
+      if (dayStart >= firstMs) dayBoundaries.push({ x: xFor(dayStart), label: formatDayLabel(dayStart) });
+      for (let hour = HOUR_TICK_STEP; hour < 24; hour += HOUR_TICK_STEP) {
+        const tickMs = dayStart + hour * 60 * 60_000;
+        if (tickMs < firstMs || tickMs > lastMs) continue;
+        hourTicks.push({ x: xFor(tickMs), label: formatHourLabel(tickMs) });
+      }
     }
 
+    const latestGlucoseMgDl = latestLive === undefined || latestLive === null
+      ? null
+      : convertGlucose(latestLive.glucose, latestLive.unit, 'mg/dL');
     const latestCoordinate = latestLive === undefined || latestLive === null
       ? null
-      : (() => {
-          const ms = Date.parse(latestLive.sourceTimestamp);
-          return { x: xFor(ms), y: yForGlucose(latestLive.glucose) };
-        })();
+      : { x: xFor(Date.parse(latestLive.sourceTimestamp)), y: yForGlucose(latestGlucoseMgDl!) };
 
-    return { plotWidth, coordinates, segments, markers, dayBoundaries, latestCoordinate, firstMs, lastMs };
+    return { plotWidth, coordinates, segments, markers, dayBoundaries, hourTicks, latestCoordinate, latestGlucoseMgDl, firstMs, lastMs };
   }, [points, latestLive]);
 
   useEffect(() => {
@@ -135,7 +149,7 @@ export function GlucoseChart({ readings }: { readings: readonly CGMReading[] }) 
     );
   }
 
-  const { plotWidth, segments, markers, dayBoundaries, latestCoordinate } = chart;
+  const { plotWidth, segments, markers, dayBoundaries, hourTicks, latestCoordinate, latestGlucoseMgDl } = chart;
 
   return (
     <View>
@@ -153,6 +167,12 @@ export function GlucoseChart({ readings }: { readings: readonly CGMReading[] }) 
           <Svg width={plotWidth} height={HEIGHT}>
             <Line x1={0} y1={yForGlucose(HIGH_THRESHOLD)} x2={plotWidth} y2={yForGlucose(HIGH_THRESHOLD)} stroke={colors.orange} strokeDasharray="4 4" opacity={0.55} />
             <Line x1={0} y1={yForGlucose(LOW_THRESHOLD)} x2={plotWidth} y2={yForGlucose(LOW_THRESHOLD)} stroke={colors.red} strokeDasharray="4 4" opacity={0.55} />
+            {hourTicks.map((tick) => (
+              <Line key={`hour-${tick.x}`} x1={tick.x} y1={PADDING_TOP} x2={tick.x} y2={HEIGHT - PADDING_BOTTOM} stroke={colors.line} strokeWidth={1} opacity={0.6} />
+            ))}
+            {hourTicks.map((tick) => (
+              <SvgText key={`hour-label-${tick.x}`} x={tick.x} y={PADDING_TOP + 9} fontSize={9} fill={colors.muted} textAnchor="middle">{tick.label}</SvgText>
+            ))}
             {dayBoundaries.map((boundary) => (
               <Line key={boundary.x} x1={boundary.x} y1={PADDING_TOP} x2={boundary.x} y2={HEIGHT - PADDING_BOTTOM} stroke={colors.line} strokeWidth={1.5} />
             ))}
@@ -180,7 +200,7 @@ export function GlucoseChart({ readings }: { readings: readonly CGMReading[] }) 
               )
             ))}
             {latestCoordinate === null ? null : (
-              <Circle cx={latestCoordinate.x} cy={latestCoordinate.y} r={6} fill={colors.surface} stroke={colorForGlucose(latestLive!.glucose)} strokeWidth={3} />
+              <Circle cx={latestCoordinate.x} cy={latestCoordinate.y} r={6} fill={colors.surface} stroke={colorForGlucose(latestGlucoseMgDl!)} strokeWidth={3} />
             )}
           </Svg>
         </ScrollView>

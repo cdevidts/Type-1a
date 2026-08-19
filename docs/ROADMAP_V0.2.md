@@ -314,7 +314,7 @@ persistencia de datos de salud, o `packages/cgm`.
 | **10** | Alertas de glucosa alta/baja por umbral. | 7 (necesita datos frescos aunque la app esté cerrada) |
 | **11** | ✅ **Completada (2026-08-19).** Pantalla "Resumen" con tres sub-páginas (Días / Métricas / Comidas), abierta desde el botón ◔ de la barra superior. Time in Range real por las cinco bandas de consenso, HbA1c estimada (GMI, rotulada como *estimada* y separada de la `HbA1cLabResultSchema` de laboratorio), variabilidad (CV%), promedio, gráficos diarios y día promedio ponderado en formato AGP con selector de 7/14/30/90 días. Motor en `glucose-metrics.ts` + `agp.ts`; todo también incorporado al reporte PDF/Excel. Ver detalle abajo. | 1, 2, 7 |
 | **12** | 🟡 **Parte descriptiva completada (2026-08-19)**, en la sub-página "Comidas" del Resumen: patrones por franja horaria (`nutrition-insights.ts`) — promedio de carbohidratos confirmados e insulina por franja, y % de dosis rápidas seguidas de una lectura en rango a 1/2/3 h, con mínimo de muestra y advertencia de que es observacional. Pendiente el resto de la fase: insights conversacionales//adaptativos vía el chat (depende de la Fase 8). Nunca ajusta dosis. | 8, 11 |
-| **13** | Bugs de interfaz de la pantalla "Resumen" + notas de mejora de Verónica (WhatsApp, 18-19/8) encontrados probando el build real en el dispositivo (2026-08-19) — ver detalle abajo. Interpretaciones confirmadas por Verónica; **todavía sin tocar código** — pendiente de que ella apruebe la ruta de trabajo antes de empezar. | 11 |
+| **13** | 🟡 **Grupo A completado (2026-08-19)**: ítems 1, 2, 4, 9 y 11 de la lista de abajo, aprobados por Verónica como "la ruta más larga sin gastar otro build". Grupo B (botones tapados por la barra de estado, reorganización de Ajustes, nutrición/cetonas/onboarding, crash al cambiar rango) sigue pendiente — necesita confirmación en dispositivo antes de seguir. Ver detalle abajo. | 11 |
 
 No se numeró por prioridad de negocio sino por dependencia técnica — el
 orden de ejecución real se acuerda con Verónica fase por fase, no se asume.
@@ -948,26 +948,20 @@ corrida** ("en esta corrida quiero que revises exclusivamente lo del
 backend") — quedan acá con hipótesis de causa para que la próxima corrida
 no tenga que re-investigar desde cero.
 
-1. **Los gráficos se salen del contenedor por la derecha.** Se ve el eje X
-   (horas) cortado contra el borde de la tarjeta blanca, entrando en el
-   fondo gris. Hipótesis de causa: doble padding. `ModalShell` aplica
+1. ✅ **Resuelto (2026-08-19).** Los gráficos se salían del contenedor por la
+   derecha. Causa confirmada: doble padding. `ModalShell` aplicaba
    `padding: spacing.lg` en su `content` **incluso con `scroll={false}`**
-   (que es como lo usa `SummaryModal`) — y `SummaryModal` además envuelve
-   sus tarjetas en su propio `<ScrollView contentContainerStyle=
-   {styles.scrollBody}>` con otro `padding: spacing.lg`. El ancho de
-   gráfico que se calcula (`chartWidth = width - spacing.lg*2 -
-   spacing.md*2` en `SummaryModal.tsx`) solo resta el padding **una vez**,
-   no las dos capas — así que el `width` que reciben `DayGlucoseChart`/
-   `AgpChart` (`SummaryCharts.tsx`) queda más ancho que el espacio real
-   disponible dentro de la tarjeta. Revisar si `ModalShell` debería no
-   aplicar padding cuando el hijo ya trae su propio scroll, o si
-   `chartWidth` tiene que restar una capa más.
-2. **Lugares donde no se puede scrollear hacia abajo** (texto explicativo
-   cortado). Puede ser síntoma del mismo problema de contenedores anidados
-   del punto 1 — un `ScrollView` dentro de un `View` con padding fijo puede
-   terminar con una altura de contenido mal calculada. Reproducir en
-   dispositivo con texto largo (ej. la nota de "Cómo leer estos números" en
-   la pestaña Métricas) antes de asumir la causa.
+   (como lo usa `SummaryModal`), y `SummaryModal` además envuelve sus
+   tarjetas en su propio `ScrollView` con otro `padding: spacing.lg` — dos
+   capas, mientras `chartWidth` solo restaba una. Fix: `ModalShell` ya no
+   aplica padding en la rama `scroll={false}` (es el único consumidor de
+   esa rama en todo el repo, cero riesgo de romper otro modal); `chartWidth`
+   no necesitó cambiar, su fórmula ya asumía una sola capa y ahora es
+   correcta. Sin test automatizado posible (es layout de RN) — pendiente
+   confirmar en el próximo build.
+2. ✅ **Resuelto junto con el punto 1 (2026-08-19).** Era el mismo problema
+   de contenedores anidados — el `tabBar`/`rangeRow` de `SummaryModal`
+   también tenían doble inset horizontal por la misma causa. Mismo fix.
 3. **Botones superiores (ej. "Cerrar") tapados por la barra de estado de
    Android** (batería, señal, hora). `ModalShell.tsx` usa `<SafeAreaView
    style={styles.safeArea}>` sin `edges` explícito — a diferencia de
@@ -976,17 +970,13 @@ no tenga que re-investigar desde cero.
    separada; el cálculo de safe-area area ahí puede no heredar lo mismo que
    la pantalla principal. Empezar por probar `edges={['top']}` explícito en
    el `SafeAreaView` de `ModalShell` y `statusBarTranslucent` del `<Modal>`.
-4. **Contenedores de fecha mal dimensionados** — en la pestaña Días, el
-   encabezado de cada tarjeta (`cardHeader` en `SummaryModal.tsx`, fila con
-   `cardTitle` + `cardMeta`) envuelve la fecha letra por letra cuando el
-   texto de `cardMeta` es largo (ej. "79% en rango · 141 lecturas ·
-   incluye manual/importado"). Causa casi segura: `cardTitle` tiene
-   `flexShrink: 1` pero `cardMeta` no tiene ningún `flexShrink`/ancho
-   máximo, así que en una fila `justifyContent: 'space-between'` el título
-   se comprime hasta casi cero para dejarle todo el espacio al meta, que no
-   cede. Fix probable: darle `flexShrink`/`maxWidth` a `cardMeta` también, o
-   pasar el encabezado a dos líneas (fecha arriba, stats abajo) en vez de
-   una fila — más legible en pantallas angostas de todos modos.
+4. ✅ **Resuelto (2026-08-19).** Contenedores de fecha mal dimensionados —
+   causa confirmada: `cardTitle` tenía `flexShrink: 1` pero `cardMeta` no
+   tenía ningún límite de ancho, así que en una fila `justifyContent:
+   'space-between'` el título se comprimía hasta casi cero para dejarle
+   todo el espacio al meta largo. Fix: `cardHeader` pasó de fila a columna
+   (fecha arriba, stats abajo) — más robusto que ajustar `flexShrink` en
+   ambos lados, y más legible en pantallas angostas en general.
 5. **Bug funcional, no solo visual**: al abrir el Resumen recién instalada
    la actualización y cambiar el chip de rango de días, la app tiró un
    error de que no se podían encontrar los datos y pidió cerrar y volver a
@@ -1027,49 +1017,63 @@ Se interpretaron una por una y ella confirmó cada una antes de agregarlas acá
    de un dato, como Carbos/Rápida/Basal, o un campo dentro de "Nueva
    entrada"). Relevante para riesgo de cetoacidosis, no es un "nice to
    have" cosmético.
-9. **Marcas de hora en el gráfico principal** (pantalla de inicio,
-   `GlucoseCard`/`GlucoseChart.tsx` — **no** los gráficos nuevos del
-   Resumen, que ya las tienen). Hoy `GlucoseChart.tsx` solo dibuja línea +
-   etiqueta en los **cambios de día**, no hay marcas de hora dentro de un
-   mismo día. Agregar grilla/etiquetas de hora intradía, mismo criterio
-   visual que ya se usó en `SummaryCharts.tsx` (grilla recesiva, marcas
-   cada pocas horas).
+9. ✅ **Resuelto (2026-08-19).** Marcas de hora en el gráfico principal
+   (`GlucoseChart.tsx`, pantalla de inicio). Antes solo marcaba cambios de
+   día; ahora agrega una línea + etiqueta cada `HOUR_TICK_STEP` (6) horas
+   dentro del día, mismo criterio visual recesivo que `SummaryCharts.tsx`.
 10. **Flujo de configuración inicial (onboarding), empezando por unidad de
     glucosa** (mg/dL vs. mmol/L). `TherapyProfile.glucoseUnit` ya existe en
     el modelo de datos pero nada la pregunta en el primer uso — queda en el
     default hasta que alguien la encuentre en Ajustes. Construir una
     pantalla de primer uso real (unidad de glucosa como primer campo, y
     evaluar si conviene sumar ahí los demás parámetros de terapia).
-11. **Bug real encontrado a raíz de la nota anterior — unidades
-    inconsistentes en el resumen de "Episodio de comida listo".** Con la
-    app configurada en mg/dL, el resumen que genera la IA después de
-    confirmar la insulina de una comida (el texto tipo "te partió en X y
-    alcanzó un máximo de Y, 25 minutos después") mostró los valores en
-    mmol/L. Investigado (sin arreglar) hasta la causa más probable:
-    - `MealEpisodeMetricsSchema` (`packages/schemas/src/index.ts`) **no
-      tiene ningún campo de unidad** — `startingGlucose`/`glucose60`/
-      `glucose120`/`glucose180`/`peakGlucose`/`minGlucose` son solo
-      números.
-    - `calculateMealEpisodeMetrics` (`packages/domain/src/meal.ts:114-117`)
-      copia `reading.glucose` tal cual desde el `CGMReading` de origen, sin
-      pasar por `convertGlucose` — si esa lectura llegó con
-      `unit:'mmol/L'` (el schema lo permite por lectura), el número mmol/L
-      queda guardado sin ninguna etiqueta de a qué unidad corresponde.
-    - `glucoseInsightSystemPrompt` (`packages/ai/src/prompts.ts:17-19`) —
-      el prompt que arma el resumen — **nunca menciona la unidad** al
-      modelo. Sin esa información, el modelo tiene que inventar qué unidad
-      poner en el texto en español, y probablemente por sesgo de
-      entrenamiento (mmol/L es el estándar clínico internacional) eligió
-      esa aunque los números fueran otra cosa.
-    - Fix probable, no confirmado: (a) que `calculateMealEpisodeMetrics`
-      convierta siempre a `TherapyProfile.glucoseUnit` de la usuaria antes
-      de guardar las métricas (consistente con cómo ya se comporta el
-      resto de la app), y (b) que el prompt de `glucoseInsightSystemPrompt`
-      reciba y declare explícitamente la unidad, para que el texto generado
-      nunca tenga que adivinarla. Cualquier cambio acá pasa por
-      `domain-safety-reviewer` (toca `packages/domain` y el prompt de IA) y
-      necesita test nuevo — es justo el tipo de bug de unidades que puede
-      llevar a leer mal un valor de glucosa.
+11. ✅ **Resuelto (2026-08-19), y bastante más grande de lo reportado.** El
+    síntoma original: con la app en mg/dL, el resumen de IA post-comida
+    ("te partió en X y alcanzó un máximo de Y, 25 minutos después") mostró
+    los valores en mmol/L. Investigando la causa apareció el mismo patrón
+    en **toda la app**: cualquier lugar que copiaba `CGMReading.glucose` a
+    otro lado asumía mg/dL sin convertir, y **Junction** (el proveedor CGM
+    real en producción, región EU — Chile) puede legítimamente devolver
+    lecturas en mmol/L, no es un caso hipotético de CSV. Se corrigió el
+    patrón completo, no solo el síntoma:
+    - `calculateMealEpisodeMetrics` (`packages/domain/src/meal.ts`) ahora
+      normaliza cada lectura a mg/dL (`convertGlucose`) antes de calcular
+      cualquier métrica — incluye el peak/mínimo y las comparaciones de
+      umbral para tiempo sobre/bajo rango, que antes comparaban un número
+      mmol/L crudo contra 70/180 mg/dL y nunca disparaban correctamente.
+      `MealEpisodeMetricsSchema` quedó documentado (JSDoc) como "siempre
+      mg/dL", sin agregar un campo de unidad nuevo.
+    - `glucoseInsightSystemPrompt` (`packages/ai/src/prompts.ts`) ahora le
+      dice explícitamente al modelo que todo viene en mg/dL, en vez de
+      dejarlo adivinar (bump a `glucose-insight.v2`, solo trazabilidad).
+    - **El hallazgo más serio no era de texto — era de cálculo**: el campo
+      de glucosa que precarga la calculadora de dosis en
+      `CorrectionModal.tsx` y `EntryModal.tsx` (`calculateCorrection`/
+      `calculateMealBolus`) tomaba `latest.glucose` crudo. Un valor mmol/L
+      sin convertir ahí no es un error de visualización, es un número
+      equivocado entrando a un cálculo de dosis real. Corregido para
+      convertir antes de precargar.
+    - También corregido: el valor **hero** de glucosa de toda la app
+      (`GlucoseCard.tsx`, lo primero que se ve al abrir), el gráfico
+      principal (`GlucoseChart.tsx` — con mmol/L crudo se habría visto
+      pegado abajo del todo, además de mal etiquetado), la notificación
+      fija de acceso rápido (`notifications.ts`), y tres sitios en
+      `apps/mobile/src/db.ts` que arman el texto/objeto del Timeline
+      (lectura suelta, entrada empaquetada, y el `raw.glucose` que lee
+      `TimelineDetailModal`).
+    - Ya no había que tocar: los gráficos y el reporte de la Fase 11
+      (`SummaryCharts.tsx`, `reportExport.ts`, `glucose-metrics.ts`,
+      `agp.ts`, `nutrition-insights.ts`) — esos ya convertían con
+      `convertGlucose` desde que se escribieron hoy mismo, antes de este
+      bug. `TimelineDetailModal.tsx` no necesitó cambios propios: sus
+      valores ya vienen convertidos desde `db.ts`/`meal.ts`.
+    - Tests nuevos en `packages/domain/test/meal.test.ts`: normalización
+      mmol/L→mg/dL en el cómputo, y que las comparaciones de umbral usan el
+      valor convertido. Revisado por `domain-safety-reviewer`.
+    - **Limitación que queda:** los episodios ya guardados en SQLite antes
+      de este fix conservan los números viejos (posiblemente mal
+      convertidos) — no se migraron datos retroactivamente, solo se
+      corrigió el cálculo hacia adelante.
 12. **Reorganizar `SettingsModal` en agrupaciones lógicas** (ej. Sincronizar
     dispositivos / Alarmas / Reportes), en vez de la lista larga y plana
     actual (CGM, conexión FreeStyle, privacidad, 3 tipos de alarma, terapia,

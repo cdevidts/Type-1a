@@ -1,7 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-import { assessFreshness } from '@type1a/domain';
+import { assessFreshness, convertGlucose } from '@type1a/domain';
 import type { CGMProviderStatus, CGMReading } from '@type1a/schemas';
 
 import { formatClock, trendArrow } from './format';
@@ -167,7 +167,7 @@ export async function postQuickEntryNotification(
   const glucoseText = !showGlucose
     ? 'Glucosa oculta'
     : reading !== null
-      ? `${reading.glucose} ${trendArrow[reading.trend]} mg/dL · ${formatClock(reading.sourceTimestamp)}${marks.length === 0 ? '' : ` (${marks.join(', ')})`}`
+      ? `${convertGlucose(reading.glucose, reading.unit, 'mg/dL')} ${trendArrow[reading.trend]} mg/dL · ${formatClock(reading.sourceTimestamp)}${marks.length === 0 ? '' : ` (${marks.join(', ')})`}`
       : status?.state === 'offline'
         ? 'Backend sin conexión'
         : 'Sin lectura reciente';

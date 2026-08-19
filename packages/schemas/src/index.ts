@@ -199,6 +199,17 @@ export const MealEventSchema = z.object({
 });
 export type MealEvent = z.infer<typeof MealEventSchema>;
 
+/**
+ * Todos los campos de glucosa acá (`startingGlucose`, `glucose60/120/180`,
+ * `peakGlucose`, `minGlucose`, `peakDelta`) están **siempre en mg/dL**,
+ * sin importar en qué unidad venía la `CGMReading` de origen —
+ * `calculateMealEpisodeMetrics` (packages/domain/src/meal.ts) convierte
+ * antes de calcular nada. Este schema no lleva un campo de unidad a
+ * propósito: todo lo que lo lee (TimelineDetailModal, el prompt de
+ * glucoseInsightSystemPrompt) puede asumir mg/dL sin volver a chequear.
+ * Si alguna vez se agrega otra unidad de salida, agregar el campo acá
+ * primero, no asumir en el consumidor.
+ */
 export const MealEpisodeMetricsSchema = z.object({
   mealTimestamp: IsoTimestampSchema,
   startingGlucose: z.number().positive().finite().optional(),

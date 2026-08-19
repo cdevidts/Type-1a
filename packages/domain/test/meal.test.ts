@@ -7,7 +7,7 @@ import {
   findRapidInsulinCandidates,
 } from '../src/index.js';
 
-function reading(minutes: number, glucose: number): CGMReading {
+function reading(minutes: number, glucose: number, overrides: Partial<CGMReading> = {}): CGMReading {
   const timestamp = new Date(Date.parse('2026-08-12T12:00:00.000Z') + minutes * 60_000).toISOString();
   return {
     id: `${minutes}`,
@@ -20,6 +20,7 @@ function reading(minutes: number, glucose: number): CGMReading {
     origin: 'synthetic',
     sourceTimestamp: timestamp,
     ingestedAt: timestamp,
+    ...overrides,
   };
 }
 
@@ -42,6 +43,44 @@ describe('meal episodes', () => {
       confirmedCarbsG: 64,
       readingCount: 5,
     });
+  });
+
+  it('normalizes mmol/L readings to mg/dL before computing any metric — never mixes units in one episode', () => {
+    // 6 mmol/L * 18.0182 = 108.1 -> convertGlucose rounds mg/dL to the
+    // nearest integer, matching the mg/dL fixture above (108) exactly.
+    const metrics = calculateMealEpisodeMetrics({
+      mealTimestamp: '2026-08-12T12:00:00.000Z',
+      readings: [
+        reading(0, 6, { unit: 'mmol/L' }),
+        reading(60, 151),
+        reading(96, 172),
+        reading(120, 167),
+        reading(180, 131),
+      ],
+      confirmedCarbsG: 64,
+    });
+
+    expect(metrics.startingGlucose).toBe(108);
+    expect(metrics.peakGlucose).toBe(172);
+    expect(metrics.peakDelta).toBe(64);
+  });
+
+  it('compares mmol/L readings against the mg/dL range thresholds correctly, not just labels them wrong', () => {
+    // 3 mmol/L ~= 54 mg/dL (below the default 70 mg/dL low threshold) and
+    // 12 mmol/L ~= 216 mg/dL (above the default 180 mg/dL high threshold).
+    // Before normalizing, these raw numbers (3, 12) would never trip either
+    // threshold, silently hiding a real hypo/hyper from timeAbove/BelowRange.
+    const metrics = calculateMealEpisodeMetrics({
+      mealTimestamp: '2026-08-12T12:00:00.000Z',
+      readings: [
+        reading(0, 8, { unit: 'mmol/L' }),
+        reading(5, 3, { unit: 'mmol/L' }),
+        reading(10, 12, { unit: 'mmol/L' }),
+      ],
+    });
+
+    expect(metrics.timeBelowRangeMinutes).toBeGreaterThan(0);
+    expect(metrics.timeAboveRangeMinutes).toBeGreaterThan(0);
   });
 
   it('requires confirmation when multiple rapid events could match a meal', () => {

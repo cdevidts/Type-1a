@@ -62,7 +62,14 @@ docs/
   proveedor, "precargada desde el sensor") tiene que consultar
   `isSensorReading`, no asumirla por ser la lectura más nueva.
 - `meal.ts` — construcción de Meal Episodes y métricas +60/+120/+180, pico,
-  delta, tiempo a pico.
+  delta, tiempo a pico. **2026-08-19**: `calculateMealEpisodeMetrics()`
+  normaliza cada `CGMReading` a mg/dL (`convertGlucose`) antes de calcular
+  cualquier cosa — Junction (proveedor real, región EU) puede devolver
+  mmol/L, y antes ese número crudo se colaba sin convertir hasta el
+  resumen de IA y las comparaciones de rango. `MealEpisodeMetrics` es
+  **siempre mg/dL** de acá en más (ver JSDoc en
+  `packages/schemas/src/index.ts`); ningún consumidor debe volver a
+  convertir.
 - `units.ts` — conversión mg/dL ↔ mmol/L.
 - `mysugr-import.ts` — parseo/mapeo puro (sin I/O) del CSV exportado de
   MySugr: `parseMySugrCsv`, `parseMySugrTimestamp` (fecha/hora en español +
@@ -271,6 +278,23 @@ docs/
   **o por texto**); los demás modales de registro quedan como atajos de un
   solo dato. Antes de tocar cualquiera de estos, leer
   `docs/UX_GUIDELINES.md`.
+- **Invariante de unidades de glucosa (2026-08-19, ver detalle en
+  `docs/ROADMAP_V0.2.md` § Fase 13, ítem 11)**: `CGMReading.glucose` puede
+  venir en `'mg/dL'` o `'mmol/L'` — **Junction, el proveedor real en
+  producción (región EU), puede devolver mmol/L legítimamente**, no es un
+  caso de borde de importación CSV. Todo consumidor que muestra, guarda en
+  otro campo, o **calcula con** un valor de glucosa tiene que convertir con
+  `convertGlucose(value, reading.unit, 'mg/dL')` (`packages/domain/src/
+  units.ts`) antes de usarlo — nunca asumir mg/dL por el hardcode de la
+  etiqueta. Ya corregido en `meal.ts`, `GlucoseCard.tsx`, `GlucoseChart.tsx`,
+  `CorrectionModal.tsx`/`EntryModal.tsx` (los dos más graves: alimentaban
+  `calculateCorrection`/`calculateMealBolus` con el valor crudo),
+  `notifications.ts` y tres sitios de `db.ts` que arman el Timeline. Los
+  módulos de la Fase 11 (`SummaryCharts.tsx`, `reportExport.ts`,
+  `glucose-metrics.ts`, `agp.ts`, `nutrition-insights.ts`) ya convertían
+  desde que se escribieron. Antes de agregar un lugar nuevo que lea
+  `.glucose` de un `CGMReading`, convertir siempre — no asumir que el
+  proveedor activo siempre entrega mg/dL.
 - `src/theme.ts`, `src/format.ts` (incl. `parseMinuteOffsets` para las
   alarmas y `capillaryReminderTimes`/`parseClockToMinutes` para el
   recordatorio capilar, con tests en `format.test.ts`), `src/types.ts` (incl.

@@ -6,6 +6,9 @@ import type {
   MealTotals,
 } from '@type1a/schemas';
 
+import { HIGH_THRESHOLD, HYPOGLYCEMIA_THRESHOLD } from './glucose-thresholds.js';
+import { convertGlucose } from './units.js';
+
 export function totalFoodEstimates(foods: readonly FoodEstimate[]): MealTotals {
   const totals = foods.reduce(
     (sum, food) => ({
@@ -74,11 +77,20 @@ export function calculateMealEpisodeMetrics(input: EpisodeMetricInput): MealEpis
   const mealMs = Date.parse(input.mealTimestamp);
   if (!Number.isFinite(mealMs)) throw new Error('Invalid meal timestamp.');
 
+  // Normalizado a mg/dL antes de cualquier cálculo o comparación: las
+  // lecturas de origen pueden venir en mmol/L (ej. un CSV de LibreView
+  // exportado en esa unidad), y MealEpisodeMetrics no lleva su propio campo
+  // de unidad — todo lo que produce esta función es mg/dL siempre, para que
+  // coincida con lo que ya asumen sin conversión el resto de las pantallas
+  // (TimelineDetailModal) y el prompt de insight de IA. Sin esto, una
+  // lectura en mmol/L se guardaba y mostraba tal cual, con la etiqueta
+  // "mg/dL" pegada a un número que no lo era.
   const readings = [...input.readings]
     .filter((reading) => {
       const timestamp = Date.parse(reading.sourceTimestamp);
       return timestamp >= mealMs - 15 * 60_000 && timestamp <= mealMs + 240 * 60_000;
     })
+    .map((reading) => ({ ...reading, glucose: convertGlucose(reading.glucose, reading.unit, 'mg/dL'), unit: 'mg/dL' as const }))
     .sort((a, b) => Date.parse(a.sourceTimestamp) - Date.parse(b.sourceTimestamp));
 
   const start = nearestReading(readings, mealMs, 15);
@@ -106,8 +118,8 @@ export function calculateMealEpisodeMetrics(input: EpisodeMetricInput): MealEpis
         ),
       )
     : 0;
-  const lowThreshold = input.lowThreshold ?? 70;
-  const highThreshold = input.highThreshold ?? 180;
+  const lowThreshold = input.lowThreshold ?? HYPOGLYCEMIA_THRESHOLD;
+  const highThreshold = input.highThreshold ?? HIGH_THRESHOLD;
 
   return {
     mealTimestamp: new Date(mealMs).toISOString(),
