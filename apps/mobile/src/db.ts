@@ -29,7 +29,7 @@ import {
   type VitalsEvent,
 } from '@type1a/schemas';
 
-import { decodeRow, safeJsonParse, tallyParsed, type DecodeTally } from './rowDecode';
+import { decodeRow, decodeTherapyProfileRow, safeJsonParse, tallyParsed, type DecodeTally, type TherapyProfileRead } from './rowDecode';
 import type { PendingInsulinAssociation, ReminderAlertStyle, StoredMealEpisode, TimelineItem } from './types';
 
 const DATABASE_KEY_NAME = 'type1a.database-key.v1';
@@ -47,7 +47,7 @@ function bytesToHex(bytes: Uint8Array): string {
 
 // La decodificación tolerante de filas vive en `./rowDecode` (lógica pura,
 // con test propio) — ver la cabecera de ese archivo para el porqué.
-export { createDecodeTally, type DecodeTally } from './rowDecode';
+export { createDecodeTally, type DecodeTally, type TherapyProfileRead } from './rowDecode';
 
 async function getDatabaseKey(): Promise<string> {
   const stored = await SecureStore.getItemAsync(DATABASE_KEY_NAME);
@@ -174,28 +174,20 @@ export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
   );
 }
 
-export async function getTherapyProfile(db: SQLiteDatabase): Promise<TherapyProfile> {
+export async function getTherapyProfile(db: SQLiteDatabase): Promise<TherapyProfileRead<TherapyProfile>> {
   const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM therapy_profile WHERE id = 1');
-  // Sin fila = instalación nueva. Ahí el placeholder es correcto: la app
-  // necesita algo que renderizar y `THERAPY_CONFIGURED_KEY` sigue ausente,
-  // así que las calculadoras quedan bloqueadas igual.
-  if (row === null) return DEFAULT_PROFILE;
-
-  const parsed = TherapyProfileSchema.safeParse(safeJsonParse(row.payload));
-  if (!parsed.success) {
-    // Fila presente pero ilegible: acá NO se puede caer al placeholder.
-    // `THERAPY_CONFIGURED_KEY` vive en `settings`, en otra fila, así que
-    // seguiría diciendo "configurado" mientras devolvemos 110/45/0.5 —
-    // números que la usuaria nunca eligió. `CorrectionModal` los precargaría
-    // como suyos y "Guardar parámetros y calcular" los escribiría de vuelta
-    // como parámetros clínicos confirmados. Eso es inferir un parámetro de
-    // terapia, que `AGENTS.md` prohíbe explícitamente. Fallar ruidoso es la
-    // única opción segura: es lo que hacía el `JSON.parse` crudo antes de que
-    // se agregara `safeJsonParse`, y esa parte hay que conservarla.
-    throw new Error('El perfil de terapia guardado no se pudo leer.');
-  }
-  return parsed.data;
+  // La decisión de los tres casos vive en `rowDecode.ts` (pura, con test).
+  // Acá deliberadamente NO se lanza ni se cae a `DEFAULT_PROFILE`: lanzar
+  // desde el `Promise.all` de `loadLocalState` tumbaba la carga entera —
+  // dejando la app en blanco sin avisar y, peor, haciendo que cada guardado
+  // exitoso reportara "no se pudo guardar" (porque cada write termina con un
+  // `loadLocalState()`), lo que llevaba a registrar la misma insulina dos
+  // veces. Quien llama decide qué hacer con `unreadable`.
+  return decodeTherapyProfileRow(row === null ? null : row.payload, TherapyProfileSchema);
 }
+
+/** Los placeholders que se muestran mientras no haya un perfil real cargado. */
+export const PLACEHOLDER_THERAPY_PROFILE: TherapyProfile = DEFAULT_PROFILE;
 
 /**
  * The row seeded by `initializeDatabase` holds placeholder numbers so the

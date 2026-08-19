@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { createDecodeTally, decodeRow, safeJsonParse, tallyParsed } from './rowDecode';
+import { createDecodeTally, decodeRow, decodeTherapyProfileRow, safeJsonParse, tallyParsed } from './rowDecode';
 
 const Schema = z.object({ id: z.string().min(1), value: z.number().positive() });
 
@@ -96,5 +96,41 @@ describe('tallyParsed', () => {
     const tally = createDecodeTally();
     expect(tallyParsed(Schema.safeParse({ id: 'a', value: 1 }), tally)).toEqual([{ id: 'a', value: 1 }]);
     expect(tally.unreadable).toBe(0);
+  });
+});
+
+describe('decodeTherapyProfileRow', () => {
+  const Profile = z.object({
+    glucoseUnit: z.enum(['mg/dL', 'mmol/L']),
+    targetGlucose: z.number().positive(),
+    correctionFactor: z.number().positive(),
+    doseIncrement: z.number().positive(),
+  });
+  const valid = { glucoseUnit: 'mg/dL' as const, targetGlucose: 110, correctionFactor: 45, doseIncrement: 0.5 };
+
+  it('sin fila es "fresh" — instalación nueva, los placeholders son legítimos', () => {
+    expect(decodeTherapyProfileRow(null, Profile)).toEqual({ kind: 'fresh' });
+  });
+
+  it('una fila válida devuelve el perfil', () => {
+    expect(decodeTherapyProfileRow(JSON.stringify(valid), Profile)).toEqual({ kind: 'ok', profile: valid });
+  });
+
+  it('una fila con JSON corrupto es "unreadable", NUNCA "fresh"', () => {
+    // Confundir los dos casos es el bug de seguridad que este tipo previene:
+    // "fresh" habilita los placeholders, y con THERAPY_CONFIGURED_KEY todavía
+    // en true la calculadora los presentaría como parámetros de la usuaria.
+    expect(decodeTherapyProfileRow('{"targetGlucose"', Profile)).toEqual({ kind: 'unreadable' });
+  });
+
+  it('una fila que parsea pero no valida también es "unreadable"', () => {
+    expect(decodeTherapyProfileRow(JSON.stringify({ ...valid, correctionFactor: -1 }), Profile))
+      .toEqual({ kind: 'unreadable' });
+  });
+
+  it('nunca devuelve un perfil junto con "unreadable"', () => {
+    const result = decodeTherapyProfileRow('roto', Profile);
+    expect(result.kind).toBe('unreadable');
+    expect('profile' in result).toBe(false);
   });
 });

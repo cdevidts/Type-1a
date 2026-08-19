@@ -325,7 +325,7 @@ function nutritionSectionHtml(insights: MealWindowInsight[]): string {
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>
-  <p class="summary-footnote">Promedios de lo registrado por franja horaria. "En rango" = porcentaje de dosis rápidas tras las cuales había una lectura entre 70 y 180 mg/dL a esa hora; ↓ y ↑ son el porcentaje que quedó por debajo de 70 y por encima de 180, y se muestran a propósito porque quedar fuera de rango por abajo y por arriba son cosas opuestas. Es una observación descriptiva, no una medida de si la dosis fue adecuada, y depende también de comida, actividad, estrés y basal. Solo se muestra un porcentaje con al menos ${MIN_SAMPLE_FOR_RATE} dosis. Type 1A nunca calcula ni recomienda insulina.</p>`;
+  <p class="summary-footnote">Promedios de lo registrado por franja horaria. "En rango" = porcentaje de dosis rápidas tras las cuales había una lectura entre 70 y 180 mg/dL a esa hora; ↓ y ↑ son el porcentaje que quedó por debajo de 70 y por encima de 180, y se muestran a propósito porque quedar fuera de rango por abajo y por arriba son cosas opuestas. Es una observación descriptiva, no una medida de si la dosis fue adecuada, y depende también de comida, actividad, estrés y basal. Solo se muestra un porcentaje con al menos ${MIN_SAMPLE_FOR_RATE} dosis. Type 1A nunca decide ni sugiere una dosis por su cuenta: su calculadora solo aplica los parámetros que cargó la propia usuaria.</p>`;
 }
 
 function eventTableHtml(rows: ReportRow[]): string {
@@ -406,8 +406,20 @@ export function reportHtml(data: ReportExport, rangeLabel: string): string {
 
 export function reportWorkbookBytes(data: ReportExport): Uint8Array {
   const summary = summarizeGlucose(data.readings);
+  // La declaración de registros ilegibles va en LAS DOS ramas. Es justamente
+  // en la rama sin resumen donde más importa: si las lecturas del rango eran
+  // las corruptas, el médico leería "sin lecturas en este rango" y concluiría
+  // que la paciente no midió, cuando en realidad había N que no se pudieron
+  // leer. Mismo criterio que `summaryHtml`.
+  const unreadableRow: (string | number)[][] = data.unreadableCount > 0
+    ? [['Registros ilegibles excluidos', data.unreadableCount]]
+    : [];
   const summarySheetData: (string | number)[][] = summary === null
-    ? [['Resumen clínico (Type 1A)'], ['Sin lecturas de glucosa reales, manuales o importadas en este rango.']]
+    ? [
+      ['Resumen clínico (Type 1A)'],
+      ['Sin lecturas de glucosa reales, manuales o importadas en este rango.'],
+      ...unreadableRow,
+    ]
     : [
       ['Resumen clínico (Type 1A)'],
       ['HbA1c estimada (GMI)*', `${summary.estimatedA1cPct.toFixed(1)}%`],
@@ -453,7 +465,7 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
     ['"En rango" = % de dosis rápidas tras las cuales había una lectura entre 70 y 180 mg/dL a esa hora.'],
     ['"Bajo" (<70) y "alto" (>180) se muestran por separado: quedar fuera de rango por abajo y por arriba son cosas opuestas.'],
     [`Observación descriptiva, no una medida de si la dosis fue adecuada. Solo se muestra con al menos ${MIN_SAMPLE_FOR_RATE} dosis.`],
-    ['Type 1A nunca calcula ni recomienda insulina.'],
+    ['Type 1A nunca decide ni sugiere una dosis por su cuenta: su calculadora solo aplica los parámetros que cargó la propia usuaria.'],
   ];
 
   const workbook = XLSX.utils.book_new();

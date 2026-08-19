@@ -96,7 +96,7 @@ describe('reportHtml', () => {
     const html = reportHtml({ readings, rows: [], insulin, carbs: [], meals: [], unreadableCount: 0 }, '7 días');
     expect(html).toContain('Día promedio (perfil ambulatorio)');
     expect(html).toContain('Patrones por franja horaria');
-    expect(html).toContain('Type 1A nunca calcula ni recomienda insulina.');
+    expect(html).toContain('Type 1A nunca decide ni sugiere una dosis por su cuenta');
   });
 
   it('falls back to an empty-state line when there is no food or insulin', () => {
@@ -145,7 +145,7 @@ describe('reportWorkbookBytes', () => {
       .sheet_to_json<string[]>(workbook.Sheets.Patrones!, { header: 1 })
       .flat()
       .join(' | ');
-    expect(text).toContain('Type 1A nunca calcula ni recomienda insulina.');
+    expect(text).toContain('Type 1A nunca decide ni sugiere una dosis por su cuenta');
     expect(text).toContain('Glucosa a 1 h');
   });
 
@@ -154,5 +154,46 @@ describe('reportWorkbookBytes', () => {
     const workbook = XLSX.read(bytes, { type: 'array' });
     const resumenRows = XLSX.utils.sheet_to_json<string[]>(workbook.Sheets.Resumen!, { header: 1 });
     expect(resumenRows.flat().join(' | ')).toContain('Sin lecturas de glucosa');
+  });
+});
+
+describe('declaración de registros ilegibles (integridad del reporte)', () => {
+  const readings = [reading({ id: 'a', glucose: 120 })];
+
+  it('el PDF declara los registros ilegibles cuando los hay', () => {
+    const html = reportHtml({ readings, rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 3 }, '7 días');
+    expect(html).toContain('3 registro(s)');
+    expect(html).toContain('no se pudieron leer');
+  });
+
+  it('el PDF no dice nada cuando no hubo descartes', () => {
+    const html = reportHtml({ readings, rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 0 }, '7 días');
+    expect(html).not.toContain('no se pudieron leer');
+  });
+
+  it('el PDF lo declara incluso sin resumen — es el caso donde más importa', () => {
+    // Si las lecturas del rango eran justamente las corruptas, un reporte que
+    // solo diga "sin lecturas" le hace concluir al médico que la paciente no
+    // midió.
+    const html = reportHtml({ readings: [], rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 5 }, '7 días');
+    expect(html).toContain('5 registro(s)');
+  });
+
+  it('el Excel declara los registros ilegibles, con y sin resumen', () => {
+    const withSummary = XLSX.read(
+      reportWorkbookBytes({ readings, rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 2 }),
+      { type: 'array' },
+    );
+    const withSummaryText = XLSX.utils.sheet_to_csv(withSummary.Sheets[withSummary.SheetNames[0]!]!);
+    expect(withSummaryText).toContain('Registros ilegibles excluidos');
+    expect(withSummaryText).toContain('2');
+
+    const withoutSummary = XLSX.read(
+      reportWorkbookBytes({ readings: [], rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 4 }),
+      { type: 'array' },
+    );
+    const withoutSummaryText = XLSX.utils.sheet_to_csv(withoutSummary.Sheets[withoutSummary.SheetNames[0]!]!);
+    expect(withoutSummaryText).toContain('Registros ilegibles excluidos');
+    expect(withoutSummaryText).toContain('4');
   });
 });

@@ -70,6 +70,7 @@ import {
   getReminderAlertStyle,
   getSetting,
   getTherapyProfile,
+  PLACEHOLDER_THERAPY_PROFILE,
   getTimeline,
   getVitalsEvents,
   importMySugrCsv,
@@ -136,6 +137,8 @@ function Type1AApp() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
   const [recentRapid, setRecentRapid] = useState<InsulinEvent[]>([]);
   const [recentRapidUnreadable, setRecentRapidUnreadable] = useState(0);
+  const [readingsUnreadable, setReadingsUnreadable] = useState(0);
+  const [profileUnreadable, setProfileUnreadable] = useState(false);
   const [pendingAssociations, setPendingAssociations] = useState<PendingInsulinAssociation[]>([]);
   const [quickRoute, setQuickRoute] = useState<QuickRoute | null>(null);
   const [mealOpen, setMealOpen] = useState(false);
@@ -163,6 +166,9 @@ function Type1AApp() {
     // eventos registrados") justo encima de una calculadora de dosis, así que
     // una fila ilegible no puede pasar por "no hay nada".
     const rapidTally = createDecodeTally();
+    // Contador aparte para la serie de la pantalla principal: "Sin lecturas
+    // CGM" también es una afirmación de completitud.
+    const readTally = createDecodeTally();
     const to = new Date();
     // 30 days, not 3 hours: the chart is now a scrollable multi-day trend
     // (swipe back to see older/imported history), not just "right now".
@@ -171,7 +177,7 @@ function Type1AApp() {
     // how wide this window is.
     const from = new Date(to.getTime() - 30 * 24 * 60 * 60_000);
     const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending, mealOffsets, correctionSettings, alertStyle, capillarySettings, onboardingSeen] = await Promise.all([
-      getCGMReadings(db, from, to),
+      getCGMReadings(db, from, to, readTally),
       getTimeline(db),
       getTherapyProfile(db),
       isTherapyConfigured(db),
@@ -185,9 +191,17 @@ function Type1AApp() {
       getSetting(db, ONBOARDING_SEEN_KEY),
     ]);
     setReadings(cached);
+    setReadingsUnreadable(readTally.unreadable);
     setTimeline(nextTimeline);
-    setProfile(nextProfile);
-    setTherapyConfigured(configured);
+    // Un perfil ilegible NO puede caer a los placeholders ni tumbar la carga:
+    // se muestran los placeholders pero se fuerza `therapyConfigured` a false
+    // (las calculadoras quedan bloqueadas, que es lo seguro) y se levanta un
+    // aviso persistente con la salida concreta. El resto de la app —registrar
+    // glucosa, carbos, insulina— sigue funcionando, como exige la regla de
+    // degradar a registro manual de AGENTS.md.
+    setProfileUnreadable(nextProfile.kind === 'unreadable');
+    setProfile(nextProfile.kind === 'ok' ? nextProfile.profile : PLACEHOLDER_THERAPY_PROFILE);
+    setTherapyConfigured(nextProfile.kind === 'ok' && configured);
     setRecentRapid(rapid);
     setRecentRapidUnreadable(rapidTally.unreadable);
     setShowGlucoseOnLockScreen(privacy === 'true');
@@ -620,6 +634,29 @@ function Type1AApp() {
             <Text style={styles.noticeText}>{notice}</Text>
           </View>
         )}
+
+        {/*
+          Persistente, no descartable: mientras la fila del perfil siga
+          ilegible las calculadoras están bloqueadas, y la única salida
+          (volver a cargar los parámetros) no se descubre sola.
+        */}
+        {profileUnreadable ? (
+          <View style={[styles.notice, styles.noticeWarning]}>
+            <Text style={styles.noticeText}>
+              No pudimos leer tus parámetros de terapia guardados, así que las calculadoras de dosis quedan
+              bloqueadas. Vuelve a cargarlos en Ajustes → Terapia con lo que te indicó tu equipo clínico. Todo lo
+              demás —registrar glucosa, carbohidratos e insulina— sigue funcionando.
+            </Text>
+          </View>
+        ) : null}
+
+        {readingsUnreadable > 0 ? (
+          <View style={[styles.notice, styles.noticeWarning]}>
+            <Text style={styles.noticeText}>
+              {readingsUnreadable} lectura(s) guardada(s) no se pudieron leer y no aparecen abajo.
+            </Text>
+          </View>
+        ) : null}
 
         <GlucoseCard readings={readings} status={status} />
 

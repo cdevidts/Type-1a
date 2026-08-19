@@ -1011,7 +1011,32 @@ no tenga que re-investigar desde cero.
    dependencias del efecto), mensaje honesto que nombra el rango que falló, y
    una pista de probar un rango más corto.
 
-   **(c) Además, red de seguridad.** Se agregó `ErrorBoundary.tsx`: una
+   **(c) Dos rondas de `domain-safety-reviewer` sobre este mismo fix.** La
+   primera versión hacía que `getTherapyProfile` **lanzara** ante una fila
+   corrupta, para no caer nunca a los placeholders. Correcto en la intención,
+   pésimo en el efecto: la llamada vive dentro del `Promise.all` de
+   `loadLocalState`, y `refresh()` la envuelve en un `try/finally` **sin
+   `catch`**. Resultado: la app arrancaba en blanco y sin avisar, con la base
+   llena de datos; el sync de CGM dejaba de correr; y —lo peor— como **cada
+   ruta de guardado termina con `await loadLocalState()`**, un guardado
+   exitoso reportaba "No se pudo guardar", la usuaria volvía a tocar el botón
+   y **registraba la misma insulina dos veces**. Versión final:
+   `getTherapyProfile` devuelve un resultado discriminado
+   (`fresh` / `ok` / `unreadable`, en `rowDecode.ts`, puro y con test); ante
+   `unreadable` la app muestra los placeholders pero **fuerza
+   `therapyConfigured` a false** (calculadoras bloqueadas) y levanta un aviso
+   persistente que dice cómo salir, mientras todo el registro manual sigue
+   funcionando — que es lo que exige la regla de degradar a manual de
+   `AGENTS.md`. La revisión también encontró que los descartes silenciosos
+   seguían alimentando afirmaciones de completitud, y que tres textos
+   (PDF, Excel y Resumen) todavía decían "Type 1A nunca calcula ni recomienda
+   insulina", que es **falso** — la app sí hace la aritmética con los
+   parámetros que cargó la usuaria; lo que nunca hace es decidir o sugerir.
+   Corregido en las tres superficies, y en el onboarding se completó la lista
+   de qué sale del teléfono (faltaba que `fetchGlucoseInsight` manda las
+   métricas del episodio post-comida **automáticamente**, sin elección).
+
+   **(d) Además, red de seguridad.** Se agregó `ErrorBoundary.tsx`: una
    excepción lanzada **durante el render** (no dentro del `await`, que ya
    tenía su `.catch`) desmontaba el árbol de React entero y dejaba la app
    inservible hasta cerrarla. Los cálculos de `packages/domain` lanzan a

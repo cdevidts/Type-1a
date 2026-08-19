@@ -71,3 +71,38 @@ export function tallyParsed<T>(
   if (tally !== undefined) tally.unreadable += 1;
   return [];
 }
+
+/**
+ * Resultado de leer la fila del perfil de terapia. Es un tipo aparte —y no un
+ * simple `TherapyProfile | null`— porque los tres casos exigen respuestas
+ * distintas y confundirlos ya causó un bug de seguridad:
+ *
+ * - `fresh` (no hay fila): instalación nueva. Usar los placeholders es
+ *   correcto, porque `THERAPY_CONFIGURED_KEY` sigue ausente y las
+ *   calculadoras quedan bloqueadas igual.
+ * - `ok`: la fila decodificó.
+ * - `unreadable`: la fila existe pero no decodifica. **Nunca** caer acá a los
+ *   placeholders: `THERAPY_CONFIGURED_KEY` vive en otra fila y seguiría
+ *   diciendo "configurado", así que la calculadora precargaría 110/45/0.5
+ *   como si fueran de la usuaria y "Guardar parámetros y calcular" los
+ *   escribiría de vuelta como parámetros clínicos confirmados. Eso es inferir
+ *   un parámetro de terapia, que `AGENTS.md` prohíbe.
+ *
+ * Tampoco alcanza con lanzar: quien llama tiene que poder seguir cargando el
+ * resto de la app (glucosa, timeline, registro manual) y avisar. Ver
+ * `docs/ROADMAP_V0.2.md` § Fase 13, ítem 5.
+ */
+export type TherapyProfileRead<T> =
+  | { kind: 'fresh' }
+  | { kind: 'ok'; profile: T }
+  | { kind: 'unreadable' };
+
+export function decodeTherapyProfileRow<T>(
+  payload: string | null,
+  schema: { safeParse: (value: unknown) => { success: boolean; data?: T } },
+): TherapyProfileRead<T> {
+  if (payload === null) return { kind: 'fresh' };
+  const parsed = schema.safeParse(safeJsonParse(payload));
+  if (parsed.success && parsed.data !== undefined) return { kind: 'ok', profile: parsed.data };
+  return { kind: 'unreadable' };
+}

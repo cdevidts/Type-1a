@@ -476,8 +476,8 @@ function FoodTab({ insights, rangeDays }: { insights: MealWindowInsight[]; range
           también depende de la comida, la actividad, el estrés, la basal y el sitio de inyección.
         </Text>
         <Text style={styles.noteWarning}>
-          Type 1A nunca calcula ni recomienda insulina. Cualquier cambio de dosis o de parámetros se decide con tu
-          equipo clínico.
+          Type 1A nunca decide ni sugiere una dosis por su cuenta: la calculadora solo aplica los parámetros que
+          cargaste tú. Cualquier cambio de dosis o de parámetros se decide con tu equipo clínico.
         </Text>
         <Text style={styles.noteText}>
           Los porcentajes solo aparecen con al menos {MIN_SAMPLE_FOR_RATE} dosis en la franja — con menos, el número

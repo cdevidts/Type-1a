@@ -49,14 +49,19 @@ const STEPS: Step[] = [
   },
   {
     title: 'Todo se guarda en tu teléfono',
-    // No se puede decir "nada se sube a ningún servidor": `analyzeMealImage`
-    // manda la foto al backend y de ahí a Abacus, y el CGM también pasa por
-    // el backend. Este flujo es el único lugar donde se puede dar por
-    // informada a la usuaria, así que la frase se acota en vez de negarlo.
+    // Este flujo es el ÚNICO lugar donde se puede dar por informada a la
+    // usuaria de qué sale del teléfono, así que la lista tiene que ser
+    // completa, no tranquilizadora. Rutas reales de salida hoy:
+    // `analyzeMealImage` y `analyzeMealDescription` (foto/texto de comida →
+    // backend → Abacus), `fetchGlucoseInsight` en `episodes.ts` (métricas del
+    // episodio post-comida: glucosas, unidades de rápida y carbos — se manda
+    // **automáticamente** en cada `processReadyEpisodes`, sin que ella
+    // elija), la consulta al CGM, y el email de LibreView al conectar.
     body:
-      'Tu historial vive en este dispositivo, cifrado, y los reportes en PDF y Excel se generan acá mismo para que los lleves a un control.',
+      'Tu historial completo vive en este dispositivo, cifrado, y los reportes en PDF y Excel se generan acá mismo para que los lleves a un control. Nada de eso se sube.',
     bullets: [
-      'Lo único que sale de tu teléfono es la foto de una comida, si eliges analizarla, y la consulta a tu sensor.',
+      'Sí salen de tu teléfono: la foto o la descripción de una comida cuando pides estimar carbohidratos, y las cifras de un episodio post-comida (glucosas, carbos y unidades) que se envían solos para redactarte el resumen.',
+      'También salen la consulta a tu sensor y tu email de LibreView al conectarlo.',
       'Si el sensor o internet fallan, puedes seguir registrando a mano.',
       'Un dato importado o escrito por ti nunca se muestra como si viniera del sensor en vivo.',
     ],
