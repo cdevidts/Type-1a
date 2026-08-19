@@ -27,6 +27,22 @@ export function formatDayTime(timestamp: string): string {
   }).format(new Date(timestamp));
 }
 
+/**
+ * Same as `formatDayTime` but with the year — used in reports (Fase 9),
+ * which can span a much wider range than the few-hours-to-days windows
+ * everywhere else in the app shows, so dropping the year there would make
+ * two Augusts a year apart look identical on the page.
+ */
+export function formatReportTimestamp(timestamp: string): string {
+  return new Intl.DateTimeFormat('es-CL', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(timestamp));
+}
+
 export function relativeAge(timestamp: string, now = Date.now()): string {
   const minutes = Math.max(0, Math.floor((now - Date.parse(timestamp)) / 60_000));
   if (minutes < 1) return 'ahora';

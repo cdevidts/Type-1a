@@ -13,7 +13,9 @@
     "expo-image-picker": "~57.0.9",
     "expo-linking": "~57.0.5",
     "expo-notifications": "~57.0.10",
+    "expo-print": "~57.0.1",
     "expo-secure-store": "~57.0.1",
+    "expo-sharing": "~57.0.13",
     "expo-sqlite": "~57.0.1",
     "expo-status-bar": "~57.0.1",
     "expo-task-manager": "~57.0.11",
@@ -21,6 +23,7 @@
     "react-native": "0.86.2",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-svg": "15.15.4",
+    "xlsx": "^0.18.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {

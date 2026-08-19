@@ -73,6 +73,14 @@ docs/
   aleatorios — así reimportar el mismo CSV es un no-op), `planMySugrImport`
   (orquesta ambos, sigue sin I/O). Quien escribe a SQLite es
   `apps/mobile/src/db.ts` (`importMySugrCsv`), no este archivo.
+- `report.ts` — Fase 9: `buildReportRows()`, puro y determinístico, convierte
+  el historial ya guardado (glucosa, insulina, carbohidratos, comidas,
+  actividad, notas, vitales, HbA1c) a filas de texto ordenadas
+  cronológicamente para el reporte PDF/Excel exportable desde
+  `SettingsModal`. A propósito no agrega/calcula nada (TIR, HbA1c estimada —
+  eso es la Fase 11); nunca colapsa carbohidratos confirmados/estimados por
+  IA en un solo número; la procedencia de glucosa usa las mismas categorías
+  que `freshness.ts`/`glucoseOriginSuffix` de `db.ts`.
 - `ai-safety.ts` — `containsTherapyRecommendation()`: filtro regex (español)
   que **rechaza** cualquier salida de IA que suene a consejo de dosis. Este es
   el guardrail técnico detrás de la regla "Never let an LLM calculate, infer,
@@ -174,6 +182,10 @@ docs/
   transacción tiene (o debería tener) un núcleo `*Rows` no-transaccional
   para poder llamarse desde estas — patrón repetido varias veces esta
   sesión, ver `docs/ROADMAP_V0.2.md`.
+  `getInsulinEvents`/`getCarbEvents`/`getMealEvents` (Fase 9, mismo patrón
+  que `getCGMReadings`) leen un rango arbitrario de fechas para el reporte
+  exportable — antes solo existían variantes acotadas
+  (`getRecentRapidInsulin`, `getInsulinEventsForMeal`).
 - `src/episodes.ts` — lógica de asociación comida–insulina en cliente.
   **Gap conocido**: si se edita/elimina una lectura CGM o una dosis de
   insulina que ya alimentó las métricas de un episodio `complete`, esas
@@ -203,8 +215,11 @@ docs/
 - `src/components/` — `Timeline`, `TimelineDetailModal` (editar/eliminar
   por tipo, ver `db.ts` arriba para qué es editable), `GlucoseCard`,
   `GlucoseChart`, `EntryModal`, `CorrectionModal`, `MealModal`,
-  `InsulinAssociationModal`, `NumericEntryModal`, `SettingsModal`,
-  `ModalShell` (shell común de modal). `EntryModal` es la entrada
+  `InsulinAssociationModal`, `NumericEntryModal`, `SettingsModal` (incl.
+  sección "Reportes", Fase 9: exporta el historial local a PDF/Excel vía
+  `packages/domain`'s `buildReportRows`, `expo-print`, `xlsx`, y
+  `expo-sharing` — todo generado y compartido en el dispositivo, nada sube a
+  ningún servidor), `ModalShell` (shell común de modal). `EntryModal` es la entrada
   principal estilo MySugr (glucosa + comida + carbos + insulina + nota en
   un solo registro, con calculadora de dosis, y estimación de IA por foto
   **o por texto**); los demás modales de registro quedan como atajos de un
@@ -214,6 +229,27 @@ docs/
   alarmas y `capillaryReminderTimes`/`parseClockToMinutes` para el
   recordatorio capilar, con tests en `format.test.ts`), `src/types.ts` (incl.
   `TimelineEditPayload` y `ReminderAlertStyle`) — soporte de UI.
+- `src/log.ts` — `logSaveError(context, error)`: cada modal de guardado
+  (`EntryModal`, `MealModal`, `NumericEntryModal`, `CorrectionModal`,
+  `SettingsModal`, `InsulinAssociationModal`) atrapa sus errores con un
+  mensaje genérico en pantalla ("No se pudo guardar..."), pero antes todos
+  descartaban el error real con un `catch {}` mudo — sin esto, un fallo real
+  (rechazo de schema, error nativo de SQLite, una llamada de notificaciones
+  que lanza) no dejaba ningún rastro. Ahora se loguea `error.name`/
+  `error.message` a consola (nunca el objeto de error completo ni los datos
+  guardados — un `ZodError` completo puede traer el valor que falló la
+  validación en `issues`, y AGENTS.md prohíbe loguear cuerpos con
+  glucosa/insulina/comida). **2026-08-19**, en respuesta a un reporte de
+  Verónica de que "no me deja guardar entradas nuevas": revisión estática
+  completa de `saveUnifiedEntry`/`writeMealWithEpisode`/`writeCGMReading`/la
+  migración de `entry_group_id` no encontró ningún bug reproducible (y
+  `pnpm verify` pasa limpio), así que esto es el paso de diagnóstico —
+  la próxima vez que el mensaje genérico aparezca, el motivo real va a estar
+  en la consola de Metro/Expo (o `adb logcat` en el APK), en vez de perderse.
+  Sospecha más probable, aún no confirmada: el riesgo de doble conexión
+  SQLCipher entre `backgroundSync.ts` (tarea en segundo plano) y la conexión
+  de la app en primer plano, ya anotado como no probado en
+  `docs/ROADMAP_V0.2.md`.
 - `AGENTS.md` propio — recuerda que Expo cambió de versión (SDK 57): leer
   docs versionados antes de escribir código Expo nuevo.
 

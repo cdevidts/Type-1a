@@ -1,15 +1,91 @@
 import { useEffect, useRef, useState } from 'react';
-import { File } from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import * as XLSX from 'xlsx';
 
 import type { CGMProviderStatus, TherapyProfile } from '@type1a/schemas';
+import type { ReportRow } from '@type1a/domain';
 
 import { API_BASE_URL, connectFreestyleLibre } from '../api';
 import type { CapillaryReminderSettings, CorrectionReminderSettings, MySugrImportOutcome } from '../db';
-import { capillaryReminderTimes, formatMinutesAsClock, parseMinuteOffsets, parsePositiveNumber } from '../format';
+import { capillaryReminderTimes, formatMinutesAsClock, formatReportTimestamp, parseMinuteOffsets, parsePositiveNumber } from '../format';
+import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
 import type { ReminderAlertStyle } from '../types';
 import { ModalShell } from './ModalShell';
+
+/**
+ * Fase 9: preset windows for the exported report, rather than a free-form
+ * date picker — the app has no date-picker dependency anywhere yet, and
+ * these cover the actual use case (a recent stretch to bring to an
+ * appointment) without adding one just for this.
+ */
+const REPORT_RANGES: { label: string; days: number | null }[] = [
+  { label: '7 días', days: 7 },
+  { label: '30 días', days: 30 },
+  { label: '90 días', days: 90 },
+  { label: 'Todo', days: null },
+];
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function reportHtml(rows: ReportRow[], rangeLabel: string): string {
+  const body = rows
+    .map((row) => `<tr>
+      <td>${escapeHtml(formatReportTimestamp(row.timestamp))}</td>
+      <td>${escapeHtml(row.kindLabel)}</td>
+      <td>${escapeHtml(row.detail)}</td>
+      <td>${escapeHtml(row.provenance)}</td>
+    </tr>`)
+    .join('');
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  body { font-family: -apple-system, Helvetica, Arial, sans-serif; color: #17212B; padding: 24px; }
+  h1 { font-size: 18px; margin-bottom: 4px; }
+  p.range { color: #667784; font-size: 12px; margin-top: 0; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th, td { border-bottom: 1px solid #DCE5E9; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #F4F7F8; font-weight: 700; }
+</style>
+</head>
+<body>
+  <h1>Type 1A — Reporte de registros</h1>
+  <p class="range">${escapeHtml(rangeLabel)} · generado ${escapeHtml(formatReportTimestamp(new Date().toISOString()))}</p>
+  <table>
+    <thead><tr><th>Fecha</th><th>Tipo</th><th>Detalle</th><th>Origen</th></tr></thead>
+    <tbody>${body}</tbody>
+  </table>
+</body>
+</html>`;
+}
+
+function reportWorkbookBytes(rows: ReportRow[]): Uint8Array {
+  const sheetData = [
+    ['Fecha', 'Tipo', 'Detalle', 'Origen'],
+    ...rows.map((row) => [formatReportTimestamp(row.timestamp), row.kindLabel, row.detail, row.provenance]),
+  ];
+  const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Reporte');
+  return XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as Uint8Array;
+}
+
+async function shareGeneratedFile(uri: string, mimeType: string): Promise<boolean> {
+  if (!(await Sharing.isAvailableAsync())) return false;
+  await Sharing.shareAsync(uri, { mimeType, dialogTitle: 'Reporte Type 1A' });
+  return true;
+}
 
 const ALERT_STYLE_OPTIONS: { value: ReminderAlertStyle; label: string }[] = [
   { value: 'both', label: 'Sonido y vibración' },
@@ -84,6 +160,7 @@ export function SettingsModal({
   onSaveReminderAlertStyle,
   capillaryReminder,
   onSaveCapillaryReminder,
+  onExportReport,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -105,6 +182,8 @@ export function SettingsModal({
   onSaveReminderAlertStyle: (style: ReminderAlertStyle) => Promise<void>;
   capillaryReminder: CapillaryReminderSettings;
   onSaveCapillaryReminder: (settings: CapillaryReminderSettings) => Promise<void>;
+  /** Fase 9: reads the local history for a range and normalizes it to report rows — never generates the file itself, that stays here (UI-only concern). */
+  onExportReport: (range: { from: Date; to: Date }) => Promise<ReportRow[]>;
 }) {
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
@@ -134,6 +213,10 @@ export function SettingsModal({
   const [capEndInput, setCapEndInput] = useState(capillaryReminder.wakeEnd);
   const [alarmBusy, setAlarmBusy] = useState(false);
   const [alarmMessage, setAlarmMessage] = useState<string | null>(null);
+
+  const [reportRangeDays, setReportRangeDays] = useState<number | null>(30);
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportMessage, setReportMessage] = useState<string | null>(null);
 
   // Live preview of the reminder times for the values currently in the form,
   // so Verónica sees exactly what she'll get before saving. null while the
@@ -167,6 +250,7 @@ export function SettingsModal({
       setCapStartInput(capillaryReminder.wakeStart);
       setCapEndInput(capillaryReminder.wakeEnd);
       setAlarmMessage(null);
+      setReportMessage(null);
     }
     wasVisibleRef.current = visible;
   }, [visible, profile, therapyConfigured, mealAlarmOffsets, correctionReminder, reminderAlertStyle, capillaryReminder]);
@@ -209,7 +293,8 @@ export function SettingsModal({
       await onSaveReminderAlertStyle(alertStyle);
       await onSaveCapillaryReminder(capillary);
       setAlarmMessage('Alarmas guardadas.');
-    } catch {
+    } catch (error) {
+      logSaveError('SettingsModal.saveAlarms', error);
       setAlarmMessage('No se pudieron guardar las alarmas.');
     } finally {
       setAlarmBusy(false);
@@ -237,7 +322,8 @@ export function SettingsModal({
       // the old value alone".
       await onSaveProfile({ ...profile, targetGlucose, correctionFactor, doseIncrement, carbRatio: carbRatio ?? undefined });
       setTherapyMessage('Parámetros guardados.');
-    } catch {
+    } catch (error) {
+      logSaveError('SettingsModal.saveTherapy', error);
       setTherapyMessage('No se pudieron guardar los parámetros.');
     } finally {
       setTherapyBusy(false);
@@ -286,6 +372,64 @@ export function SettingsModal({
         : 'No se otorgó permiso de notificaciones.');
     } finally {
       setBusy(false);
+    }
+  }
+
+  function reportRangeWindow(): { from: Date; to: Date; label: string } {
+    const to = new Date();
+    const option = REPORT_RANGES.find((candidate) => candidate.days === reportRangeDays) ?? REPORT_RANGES[1]!;
+    // "Todo": no floor date exists anywhere in the app's data model, so this
+    // just needs to predate anything a real user could have logged or
+    // imported — not a semantic epoch.
+    const from = option.days === null ? new Date('2015-01-01T00:00:00.000Z') : new Date(to.getTime() - option.days * 24 * 60 * 60_000);
+    return { from, to, label: option.label === 'Todo' ? 'Todo el historial' : `Últimos ${option.label}` };
+  }
+
+  async function exportReportPdf(): Promise<void> {
+    setReportBusy(true);
+    setReportMessage(null);
+    try {
+      const { from, to, label } = reportRangeWindow();
+      const rows = await onExportReport({ from, to });
+      if (rows.length === 0) {
+        setReportMessage('No hay datos guardados en ese rango.');
+        return;
+      }
+      const { uri } = await Print.printToFileAsync({ html: reportHtml(rows, label) });
+      const shared = await shareGeneratedFile(uri, 'application/pdf');
+      setReportMessage(shared ? null : 'PDF generado, pero este dispositivo no puede compartir archivos.');
+    } catch (error) {
+      logSaveError('SettingsModal.exportReportPdf', error);
+      setReportMessage('No se pudo generar el PDF. Inténtalo otra vez.');
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
+  async function exportReportXlsx(): Promise<void> {
+    setReportBusy(true);
+    setReportMessage(null);
+    try {
+      const { from, to } = reportRangeWindow();
+      const rows = await onExportReport({ from, to });
+      if (rows.length === 0) {
+        setReportMessage('No hay datos guardados en ese rango.');
+        return;
+      }
+      const file = new File(Paths.cache, `type1a-reporte-${Date.now()}.xlsx`);
+      if (file.exists) file.delete();
+      file.create();
+      file.write(reportWorkbookBytes(rows));
+      const shared = await shareGeneratedFile(
+        file.uri,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+      setReportMessage(shared ? null : 'Excel generado, pero este dispositivo no puede compartir archivos.');
+    } catch (error) {
+      logSaveError('SettingsModal.exportReportXlsx', error);
+      setReportMessage('No se pudo generar el Excel. Inténtalo otra vez.');
+    } finally {
+      setReportBusy(false);
     }
   }
 
@@ -482,6 +626,37 @@ export function SettingsModal({
         <Text style={styles.connectText}>Elegir archivo CSV de MySugr</Text>
       </Pressable>
 
+      <Text style={styles.sectionTitle}>Reportes</Text>
+      <Text style={styles.copy}>Exporta el historial guardado (glucosa, insulina, carbohidratos, comidas, actividad, notas, vitales, HbA1c) a un archivo para llevar a un control médico. Se genera en el dispositivo — nada se sube a ningún servidor.</Text>
+      <View style={styles.styleGrid}>
+        {REPORT_RANGES.map((range) => (
+          <Pressable
+            key={range.label}
+            style={[styles.styleChip, reportRangeDays === range.days && styles.styleChipActive]}
+            onPress={() => { setReportRangeDays(range.days); }}
+          >
+            <Text style={[styles.styleChipText, reportRangeDays === range.days && styles.styleChipTextActive]}>{range.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <View style={styles.reportButtonRow}>
+        <Pressable
+          style={[styles.reportButton, reportBusy && styles.disabled]}
+          disabled={reportBusy}
+          onPress={() => { void exportReportPdf(); }}
+        >
+          <Text style={styles.connectText}>{reportBusy ? 'Generando…' : 'Exportar PDF'}</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.reportButton, styles.reportButtonOutline, reportBusy && styles.disabled]}
+          disabled={reportBusy}
+          onPress={() => { void exportReportXlsx(); }}
+        >
+          <Text style={styles.reportButtonOutlineText}>{reportBusy ? 'Generando…' : 'Exportar Excel'}</Text>
+        </Pressable>
+      </View>
+      {reportMessage === null ? null : <Text style={styles.message}>{reportMessage}</Text>}
+
       <Text style={styles.sectionTitle}>Diagnóstico</Text>
       <Text style={styles.diagnostic}>Backend: {API_BASE_URL}</Text>
       <Text style={styles.diagnostic}>Type 1A 0.1.0 · almacenamiento local-first</Text>
@@ -530,4 +705,8 @@ const styles = StyleSheet.create({
   hint: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: spacing.sm },
   unconfiguredBox: { backgroundColor: colors.warningSoft, borderRadius: radius.sm, padding: spacing.md, marginTop: spacing.sm },
   unconfiguredText: { color: colors.warning, fontSize: 12, lineHeight: 18, fontWeight: '600' },
+  reportButtonRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
+  reportButton: { flex: 1, backgroundColor: colors.teal, borderRadius: radius.sm, padding: spacing.md, alignItems: 'center', minHeight: 44, justifyContent: 'center' },
+  reportButtonOutline: { backgroundColor: 'transparent', borderColor: colors.teal, borderWidth: 1 },
+  reportButtonOutlineText: { color: colors.teal, fontSize: 14, fontWeight: '800' },
 });

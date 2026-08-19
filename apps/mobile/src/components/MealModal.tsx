@@ -7,6 +7,7 @@ import type { MealAnalysisResult } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api';
 import { parseNonNegativeNumber } from '../format';
+import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
 import { ModalShell } from './ModalShell';
 
@@ -124,7 +125,8 @@ export function MealModal({
         ...(analysis === null ? {} : { analysis }),
       });
       onClose();
-    } catch {
+    } catch (error) {
+      logSaveError('MealModal.confirm', error);
       setMessage('No se pudo guardar la comida. Inténtalo otra vez.');
     } finally {
       setBusy(false);

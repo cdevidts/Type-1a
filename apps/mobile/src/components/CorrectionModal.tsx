@@ -5,6 +5,7 @@ import { assessFreshness, calculateCorrection, isSensorReading, type CorrectionR
 import type { CGMReading, InsulinEvent, TherapyProfile } from '@type1a/schemas';
 
 import { formatClock, formatDayTime, parsePositiveNumber } from '../format';
+import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
 import { ModalShell } from './ModalShell';
 
@@ -162,7 +163,8 @@ export function CorrectionModal({
       await onSaveProfile(nextProfile);
       setResult(calculateCorrection({ currentGlucose, targetGlucose, correctionFactor, doseIncrement }));
       setCalculatedAt(new Date().toISOString());
-    } catch {
+    } catch (error) {
+      logSaveError('CorrectionModal.calculate', error);
       setError('No se pudieron guardar los parámetros.');
     } finally {
       setBusy(false);
@@ -186,7 +188,8 @@ export function CorrectionModal({
     try {
       await onRegister(result.roundedUnits);
       onClose();
-    } catch {
+    } catch (error) {
+      logSaveError('CorrectionModal.register', error);
       setError('No se pudo registrar la insulina rápida.');
     } finally {
       setBusy(false);

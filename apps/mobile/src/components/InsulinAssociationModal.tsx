@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { formatDayTime } from '../format';
+import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
 import type { PendingInsulinAssociation } from '../types';
 import { ModalShell } from './ModalShell';
@@ -22,7 +23,8 @@ export function InsulinAssociationModal({
     setError(null);
     try {
       await onConfirm(pending.episodeId, insulinEventId);
-    } catch {
+    } catch (error) {
+      logSaveError('InsulinAssociationModal.confirm', error);
       setError('No se pudo guardar la asociación.');
     } finally {
       setBusy(false);

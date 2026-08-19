@@ -310,13 +310,58 @@ persistencia de datos de salud, o `packages/cgm`.
 | **6** | ✅ **Completada (2026-08-18).** `scheduleEpisodeNotifications` ahora recibe los offsets en vez de tenerlos hardcodeados; se guardan en `app_settings` (`getMealAlarmOffsets`/`saveMealAlarmOffsets`, default 60/120/180 min, el mayor del set marca "episodio listo"). Nuevo mecanismo separado para correcciones: `scheduleCorrectionReminder()`, opt-in (apagado por defecto), un solo recordatorio "revisa tu glucosa" tras registrar una corrección — **no calcula ni sugiere nada**, es solo un tap-to-open. Decisión de diseño deliberada: **sin botones de acción rápida** en esa notificación (a diferencia de la de acceso rápido), para no facilitar apilar una segunda dosis con un solo toque sin haber vuelto a mirar la app. Sección nueva "Alarmas" en Ajustes, con el mismo patrón `wasVisibleRef` de reset-solo-al-abrir que el resto del modal. | — |
 | **7** | Muestreo autónomo de glucosa (mínimo 10/día aunque el usuario no abra la app). **Aclaración 2026-08-18** (Verónica preguntó si esto ya pasaba, porque ve una lectura cada ~15 min): no, Type 1A no recolecta nada en segundo plano hoy — `App.tsx` solo llama `fetchCGMReadings` al montar y cuando `AppState` pasa a `'active'` (`App.tsx:162`), y no hay `BackgroundFetch`/`TaskManager`/cron en ningún lado del repo (verificado por grep en `apps/mobile` y `apps/api`). Lo que ella ve tiene dos explicaciones posibles según el proveedor activo: (a) si está en modo sintético, `MockCGMProvider.getReadings()` (`packages/cgm/src/mock.ts:28-39`) calcula una lectura determinística cada 5 minutos **al vuelo**, para cualquier rango de fechas pedido — no es una lectura "tomada", es una fórmula evaluada retroactivamente; (b) si tiene LibreLinkUp real conectado, el sensor Libre sube directo a la nube de LibreView cada ~15 min por su cuenta (infraestructura de Abbott, no de Type 1A) — el backend solo hace de proxy y pide lo que ya está guardado ahí cuando la app abre. En ambos casos, si la app estuviera cerrada varios días y la abrieras, verías el historial completo igual (viene de la fuente, no de que Type 1A lo haya ido guardando) — pero cualquier cosa que dependa de que Type 1A *reaccione* mientras está cerrada (alertas de glucosa alta/baja, Fase 10) sí necesita esta fase de verdad. **2026-08-18 (cont.) — primera implementación real**, motivada por el reclamo de Verónica de que la notificación fija ("widget") no servía si no se actualizaba: `apps/mobile/src/backgroundSync.ts` (nuevo) registra una tarea real con `expo-background-task`/`expo-task-manager` (`minimumInterval: 15` min — piso de Android, no garantía; el SO puede demorarlo más bajo Doze/ahorro de batería). Cada corrida trae CGM reciente y lo guarda local, y si la notificación de acceso rápido está activada, la reposta con datos frescos vía `postQuickEntryNotification()` (extraído de `notifications.ts`, comparte código con la ruta desde la UI). Se activa solo cuando el usuario prende esa notificación (persistido en `app_settings`), y `App.tsx` se auto-repara el registro en cada arranque por si el SO limpió el `WorkManager`. **Riesgo señalado por el `domain-safety-reviewer`, pendiente de probar en dispositivo real**: la tarea abre la base SQLite con `SQLite.openDatabaseAsync` directamente (no vía `SQLiteProvider`), y en Android un background task headless corre en una instancia JS separada de la app en primer plano — son dos conexiones SQLCipher independientes al mismo archivo cifrado, no una sola compartida. WAL ayuda pero no está probado que sea seguro bajo SQLCipher con dos conexiones concurrentes. **Antes de confiar en esto**: disparar la tarea manualmente mientras la app está en primer plano escribiendo una entrada, y confirmar que no hay corrupción ni pérdida silenciosa de datos. Investigar factibilidad real de background fetch en Expo/Android (hay límites del SO, puede necesitar caer a "al abrir/reanudar la app" como estrategia principal en vez de cron verdadero en segundo plano) antes de prometer una cadencia exacta. | — |
 | **8** | Chat de IA: endpoint nuevo en `apps/api` sobre RouteLLM, sin autenticación de por medio (el cliente manda el contexto histórico relevante en cada request, el backend sigue sin estado), guardrail extendido de `ai-safety.ts`, y todo lo que el chat "proponga" pasa por confirmación explícita del usuario antes de tocar SQLite — mismo patrón que ya existe en todo el resto de la app. | 1, 6 (para poder proponer recordatorios) |
-| **9** | Reportes Excel/PDF, generados en el dispositivo (`expo-print` para PDF, librería JS pura para xlsx) para mantener el local-first. | 1, 2 |
+| **9** | ✅ **Completada (2026-08-19).** Reportes Excel/PDF, generados en el dispositivo (`expo-print` para PDF, `xlsx`/SheetJS para Excel, `expo-sharing` para compartir) para mantener el local-first. Ver detalle abajo. | 1, 2 |
 | **10** | Alertas de glucosa alta/baja por umbral. | 7 (necesita datos frescos aunque la app esté cerrada) |
 | **11** | Pantalla "Resumen": Time in Range real (agregado multi-día sobre `cgm_readings`, no el aproximado por-episodio que ya existe), HbA1c estimada (fórmula eA1c/GMI estándar, rotulada explícitamente como *estimada*, separada de la `HbA1cLabResultSchema` de laboratorio), y las demás métricas clínicas relevantes para T1D que se investiguen al llegar a esta fase (variabilidad/CV, promedio, eventos de hipo/hiperglucemia). | 1, 2, 7 |
 | **12** | Capa de aprendizaje/insight adaptativo (ver el límite de seguridad arriba) — patrones descriptivos, nunca ajusta dosis. | 8, 11 |
 
 No se numeró por prioridad de negocio sino por dependencia técnica — el
 orden de ejecución real se acuerda con Verónica fase por fase, no se asume.
+
+## Detalle de la Fase 9 (2026-08-19) — reportes PDF/Excel
+
+Nueva sección "Reportes" en `SettingsModal`: exporta el historial local
+(glucosa, insulina, carbohidratos, comidas, actividad, notas, vitales, HbA1c
+de laboratorio) a PDF o Excel, generado 100% en el dispositivo, para llevar
+a un control médico. Nada se sube a ningún servidor — coherente con
+`docs/adr/0001-local-first.md`.
+
+- `packages/domain/src/report.ts` → `buildReportRows()`: puro y
+  determinístico, sin IA ni red. Convierte los eventos ya guardados en filas
+  de texto ordenadas cronológicamente. **A propósito no calcula nada**
+  (ni Time in Range, ni HbA1c estimada, ni ningún agregado clínico) — eso es
+  la Fase 11 ("Resumen"), y mezclarlo acá habría arriesgado presentar un
+  cálculo propio de la app junto a datos crudos sin la distinción que exige
+  AGENTS.md. Nunca colapsa `confirmedCarbsG`/`aiEstimatedCarbsG` de una
+  comida en un solo número — ambos aparecen por separado en el detalle de la
+  fila cuando están presentes. La procedencia de cada lectura de glucosa
+  (`glucoseProvenance`) usa las mismas cuatro categorías que
+  `glucoseOriginSuffix` en `db.ts`/`isSensorReading` en `freshness.ts` —
+  "Sensor" solo para `origin: 'real'`, nunca para manual/importado/sintético.
+- `apps/mobile/src/db.ts`: tres getters de rango nuevos siguiendo el patrón
+  ya usado por `getCGMReadings`/`getActivityEvents`/etc. —
+  `getInsulinEvents`, `getCarbEvents`, `getMealEvents` (antes solo existían
+  variantes acotadas como `getRecentRapidInsulin`/`getInsulinEventsForMeal`,
+  pero un reporte necesita el rango completo arbitrario que pida el usuario).
+- `apps/mobile/src/components/SettingsModal.tsx`: selector de rango (7/30/90
+  días o "Todo" — reutiliza el patrón de chips `styleGrid`/`styleChip` que
+  ya existía para el estilo de alerta de recordatorios, en vez de introducir
+  un control nuevo) + dos botones ("Exportar PDF"/"Exportar Excel"). El PDF
+  arma una tabla HTML (`expo-print`); el Excel arma un workbook con
+  `xlsx`/SheetJS y lo escribe con la API nueva de `expo-file-system`
+  (`File`/`Paths`, la misma que ya usa el importador de MySugr). Ambos se
+  comparten con `expo-sharing`. Sin datos → mensaje explícito en vez de
+  generar un archivo vacío.
+- Sin selector de fecha nativo (no hay dependencia de date-picker en el
+  repo todavía) — los cuatro rangos preestablecidos cubren el caso real
+  (un tramo reciente para un control) sin agregar una dependencia solo para
+  esto.
+
+## Diagnóstico de guardado (2026-08-19) — `logSaveError`
+
+No es parte de la Fase 9, pero se hizo en la misma corrida en respuesta a un
+reporte en vivo de Verónica ("no me deja guardar entradas nuevas"): ver la
+sección dedicada más abajo, "Bug reportado en dispositivo (2026-08-19)".
 
 ## Mejoras fuera de la numeración (2026-08-18)
 
@@ -572,6 +617,39 @@ este arreglo, el siguiente paso sería instrumentar con logs de diagnóstico
 (sin cuerpos sensibles) qué contexto de ejecución usa cada invocación headless
 en un dispositivo real, para confirmar o descartar el escenario de "proceso
 headless nuevo por toque".
+
+## Bug reportado en dispositivo (2026-08-19) — "no me deja guardar entradas nuevas"
+
+Verónica reportó que `EntryModal` no guarda; el mensaje que ve es el genérico
+"No se pudo guardar la entrada. Inténtalo otra vez." Investigado a fondo sin
+poder reproducir: revisión estática completa de `saveUnifiedEntry`,
+`writeMealWithEpisode`, `writeCGMReading`, la migración de `entry_group_id`
+en `initializeDatabase`, y el flujo de `EntryModal.save()` no encontró ningún
+bug de lógica, y `pnpm verify` pasa limpio (lint + typecheck + los 51+8+10
+tests existentes). **No es accionable a ciegas** — ese mensaje genérico venía
+de un `catch {}` mudo que descartaba el error real, y ese mismo patrón se
+repetía en los otros 7 modales de guardado de la app.
+
+**Arreglado (diagnóstico, no una corrección del bug en sí)**: nuevo
+`apps/mobile/src/log.ts` → `logSaveError(context, error)`, ahora usado en
+los ocho `catch` de guardado (`EntryModal`, `MealModal`, `NumericEntryModal`,
+`CorrectionModal` ×2, `SettingsModal` ×2, `InsulinAssociationModal`). Loguea
+solo `error.name`/`error.message` a consola — nunca el objeto completo (un
+`ZodError` trae en `issues` el valor que falló la validación, y eso puede
+ser glucosa/insulina/carbohidratos reales, prohibido por AGENTS.md). La
+próxima vez que el mensaje genérico aparezca, el motivo real va a quedar en
+la consola de Metro/Expo (o `adb logcat` para el APK) en vez de perderse sin
+dejar rastro.
+
+**Sospecha principal, sin confirmar**: el riesgo de dos conexiones SQLCipher
+concurrentes entre `backgroundSync.ts` (tarea en segundo plano, Fase 7) y la
+conexión en primer plano de la app, ya anotado como "no probado en
+dispositivo" en la Fase 7 de este mismo documento — encaja con el patrón de
+"a veces falla, mensaje genérico, sin causa clara en el código". **Acción
+pendiente de Verónica**: la próxima vez que el guardado falle, revisar el
+log de Metro/Expo (o pedir un `adb logcat` si es el APK instalado) y pasar
+la línea `[type1a] EntryModal.save failed — ...` — con eso se puede
+diagnosticar la causa real y cerrar este bug en vez de solo instrumentarlo.
 
 ## Verificación por fase
 

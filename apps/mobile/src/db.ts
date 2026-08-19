@@ -18,6 +18,7 @@ import {
   VitalsEventSchema,
   type ActivityEvent,
   type CGMReading,
+  type CarbEvent,
   type GlucoseInsight,
   type HbA1cLabResult,
   type InsulinEvent,
@@ -945,6 +946,55 @@ export async function getCGMReadings(
   );
   return rows.flatMap((row) => {
     const parsed = CGMReadingSchema.safeParse(JSON.parse(row.payload));
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+/**
+ * Fase 9 (reportes): range getters for the three event tables that only had
+ * "recent"/"around this meal" queries before (`getRecentRapidInsulin`,
+ * `getInsulinEventsForMeal`) — a report needs every insulin dose, carb entry,
+ * and meal in an arbitrary date range, same as `getCGMReadings` already does
+ * for glucose. Same safe-parse-and-drop pattern as every other `get*` here.
+ */
+export async function getInsulinEvents(db: SQLiteDatabase, from: Date, to: Date): Promise<InsulinEvent[]> {
+  const rows = await db.getAllAsync<{ payload: string }>(
+    'SELECT payload FROM insulin_events WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp ASC',
+    from.toISOString(),
+    to.toISOString(),
+  );
+  return rows.flatMap((row) => {
+    const parsed = InsulinEventSchema.safeParse(JSON.parse(row.payload));
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+export async function getCarbEvents(db: SQLiteDatabase, from: Date, to: Date): Promise<CarbEvent[]> {
+  const rows = await db.getAllAsync<{ id: string; timestamp: string; carbs_g: number; source: CarbEvent['source']; created_at: string }>(
+    'SELECT id, timestamp, carbs_g, source, created_at FROM carb_events WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp ASC',
+    from.toISOString(),
+    to.toISOString(),
+  );
+  return rows.flatMap((row) => {
+    const parsed = CarbEventSchema.safeParse({
+      id: row.id,
+      timestamp: row.timestamp,
+      carbsG: row.carbs_g,
+      source: row.source,
+      createdAt: row.created_at,
+    });
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+export async function getMealEvents(db: SQLiteDatabase, from: Date, to: Date): Promise<MealEvent[]> {
+  const rows = await db.getAllAsync<{ payload: string }>(
+    'SELECT payload FROM meal_events WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp ASC',
+    from.toISOString(),
+    to.toISOString(),
+  );
+  return rows.flatMap((row) => {
+    const parsed = MealEventSchema.safeParse(JSON.parse(row.payload));
     return parsed.success ? [parsed.data] : [];
   });
 }

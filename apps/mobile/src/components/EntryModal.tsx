@@ -8,6 +8,7 @@ import type { CGMReading, MealAnalysisResult, TherapyProfile } from '@type1a/sch
 
 import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api';
 import { formatDayTime, parseNonNegativeNumber, parsePositiveNumber } from '../format';
+import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
 import { ModalShell } from './ModalShell';
 
@@ -466,7 +467,8 @@ export function EntryModal({
         ...(note.trim() === '' ? {} : { note: note.trim() }),
       });
       onClose();
-    } catch {
+    } catch (error) {
+      logSaveError('EntryModal.save', error);
       setMessage('No se pudo guardar la entrada. Inténtalo otra vez.');
     } finally {
       setBusy(false);

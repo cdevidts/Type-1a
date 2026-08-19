@@ -48,6 +48,10 @@ Otros documentos de contexto en `docs/`:
   fronteras de seguridad de `AGENTS.md`. Ver "Constancia para el chat de IA"
   más abajo.
 - `adr/` — decisiones de arquitectura (local-first, límite de IA).
+- `DEEPAGENT_REDEPLOY_PROMPT.md` — prompt listo para pedirle a DeepAgent el
+  redeploy de `apps/api` a producción. Pedido explícito de Verónica
+  (2026-08-18): tenerlo preparado de antemano y **no dispararlo** salvo que
+  sea realmente crítico — cada redeploy consume créditos de Abacus.
 
 ## Comandos de desarrollo
 

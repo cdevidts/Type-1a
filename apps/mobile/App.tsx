@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
-import { latestLiveReading } from '@type1a/domain';
+import { buildReportRows, latestLiveReading, type ReportRow } from '@type1a/domain';
 import type {
   CGMProviderStatus,
   CGMReading,
@@ -52,15 +52,22 @@ import {
   DEFAULT_CORRECTION_REMINDER_OFFSET_MINUTES,
   DEFAULT_MEAL_ALARM_OFFSETS_MINUTES,
   DEFAULT_REMINDER_ALERT_STYLE,
+  getActivityEvents,
   getCapillaryReminderSettings,
+  getCarbEvents,
   getCorrectionReminderSettings,
+  getHbA1cResults,
+  getInsulinEvents,
   getMealAlarmOffsets,
+  getMealEvents,
+  getNoteEvents,
   getPendingInsulinAssociations,
   getRecentRapidInsulin,
   getReminderAlertStyle,
   getSetting,
   getTherapyProfile,
   getTimeline,
+  getVitalsEvents,
   importMySugrCsv,
   initializeDatabase,
   isTherapyConfigured,
@@ -390,6 +397,20 @@ function Type1AApp() {
     await loadLocalState();
   }
 
+  async function exportReport(range: { from: Date; to: Date }): Promise<ReportRow[]> {
+    const [readings, insulin, carbs, meals, activities, notes, vitals, hba1c] = await Promise.all([
+      getCGMReadings(db, range.from, range.to),
+      getInsulinEvents(db, range.from, range.to),
+      getCarbEvents(db, range.from, range.to),
+      getMealEvents(db, range.from, range.to),
+      getActivityEvents(db, range.from, range.to),
+      getNoteEvents(db, range.from, range.to),
+      getVitalsEvents(db, range.from, range.to),
+      getHbA1cResults(db, range.from, range.to),
+    ]);
+    return buildReportRows({ readings, insulin, carbs, meals, activities, notes, vitals, hba1c });
+  }
+
   async function updatePrivacy(show: boolean): Promise<void> {
     await setSetting(db, 'showGlucoseOnLockScreen', String(show));
     setShowGlucoseOnLockScreen(show);
@@ -654,6 +675,7 @@ function Type1AApp() {
         onSaveReminderAlertStyle={updateReminderAlertStyle}
         capillaryReminder={capillaryReminder}
         onSaveCapillaryReminder={updateCapillaryReminder}
+        onExportReport={exportReport}
       />
       <InsulinAssociationModal
         pending={pendingAssociations[0] ?? null}

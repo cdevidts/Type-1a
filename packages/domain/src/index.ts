@@ -5,4 +5,5 @@ export * from './freshness';
 export * from './glucose-thresholds';
 export * from './meal';
 export * from './mysugr-import';
+export * from './report';
 export * from './units';

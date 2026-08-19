@@ -125,6 +125,7 @@ día es el objetivo del documento.
 | Métricas y análisis de un episodio de comida | `meal_episodes` vía `getTimeline`; `MealEpisodeMetrics` | El análisis es descriptivo, no prescriptivo. |
 | Parámetros de terapia + si están configurados | `getTherapyProfile`, `isTherapyConfigured` (db) | Solo mostrar; nunca proponer valores. |
 | Ajustes (alarmas, estilo de alerta, recordatorio capilar, privacidad) | `getMealAlarmOffsets`, `getCorrectionReminderSettings`, `getReminderAlertStyle`, `getCapillaryReminderSettings`, `getSetting` (db) | — |
+| Reporte tabular del historial en un rango (glucosa, insulina, carbos, comidas, actividad, notas, vitales, HbA1c) | `buildReportRows` (domain) + `getCGMReadings`/`getInsulinEvents`/`getCarbEvents`/`getMealEvents`/`getActivityEvents`/`getNoteEvents`/`getVitalsEvents`/`getHbA1cResults` (db) | Fase 9. Puro formato — sin TIR/HbA1c estimada (eso es la Fase 11); si el chat llega a ofrecer "arma un reporte", debe generar el PDF/Excel en el dispositivo igual que `SettingsModal`, nunca resumir los valores él mismo en prosa libre sin la guardia de `containsTherapyRecommendation`. |
 
 ### Escritura / acciones (W) — siempre con confirmación de la usuaria
 

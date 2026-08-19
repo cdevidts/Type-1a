@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { parsePositiveNumber } from '../format';
+import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
 import type { QuickRoute } from '../types';
 import { ModalShell } from './ModalShell';
@@ -52,7 +53,8 @@ export function NumericEntryModal({
     try {
       await onSubmit(route, parsed);
       onClose();
-    } catch {
+    } catch (error) {
+      logSaveError('NumericEntryModal.submit', error);
       setError('No se pudo guardar. Inténtalo otra vez.');
     } finally {
       setBusy(false);
