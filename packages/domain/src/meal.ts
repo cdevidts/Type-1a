@@ -6,8 +6,8 @@ import type {
   MealTotals,
 } from '@type1a/schemas';
 
-import { HIGH_THRESHOLD, HYPOGLYCEMIA_THRESHOLD } from './glucose-thresholds.js';
-import { convertGlucose } from './units.js';
+import { HIGH_THRESHOLD, HYPOGLYCEMIA_THRESHOLD } from './glucose-thresholds';
+import { convertGlucose } from './units';
 
 export function totalFoodEstimates(foods: readonly FoodEstimate[]): MealTotals {
   const totals = foods.reduce(
