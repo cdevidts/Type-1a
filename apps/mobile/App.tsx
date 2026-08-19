@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
-import { buildReportRows, latestLiveReading, type ReportRow } from '@type1a/domain';
+import { buildReportRows, latestLiveReading } from '@type1a/domain';
 import type {
   CGMProviderStatus,
   CGMReading,
@@ -105,7 +105,7 @@ import {
 } from './src/notifications';
 import { capillaryReminderTimes } from './src/format';
 import { colors, radius, spacing } from './src/theme';
-import type { PendingInsulinAssociation, QuickRoute, ReminderAlertStyle, TimelineEditPayload, TimelineItem } from './src/types';
+import type { PendingInsulinAssociation, QuickRoute, ReminderAlertStyle, ReportExport, TimelineEditPayload, TimelineItem } from './src/types';
 
 const EMPTY_PROFILE: TherapyProfile = {
   glucoseUnit: 'mg/dL',
@@ -397,7 +397,7 @@ function Type1AApp() {
     await loadLocalState();
   }
 
-  async function exportReport(range: { from: Date; to: Date }): Promise<ReportRow[]> {
+  async function exportReport(range: { from: Date; to: Date }): Promise<ReportExport> {
     const [readings, insulin, carbs, meals, activities, notes, vitals, hba1c] = await Promise.all([
       getCGMReadings(db, range.from, range.to),
       getInsulinEvents(db, range.from, range.to),
@@ -408,7 +408,10 @@ function Type1AApp() {
       getVitalsEvents(db, range.from, range.to),
       getHbA1cResults(db, range.from, range.to),
     ]);
-    return buildReportRows({ readings, insulin, carbs, meals, activities, notes, vitals, hba1c });
+    return {
+      readings,
+      rows: buildReportRows({ readings, insulin, carbs, meals, activities, notes, vitals, hba1c }),
+    };
   }
 
   async function updatePrivacy(show: boolean): Promise<void> {

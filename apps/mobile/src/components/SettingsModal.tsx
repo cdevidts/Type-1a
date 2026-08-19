@@ -3,17 +3,16 @@ import { File, Paths } from 'expo-file-system';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
-import * as XLSX from 'xlsx';
 
 import type { CGMProviderStatus, TherapyProfile } from '@type1a/schemas';
-import type { ReportRow } from '@type1a/domain';
 
 import { API_BASE_URL, connectFreestyleLibre } from '../api';
 import type { CapillaryReminderSettings, CorrectionReminderSettings, MySugrImportOutcome } from '../db';
-import { capillaryReminderTimes, formatMinutesAsClock, formatReportTimestamp, parseMinuteOffsets, parsePositiveNumber } from '../format';
+import { capillaryReminderTimes, formatMinutesAsClock, parseMinuteOffsets, parsePositiveNumber } from '../format';
 import { logSaveError } from '../log';
+import { reportHtml, reportWorkbookBytes } from '../reportExport';
 import { colors, radius, spacing } from '../theme';
-import type { ReminderAlertStyle } from '../types';
+import type { ReminderAlertStyle, ReportExport } from '../types';
 import { ModalShell } from './ModalShell';
 
 /**
@@ -28,58 +27,6 @@ const REPORT_RANGES: { label: string; days: number | null }[] = [
   { label: '90 días', days: 90 },
   { label: 'Todo', days: null },
 ];
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function reportHtml(rows: ReportRow[], rangeLabel: string): string {
-  const body = rows
-    .map((row) => `<tr>
-      <td>${escapeHtml(formatReportTimestamp(row.timestamp))}</td>
-      <td>${escapeHtml(row.kindLabel)}</td>
-      <td>${escapeHtml(row.detail)}</td>
-      <td>${escapeHtml(row.provenance)}</td>
-    </tr>`)
-    .join('');
-  return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8" />
-<style>
-  body { font-family: -apple-system, Helvetica, Arial, sans-serif; color: #17212B; padding: 24px; }
-  h1 { font-size: 18px; margin-bottom: 4px; }
-  p.range { color: #667784; font-size: 12px; margin-top: 0; margin-bottom: 16px; }
-  table { width: 100%; border-collapse: collapse; font-size: 11px; }
-  th, td { border-bottom: 1px solid #DCE5E9; padding: 6px 8px; text-align: left; vertical-align: top; }
-  th { background: #F4F7F8; font-weight: 700; }
-</style>
-</head>
-<body>
-  <h1>Type 1A — Reporte de registros</h1>
-  <p class="range">${escapeHtml(rangeLabel)} · generado ${escapeHtml(formatReportTimestamp(new Date().toISOString()))}</p>
-  <table>
-    <thead><tr><th>Fecha</th><th>Tipo</th><th>Detalle</th><th>Origen</th></tr></thead>
-    <tbody>${body}</tbody>
-  </table>
-</body>
-</html>`;
-}
-
-function reportWorkbookBytes(rows: ReportRow[]): Uint8Array {
-  const sheetData = [
-    ['Fecha', 'Tipo', 'Detalle', 'Origen'],
-    ...rows.map((row) => [formatReportTimestamp(row.timestamp), row.kindLabel, row.detail, row.provenance]),
-  ];
-  const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Reporte');
-  return XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as Uint8Array;
-}
 
 async function shareGeneratedFile(uri: string, mimeType: string): Promise<boolean> {
   if (!(await Sharing.isAvailableAsync())) return false;
@@ -183,7 +130,7 @@ export function SettingsModal({
   capillaryReminder: CapillaryReminderSettings;
   onSaveCapillaryReminder: (settings: CapillaryReminderSettings) => Promise<void>;
   /** Fase 9: reads the local history for a range and normalizes it to report rows — never generates the file itself, that stays here (UI-only concern). */
-  onExportReport: (range: { from: Date; to: Date }) => Promise<ReportRow[]>;
+  onExportReport: (range: { from: Date; to: Date }) => Promise<ReportExport>;
 }) {
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
@@ -390,12 +337,12 @@ export function SettingsModal({
     setReportMessage(null);
     try {
       const { from, to, label } = reportRangeWindow();
-      const rows = await onExportReport({ from, to });
-      if (rows.length === 0) {
+      const data = await onExportReport({ from, to });
+      if (data.rows.length === 0) {
         setReportMessage('No hay datos guardados en ese rango.');
         return;
       }
-      const { uri } = await Print.printToFileAsync({ html: reportHtml(rows, label) });
+      const { uri } = await Print.printToFileAsync({ html: reportHtml(data, label) });
       const shared = await shareGeneratedFile(uri, 'application/pdf');
       setReportMessage(shared ? null : 'PDF generado, pero este dispositivo no puede compartir archivos.');
     } catch (error) {
@@ -411,15 +358,15 @@ export function SettingsModal({
     setReportMessage(null);
     try {
       const { from, to } = reportRangeWindow();
-      const rows = await onExportReport({ from, to });
-      if (rows.length === 0) {
+      const data = await onExportReport({ from, to });
+      if (data.rows.length === 0) {
         setReportMessage('No hay datos guardados en ese rango.');
         return;
       }
       const file = new File(Paths.cache, `type1a-reporte-${Date.now()}.xlsx`);
       if (file.exists) file.delete();
       file.create();
-      file.write(reportWorkbookBytes(rows));
+      file.write(reportWorkbookBytes(data));
       const shared = await shareGeneratedFile(
         file.uri,
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

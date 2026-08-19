@@ -310,9 +310,9 @@ persistencia de datos de salud, o `packages/cgm`.
 | **6** | ✅ **Completada (2026-08-18).** `scheduleEpisodeNotifications` ahora recibe los offsets en vez de tenerlos hardcodeados; se guardan en `app_settings` (`getMealAlarmOffsets`/`saveMealAlarmOffsets`, default 60/120/180 min, el mayor del set marca "episodio listo"). Nuevo mecanismo separado para correcciones: `scheduleCorrectionReminder()`, opt-in (apagado por defecto), un solo recordatorio "revisa tu glucosa" tras registrar una corrección — **no calcula ni sugiere nada**, es solo un tap-to-open. Decisión de diseño deliberada: **sin botones de acción rápida** en esa notificación (a diferencia de la de acceso rápido), para no facilitar apilar una segunda dosis con un solo toque sin haber vuelto a mirar la app. Sección nueva "Alarmas" en Ajustes, con el mismo patrón `wasVisibleRef` de reset-solo-al-abrir que el resto del modal. | — |
 | **7** | Muestreo autónomo de glucosa (mínimo 10/día aunque el usuario no abra la app). **Aclaración 2026-08-18** (Verónica preguntó si esto ya pasaba, porque ve una lectura cada ~15 min): no, Type 1A no recolecta nada en segundo plano hoy — `App.tsx` solo llama `fetchCGMReadings` al montar y cuando `AppState` pasa a `'active'` (`App.tsx:162`), y no hay `BackgroundFetch`/`TaskManager`/cron en ningún lado del repo (verificado por grep en `apps/mobile` y `apps/api`). Lo que ella ve tiene dos explicaciones posibles según el proveedor activo: (a) si está en modo sintético, `MockCGMProvider.getReadings()` (`packages/cgm/src/mock.ts:28-39`) calcula una lectura determinística cada 5 minutos **al vuelo**, para cualquier rango de fechas pedido — no es una lectura "tomada", es una fórmula evaluada retroactivamente; (b) si tiene LibreLinkUp real conectado, el sensor Libre sube directo a la nube de LibreView cada ~15 min por su cuenta (infraestructura de Abbott, no de Type 1A) — el backend solo hace de proxy y pide lo que ya está guardado ahí cuando la app abre. En ambos casos, si la app estuviera cerrada varios días y la abrieras, verías el historial completo igual (viene de la fuente, no de que Type 1A lo haya ido guardando) — pero cualquier cosa que dependa de que Type 1A *reaccione* mientras está cerrada (alertas de glucosa alta/baja, Fase 10) sí necesita esta fase de verdad. **2026-08-18 (cont.) — primera implementación real**, motivada por el reclamo de Verónica de que la notificación fija ("widget") no servía si no se actualizaba: `apps/mobile/src/backgroundSync.ts` (nuevo) registra una tarea real con `expo-background-task`/`expo-task-manager` (`minimumInterval: 15` min — piso de Android, no garantía; el SO puede demorarlo más bajo Doze/ahorro de batería). Cada corrida trae CGM reciente y lo guarda local, y si la notificación de acceso rápido está activada, la reposta con datos frescos vía `postQuickEntryNotification()` (extraído de `notifications.ts`, comparte código con la ruta desde la UI). Se activa solo cuando el usuario prende esa notificación (persistido en `app_settings`), y `App.tsx` se auto-repara el registro en cada arranque por si el SO limpió el `WorkManager`. **Riesgo señalado por el `domain-safety-reviewer`, pendiente de probar en dispositivo real**: la tarea abre la base SQLite con `SQLite.openDatabaseAsync` directamente (no vía `SQLiteProvider`), y en Android un background task headless corre en una instancia JS separada de la app en primer plano — son dos conexiones SQLCipher independientes al mismo archivo cifrado, no una sola compartida. WAL ayuda pero no está probado que sea seguro bajo SQLCipher con dos conexiones concurrentes. **Antes de confiar en esto**: disparar la tarea manualmente mientras la app está en primer plano escribiendo una entrada, y confirmar que no hay corrupción ni pérdida silenciosa de datos. Investigar factibilidad real de background fetch en Expo/Android (hay límites del SO, puede necesitar caer a "al abrir/reanudar la app" como estrategia principal en vez de cron verdadero en segundo plano) antes de prometer una cadencia exacta. | — |
 | **8** | Chat de IA: endpoint nuevo en `apps/api` sobre RouteLLM, sin autenticación de por medio (el cliente manda el contexto histórico relevante en cada request, el backend sigue sin estado), guardrail extendido de `ai-safety.ts`, y todo lo que el chat "proponga" pasa por confirmación explícita del usuario antes de tocar SQLite — mismo patrón que ya existe en todo el resto de la app. | 1, 6 (para poder proponer recordatorios) |
-| **9** | ✅ **Completada (2026-08-19).** Reportes Excel/PDF, generados en el dispositivo (`expo-print` para PDF, `xlsx`/SheetJS para Excel, `expo-sharing` para compartir) para mantener el local-first. Ver detalle abajo. | 1, 2 |
+| **9** | ✅ **Completada (2026-08-19), reforzada (2026-08-19).** Reportes Excel/PDF, generados en el dispositivo (`expo-print` para PDF, `xlsx`/SheetJS para Excel, `expo-sharing` para compartir) para mantener el local-first. **Pedido explícito de Verónica**: la tabla original (una fila por lectura de glucosa) hacía que 7 días fueran ~11 páginas solo de glucosa — reemplazada por un gráfico diario. Ver detalle abajo. | 1, 2 |
 | **10** | Alertas de glucosa alta/baja por umbral. | 7 (necesita datos frescos aunque la app esté cerrada) |
-| **11** | Pantalla "Resumen": Time in Range real (agregado multi-día sobre `cgm_readings`, no el aproximado por-episodio que ya existe), HbA1c estimada (fórmula eA1c/GMI estándar, rotulada explícitamente como *estimada*, separada de la `HbA1cLabResultSchema` de laboratorio), y las demás métricas clínicas relevantes para T1D que se investiguen al llegar a esta fase (variabilidad/CV, promedio, eventos de hipo/hiperglucemia). | 1, 2, 7 |
+| **11** | 🟡 **Motor de cálculo completado e integrado al reporte (2026-08-19); pantalla "Resumen" en la app todavía no existe.** Time in Range real (agregado multi-día sobre `cgm_readings`), HbA1c estimada (fórmula GMI estándar, rotulada explícitamente como *estimada*, separada de la `HbA1cLabResultSchema` de laboratorio), variabilidad (CV%) y promedio — implementados en `summarizeGlucose()`/`estimateA1cFromMeanGlucose()` (`packages/domain/src/glucose-metrics.ts`) y ya consumidos por el reporte PDF/Excel de la Fase 9. Pendiente: exponerlos también como pantalla propia dentro de la app (no solo en el reporte exportado) y los eventos de hipo/hiperglucemia que la fase original también preveía. | 1, 2, 7 |
 | **12** | Capa de aprendizaje/insight adaptativo (ver el límite de seguridad arriba) — patrones descriptivos, nunca ajusta dosis. | 8, 11 |
 
 No se numeró por prioridad de negocio sino por dependencia técnica — el
@@ -329,10 +329,11 @@ a un control médico. Nada se sube a ningún servidor — coherente con
 - `packages/domain/src/report.ts` → `buildReportRows()`: puro y
   determinístico, sin IA ni red. Convierte los eventos ya guardados en filas
   de texto ordenadas cronológicamente. **A propósito no calcula nada**
-  (ni Time in Range, ni HbA1c estimada, ni ningún agregado clínico) — eso es
-  la Fase 11 ("Resumen"), y mezclarlo acá habría arriesgado presentar un
-  cálculo propio de la app junto a datos crudos sin la distinción que exige
-  AGENTS.md. Nunca colapsa `confirmedCarbsG`/`aiEstimatedCarbsG` de una
+  (ni Time in Range, ni HbA1c estimada, ni ningún agregado clínico) — eso
+  vive aparte, en `glucose-metrics.ts` (Fase 11, detalle más abajo), y
+  mezclarlo acá habría arriesgado presentar un cálculo propio de la app
+  junto a datos crudos sin la distinción que exige AGENTS.md. Nunca colapsa
+  `confirmedCarbsG`/`aiEstimatedCarbsG` de una
   comida en un solo número — ambos aparecen por separado en el detalle de la
   fila cuando están presentes. La procedencia de cada lectura de glucosa
   (`glucoseProvenance`) usa las mismas cuatro categorías que
@@ -346,16 +347,99 @@ a un control médico. Nada se sube a ningún servidor — coherente con
 - `apps/mobile/src/components/SettingsModal.tsx`: selector de rango (7/30/90
   días o "Todo" — reutiliza el patrón de chips `styleGrid`/`styleChip` que
   ya existía para el estilo de alerta de recordatorios, en vez de introducir
-  un control nuevo) + dos botones ("Exportar PDF"/"Exportar Excel"). El PDF
-  arma una tabla HTML (`expo-print`); el Excel arma un workbook con
-  `xlsx`/SheetJS y lo escribe con la API nueva de `expo-file-system`
-  (`File`/`Paths`, la misma que ya usa el importador de MySugr). Ambos se
-  comparten con `expo-sharing`. Sin datos → mensaje explícito en vez de
-  generar un archivo vacío.
+  un control nuevo) + dos botones ("Exportar PDF"/"Exportar Excel"). La
+  construcción del HTML/workbook vive en `apps/mobile/src/reportExport.ts`
+  (extraído del componente, ver más abajo). Ambos se comparten con
+  `expo-sharing`. Sin datos → mensaje explícito en vez de generar un archivo
+  vacío.
 - Sin selector de fecha nativo (no hay dependencia de date-picker en el
   repo todavía) — los cuatro rangos preestablecidos cubren el caso real
   (un tramo reciente para un control) sin agregar una dependencia solo para
   esto.
+
+### Rediseño (2026-08-19) — gráficos diarios en vez de tabla de glucosa
+
+**Pedido explícito de Verónica**, probando el reporte real: con CGM cada
+5–15 min, un rango de 7 días ya listaba ~2000 filas de glucosa — la tabla
+HTML original (`expo-print`) las paginaba en ~11 páginas ilegibles antes de
+llegar a nada más. Reescrito en `apps/mobile/src/reportExport.ts`:
+
+- La glucosa ya no es una fila por lectura. `groupReadingsByDay()` agrupa por
+  día calendario (hora local) y cada día se grafica como un SVG inline
+  (`dailyChartSvg()`) embebido en el HTML del PDF: eje X en horas (00:00 a
+  24:00, marcas cada 3h), banda sombreada en el rango objetivo 70–180 mg/dL,
+  punto por lectura coloreado según banda (mismo criterio de color que
+  `GlucoseChart.tsx` en la app: rojo/teal/naranjo), atenuado (`opacity 0.5`)
+  si es `origin:'imported'` — mismo tratamiento visual que ya usa el gráfico
+  en vivo, para no perder la distinción real/importado que exige AGENTS.md.
+  Como en `summarizeGlucose()`, las lecturas `origin:'synthetic'` se excluyen
+  del todo, no se dibujan ni atenuadas.
+  `expo-print` renderiza SVG embebido sin dependencias nuevas.
+  Insulina/carbohidratos/comidas/actividad/notas/vitales/HbA1c de
+  laboratorio siguen en una tabla debajo de los gráficos — mucho más corta
+  sin las filas de glucosa, y es de ahí que salía casi todo el volumen
+  original.
+- `apps/mobile/src/types.ts`: nuevo tipo `ReportExport = { rows, readings }`
+  — `App.tsx`'s `exportReport()` ahora devuelve también las `CGMReading[]`
+  crudas (ya las estaba consultando para `buildReportRows`), no solo las
+  filas aplanadas, porque el gráfico diario y el resumen de la Fase 11
+  necesitan la glucosa estructurada (valor + `sourceTimestamp` + `origin`),
+  no el string ya formateado que trae cada `ReportRow`.
+  `SettingsModal.tsx` quedó sin la construcción de HTML/workbook (movida a
+  `reportExport.ts`), solo orquesta rango → `onExportReport` → compartir.
+- El Excel también ganó una hoja "Resumen" (Fase 11) antes de la hoja
+  "Reporte" de siempre — el Excel nunca tuvo el problema de páginas (es
+  tabular por naturaleza), así que ahí la tabla de glucosa completa se
+  mantiene sin cambios; el gráfico diario es exclusivo del PDF.
+- Tests nuevos en `apps/mobile/src/reportExport.test.ts`: exclusión de
+  sintéticos en el conteo de puntos del SVG, atenuación de importados,
+  rótulo de HbA1c estimada siempre distinto del de laboratorio, hoja
+  "Resumen" del Excel con los mismos números.
+
+## Detalle de la Fase 11 (2026-08-19) — resumen clínico (TIR + HbA1c estimada)
+
+**Pedido explícito de Verónica**, en la misma corrida que el rediseño del
+reporte de la Fase 9: aprovechar para implementar la Fase 11 (Time in Range +
+HbA1c estimada) e incorporarla al reporte. Se hizo el motor de cálculo
+completo, pero **no** la pantalla "Resumen" independiente que la fase
+original describe — eso queda pendiente si se quiere ver esto también dentro
+de la app, no solo en el PDF/Excel exportado.
+
+- `packages/domain/src/glucose-metrics.ts` (nuevo) → `summarizeGlucose()`:
+  puro y determinístico, sin IA ni red, mismo patrón que `report.ts`. Agrega
+  sobre lecturas ya guardadas: Time in Range por banda ATTD/ADA (muy
+  bajo &lt;54, bajo 54–69, objetivo 70–180, alto 181–250, muy alto &gt;250
+  mg/dL — constantes nuevas en `glucose-thresholds.ts`), promedio,
+  desviación estándar, coeficiente de variación, y HbA1c **estimada** vía
+  `estimateA1cFromMeanGlucose()` (fórmula GMI de Bergenstal et al., Diabetes
+  Care 2018: `3.31 + 0.02392 × promedio_mg/dL`).
+- **Decisión de seguridad**: `summarizeGlucose()` excluye `origin:'synthetic'`
+  de todo el cálculo (no solo lo rotula — lo saca antes de promediar). Son
+  datos fabricados por `MockCGMProvider` para desarrollo; mezclarlos en un
+  promedio o TIR real corrompería silenciosamente el número mostrado, aunque
+  cada fila individual ya esté rotulada "Sintético" en la tabla de eventos.
+  `manual`, `imported` y `real` sí se incluyen — son glucosa efectivamente
+  medida. Si no queda ninguna lectura elegible, devuelve `null` en vez de un
+  resumen con ceros engañosos. 10 tests nuevos en
+  `packages/domain/test/glucose-metrics.test.ts`, revisado por
+  `domain-safety-reviewer` sin hallazgos.
+- **HbA1c estimada vs. de laboratorio**: dondequiera que se muestra el valor
+  de `summarizeGlucose()` dice explícitamente "HbA1c estimada (GMI)" con una
+  nota al pie citando la fórmula y aclarando que no reemplaza una medición de
+  laboratorio; una `HbA1cLabResultSchema` real, si existe en el rango, sigue
+  apareciendo por separado como "HbA1c (laboratorio)" en la tabla de eventos
+  del reporte (comportamiento de la Fase 9, sin cambios) — nunca se
+  colapsan en un solo número.
+- Con menos de 14 días de cobertura (`daysCovered`), el reporte muestra una
+  advertencia de cobertura limitada en vez de presentar la HbA1c estimada
+  como si fuera igual de confiable con 2 días que con 30 (consenso ADA/ATTD:
+  la fórmula GMI es más confiable con 14+ días de CGM continuo).
+- Integrado en `apps/mobile/src/reportExport.ts` (ver detalle de la Fase 9
+  arriba): sección "Resumen clínico" al inicio del PDF y hoja "Resumen" en
+  el Excel, antes de los gráficos diarios/tabla de eventos.
+- Pendiente real de la Fase 11 original: pantalla "Resumen" en la app (fuera
+  del flujo de exportar reporte) y conteo de eventos de hipo/hiperglucemia
+  como métrica aparte — no se hicieron en esta corrida.
 
 ## Diagnóstico de guardado (2026-08-19) — `logSaveError`
 

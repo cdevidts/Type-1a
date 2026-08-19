@@ -6,6 +6,18 @@ import type {
   MealEvent,
   NoteEvent,
 } from '@type1a/schemas';
+import type { ReportRow } from '@type1a/domain';
+
+/**
+ * Fase 9/11: what `exportReport` hands to `SettingsModal`. `readings` stays
+ * structured (not flattened into `rows`) so the report can build daily
+ * glucose charts and the Fase 11 clinical summary (Time in Range, HbA1c
+ * estimada) without re-fetching or re-parsing anything already loaded.
+ */
+export interface ReportExport {
+  rows: ReportRow[];
+  readings: CGMReading[];
+}
 
 export type QuickRoute = 'carbs' | 'rapid' | 'basal' | 'correction';
 

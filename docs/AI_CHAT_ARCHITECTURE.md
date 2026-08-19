@@ -13,7 +13,7 @@
 > IA". Si no se mantiene junto al código, el chat futuro nacerá ciego a la
 > mitad de la app.
 >
-> _Última actualización: 2026-08-18._
+> _Última actualización: 2026-08-19._
 
 ---
 
@@ -125,7 +125,8 @@ día es el objetivo del documento.
 | Métricas y análisis de un episodio de comida | `meal_episodes` vía `getTimeline`; `MealEpisodeMetrics` | El análisis es descriptivo, no prescriptivo. |
 | Parámetros de terapia + si están configurados | `getTherapyProfile`, `isTherapyConfigured` (db) | Solo mostrar; nunca proponer valores. |
 | Ajustes (alarmas, estilo de alerta, recordatorio capilar, privacidad) | `getMealAlarmOffsets`, `getCorrectionReminderSettings`, `getReminderAlertStyle`, `getCapillaryReminderSettings`, `getSetting` (db) | — |
-| Reporte tabular del historial en un rango (glucosa, insulina, carbos, comidas, actividad, notas, vitales, HbA1c) | `buildReportRows` (domain) + `getCGMReadings`/`getInsulinEvents`/`getCarbEvents`/`getMealEvents`/`getActivityEvents`/`getNoteEvents`/`getVitalsEvents`/`getHbA1cResults` (db) | Fase 9. Puro formato — sin TIR/HbA1c estimada (eso es la Fase 11); si el chat llega a ofrecer "arma un reporte", debe generar el PDF/Excel en el dispositivo igual que `SettingsModal`, nunca resumir los valores él mismo en prosa libre sin la guardia de `containsTherapyRecommendation`. |
+| Reporte tabular del historial en un rango (glucosa, insulina, carbos, comidas, actividad, notas, vitales, HbA1c) | `buildReportRows` (domain) + `getCGMReadings`/`getInsulinEvents`/`getCarbEvents`/`getMealEvents`/`getActivityEvents`/`getNoteEvents`/`getVitalsEvents`/`getHbA1cResults` (db) | Fase 9. Puro formato de eventos, sin agregados clínicos; si el chat llega a ofrecer "arma un reporte", debe generar el PDF/Excel en el dispositivo igual que `SettingsModal` (`apps/mobile/src/reportExport.ts`), nunca resumir los valores él mismo en prosa libre sin la guardia de `containsTherapyRecommendation`. |
+| Resumen clínico de glucosa: Time in Range por banda, promedio, variabilidad (CV%), HbA1c estimada (GMI) | `summarizeGlucose` (domain, `glucose-metrics.ts`) sobre `getCGMReadings` | Fase 11 (parcial — motor de cálculo + integrado al reporte PDF/Excel; **no** existe todavía una pantalla "Resumen" en la app). Excluye `origin:'synthetic'` del cálculo. El chat debe rotular la HbA1c siempre como "estimada (GMI)" y jamás mezclarla con `HbA1cLabResultSchema` (dato de laboratorio real) sin distinguirlas. |
 
 ### Escritura / acciones (W) — siempre con confirmación de la usuaria
 
@@ -148,6 +149,7 @@ día es el objetivo del documento.
 | Corrección sugerida (copiable) | `calculateCorrection` (domain) | Solo con parámetros ingresados; bloqueado si no configurados. |
 | Bolo de comida | `calculateMealBolus` (domain) | Requiere `carbRatio` ingresado; nunca inferido. |
 | Umbrales de glucosa, conversión de unidades, frescura | `glucose-thresholds`, `units`, `freshness` (domain) | Determinístico. |
+| HbA1c estimada a partir de un promedio de glucosa (GMI) | `estimateA1cFromMeanGlucose` (domain, `glucose-metrics.ts`) | Fórmula fija (Bergenstal et al. 2018), no un modelo — el chat puede mostrar el número pero nunca presentarlo como medición de laboratorio. |
 | Guardia anti-recomendación | `containsTherapyRecommendation` (domain) | Filtro obligatorio de toda salida del modelo. |
 
 ---

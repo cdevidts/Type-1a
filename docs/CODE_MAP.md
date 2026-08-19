@@ -77,10 +77,23 @@ docs/
   el historial ya guardado (glucosa, insulina, carbohidratos, comidas,
   actividad, notas, vitales, HbA1c) a filas de texto ordenadas
   cronológicamente para el reporte PDF/Excel exportable desde
-  `SettingsModal`. A propósito no agrega/calcula nada (TIR, HbA1c estimada —
-  eso es la Fase 11); nunca colapsa carbohidratos confirmados/estimados por
-  IA en un solo número; la procedencia de glucosa usa las mismas categorías
-  que `freshness.ts`/`glucoseOriginSuffix` de `db.ts`.
+  `SettingsModal`. A propósito no agrega/calcula nada (eso vive en
+  `glucose-metrics.ts`, abajo); nunca colapsa carbohidratos confirmados/
+  estimados por IA en un solo número; la procedencia de glucosa usa las
+  mismas categorías que `freshness.ts`/`glucoseOriginSuffix` de `db.ts`.
+- `glucose-metrics.ts` — Fase 11 (2026-08-19, motor de cálculo + integrado al
+  reporte; sin pantalla "Resumen" propia todavía): `summarizeGlucose()`
+  agrega Time in Range por banda ATTD/ADA (`glucose-thresholds.ts`),
+  promedio, desviación estándar, CV% y HbA1c **estimada** (`GMI`, fórmula de
+  Bergenstal et al. 2018, vía `estimateA1cFromMeanGlucose()`) sobre lecturas
+  ya guardadas. Excluye `origin:'synthetic'` de todo el cálculo (no solo la
+  rotula — la saca, porque es dato fabricado de desarrollo, no glucosa real
+  del usuario) y devuelve `null` si no queda ninguna lectura elegible. Nunca
+  confundir el resultado con `HbA1cLabResultSchema` (medición de
+  laboratorio real): dondequiera que se muestre debe decir "estimada" y
+  quedar visualmente separado. Consumido por
+  `apps/mobile/src/reportExport.ts` para el resumen clínico del reporte
+  PDF/Excel; candidato natural para una futura pantalla "Resumen" en la app.
 - `ai-safety.ts` — `containsTherapyRecommendation()`: filtro regex (español)
   que **rechaza** cualquier salida de IA que suene a consejo de dosis. Este es
   el guardrail técnico detrás de la regla "Never let an LLM calculate, infer,
@@ -216,8 +229,10 @@ docs/
   por tipo, ver `db.ts` arriba para qué es editable), `GlucoseCard`,
   `GlucoseChart`, `EntryModal`, `CorrectionModal`, `MealModal`,
   `InsulinAssociationModal`, `NumericEntryModal`, `SettingsModal` (incl.
-  sección "Reportes", Fase 9: exporta el historial local a PDF/Excel vía
-  `packages/domain`'s `buildReportRows`, `expo-print`, `xlsx`, y
+  sección "Reportes", Fase 9 + Fase 11: exporta el historial local a
+  PDF/Excel — construcción del HTML/SVG y del workbook vive en
+  `src/reportExport.ts` (no en el componente), vía `packages/domain`'s
+  `buildReportRows`/`summarizeGlucose`, `expo-print`, `xlsx`, y
   `expo-sharing` — todo generado y compartido en el dispositivo, nada sube a
   ningún servidor), `ModalShell` (shell común de modal). `EntryModal` es la entrada
   principal estilo MySugr (glucosa + comida + carbos + insulina + nota en
@@ -228,7 +243,19 @@ docs/
 - `src/theme.ts`, `src/format.ts` (incl. `parseMinuteOffsets` para las
   alarmas y `capillaryReminderTimes`/`parseClockToMinutes` para el
   recordatorio capilar, con tests en `format.test.ts`), `src/types.ts` (incl.
-  `TimelineEditPayload` y `ReminderAlertStyle`) — soporte de UI.
+  `TimelineEditPayload`, `ReminderAlertStyle` y `ReportExport`) — soporte de UI.
+- `src/reportExport.ts` — Fase 9 + Fase 11 (2026-08-19): arma el HTML/SVG del
+  PDF y el workbook del Excel exportables desde `SettingsModal`, a partir de
+  un `ReportExport` (`{ rows, readings }`, ver `types.ts`). Reemplazó la tabla
+  original de Fase 9 (una fila por lectura de glucosa — 7 días ya eran ~11
+  páginas) por un gráfico SVG por día (hora en X, banda 70–180 sombreada,
+  puntos coloreados por rango, atenuados si son `origin:'imported'`), más el
+  resumen clínico de la Fase 11 (`summarizeGlucose`, domain) al inicio del
+  reporte. `groupReadingsByDay()` excluye `origin:'synthetic'` igual que
+  `summarizeGlucose` — un reporte para el equipo médico no debe graficar
+  datos fabricados de desarrollo. Tests en `reportExport.test.ts` (incluye
+  los casos de seguridad: exclusión de sintéticos, HbA1c estimada vs. de
+  laboratorio nunca mezcladas).
 - `src/log.ts` — `logSaveError(context, error)`: cada modal de guardado
   (`EntryModal`, `MealModal`, `NumericEntryModal`, `CorrectionModal`,
   `SettingsModal`, `InsulinAssociationModal`) atrapa sus errores con un
