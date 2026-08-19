@@ -295,6 +295,15 @@ docs/
   desde que se escribieron. Antes de agregar un lugar nuevo que lea
   `.glucose` de un `CGMReading`, convertir siempre — no asumir que el
   proveedor activo siempre entrega mg/dL.
+- **Convención de imports en `packages/domain` (2026-08-19)**: los imports
+  relativos van **sin** extensión (`from './units'`, no `from './units.js'`).
+  `tsc`/`vitest` resuelven ambas formas igual, así que `pnpm verify` no
+  detecta el error — pero Metro (el bundler de EAS Build para `apps/mobile`)
+  sí lo necesita así, y un import con `.js` rompe el build de Android en la
+  fase "Bundle JavaScript" (`Unable to resolve module`). Pasó una vez en
+  `meal.ts`, ver `docs/ROADMAP_V0.2.md` § Fase 13, ítem 11. Antes de un build
+  real, `npx expo export:embed --eager --platform android --dev false` desde
+  `apps/mobile` reproduce el bundle localmente sin gastar cuota de EAS.
 - `src/theme.ts`, `src/format.ts` (incl. `parseMinuteOffsets` para las
   alarmas y `capillaryReminderTimes`/`parseClockToMinutes` para el
   recordatorio capilar, con tests en `format.test.ts`), `src/types.ts` (incl.

@@ -1074,6 +1074,25 @@ Se interpretaron una por una y ella confirmó cada una antes de agregarlas acá
       de este fix conservan los números viejos (posiblemente mal
       convertidos) — no se migraron datos retroactivamente, solo se
       corrigió el cálculo hacia adelante.
+    - **Casi rompe el build de Android**: los dos imports nuevos en
+      `meal.ts` se escribieron como `'./glucose-thresholds.js'` y
+      `'./units.js'` (con extensión `.js`), mientras que el resto de
+      `packages/domain` usa imports relativos sin extensión. `tsc` y
+      `vitest` resuelven ambas formas igual, así que `pnpm verify` pasó en
+      verde sin avisar nada — pero Metro (el bundler que usa EAS Build)
+      resuelve imports relativos contra el filesystem literal y no
+      reescribe `.js`→`.ts`, así que el build `2949f0b0-...` falló en la
+      fase "Bundle JavaScript" con `Unable to resolve module
+      ./glucose-thresholds.js`. Se detectó bajando y descomprimiendo
+      (brotli) el log real de EAS — el resumen `UNKNOWN_ERROR` de
+      `eas build:view` no decía nada útil. Fix: quitar la extensión
+      (`980d328`), y se verificó localmente *antes* de gastar otro build
+      corriendo el mismo comando que usa EAS
+      (`npx expo export:embed --eager --platform android --dev false`),
+      que reprodujo el bundle exitosamente (966 módulos). **Lección para
+      `packages/domain`**: nunca usar extensión `.js` en imports
+      relativos ahí — `pnpm verify` no lo va a atrapar, solo un build real
+      o un `expo export:embed --eager` local lo detecta.
 12. **Reorganizar `SettingsModal` en agrupaciones lógicas** (ej. Sincronizar
     dispositivos / Alarmas / Reportes), en vez de la lista larga y plana
     actual (CGM, conexión FreeStyle, privacidad, 3 tipos de alarma, terapia,
