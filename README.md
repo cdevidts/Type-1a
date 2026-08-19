@@ -46,4 +46,6 @@ Implementation references are recorded in [docs/RESEARCH_SOURCES.md](docs/RESEAR
 
 ## Builds
 
-`apps/mobile/eas.json` defines an internal Android APK profile (the Expo project root is `apps/mobile`, not the repo root — EAS resolves config relative to it). A signed binary requires an Expo account; EAS generates and manages the signing keystore remotely on first build. Secrets and signing files are intentionally absent from this repository.
+`apps/mobile/eas.json` defines an internal Android APK profile (the Expo project root is `apps/mobile`, not the repo root — EAS resolves config relative to it). A signed binary requires an Expo account.
+
+**Signing credentials are local, not EAS-managed** (`credentialsSource: "local"` in `eas.json`, `apps/mobile/credentials.json` + `apps/mobile/credentials/android/keystore.jks` — both gitignored, absent from this repository on purpose). This is deliberate: the app has real installs in the field, and Android refuses to install an update signed with a different key than what's already on the device — using the same keystore regardless of which EAS account/project builds it is what keeps future builds installable as updates instead of forcing a reinstall (data loss, since the app is local-first with no cloud backup). See `docs/ROADMAP_V0.2.md` § "Migración de cuenta EAS" for the full story, the exact keystore fingerprint, and — critically — what never to do with `eas credentials` on this project.

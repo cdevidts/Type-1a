@@ -870,6 +870,74 @@ log de Metro/Expo (o pedir un `adb logcat` si es el APK instalado) y pasar
 la línea `[type1a] EntryModal.save failed — ...` — con eso se puede
 diagnosticar la causa real y cerrar este bug en vez de solo instrumentarlo.
 
+## Migración de cuenta EAS (2026-08-19)
+
+**Pedido explícito de Verónica**: la cuenta Expo `cdevidts` agotó su cupo
+gratis de builds Android del mes (15/mes, resetea el 1 de septiembre).
+Se migró el proyecto a una cuenta nueva (`cris-devit`) para tener cupo
+propio, **preservando la misma llave de firma** — es la parte no negociable
+de esta migración: Android exige el mismo certificado de firma para tratar
+un APK nuevo como actualización de uno ya instalado, y esta app es
+local-first sin backup en la nube (`docs/adr/0001-local-first.md`), así que
+firmar con una llave distinta habría forzado desinstalar + reinstalar en
+cualquier teléfono con la app puesta, **borrando todo el historial de
+Verónica** sin forma de recuperarlo.
+
+### Qué cambió
+
+- `apps/mobile/app.json`: `owner` pasó de `cdevidts` a `cris-devit`,
+  `extra.eas.projectId` apunta al proyecto nuevo
+  (`05df8f63-7a23-40b1-96b8-4d40b33d3360` — el proyecto viejo,
+  `189f9b72-73be-4a79-9d7a-33090236bb36` bajo `cdevidts`, sigue existiendo
+  pero ya no se usa; no se borró).
+- `apps/mobile/eas.json`: los perfiles `preview` y `production` de Android
+  llevan `"credentialsSource": "local"` — dejan de usar el keystore
+  auto-gestionado por EAS y usan el que apunta `credentials.json`.
+- El keystore real (`apps/mobile/credentials/android/keystore.jks`) y sus
+  contraseñas (`apps/mobile/credentials.json`) están **gitignored a
+  propósito** (`*.jks` y `credentials.json` en `apps/mobile/.gitignore`) —
+  nunca deben llegar a un commit. Se sacaron del proyecto viejo con
+  `eas credentials` (menú: "Credentials.json: Upload/Download..." →
+  "Download credentials from EAS to credentials.json") y se verificaron
+  **antes** de usarlos, comparando el fingerprint SHA-256 del certificado
+  contra el del APK ya instalado (`3D:42:7A:25:E7:93:A8:E0:34:31:0E:A5:41:
+  7C:7F:92:CF:33:DE:23:BD:E3:85:24:4E:E1:47:9F:E7:94:62:33`) — coincidencia
+  exacta, confirmando de forma independiente que es la llave de producción
+  real, no algo mal copiado.
+- Ambos proyectos EAS tienen la variable `EXPO_PUBLIC_API_BASE_URL` con el
+  mismo valor (`https://237e8b7f1.abacusai.cloud`) en el entorno `preview`.
+- **`eas init` agregó permisos de Android no pedidos** (`READ/WRITE_
+  EXTERNAL_STORAGE`, `INTERNET`) al vincular el proyecto — efecto colateral
+  del comando, no un cambio deliberado. Se revirtieron antes de confirmar
+  nada; quedó solo `CAMERA`/`POST_NOTIFICATIONS`, como estaba.
+
+### ⚠️ Para cualquier corrida futura que toque `apps/mobile` o EAS
+
+- **Nunca corras `eas credentials` en este proyecto y elijas "Set up a new
+  keystore" / "Generate a new Android Keystore".** Regeneraría la llave y
+  volvería a poner a Verónica en la misma disyuntiva (perder el historial o
+  no poder actualizar), esta vez sin vuelta atrás.
+- `credentials.json` y `credentials/android/keystore.jks` **no viven en
+  git** — son solo del árbol de trabajo local. Un checkout nuevo, en un
+  entorno nuevo, **no los va a tener**, y el build va a fallar hasta que se
+  reprovisionen. Para reprovisionarlos: repetir la descarga con
+  `eas credentials` bajo la cuenta que los tenga configurados (hoy,
+  cualquiera de las dos cuentas ya tiene el mismo keystore como managed o
+  local), y volver a verificar el fingerprint contra un APK ya instalado
+  antes de confiar en el archivo.
+- **Pendiente, no bloqueante**: subir este mismo keystore como credencial
+  *administrada por EAS* en el proyecto de `cris-devit` (menú inverso:
+  "Upload credentials from credentials.json to EAS servers"), para que un
+  entorno nuevo no dependa de tener el archivo local. No se hizo en esta
+  corrida a propósito — es un asistente interactivo (`eas credentials` no
+  tiene modo `--non-interactive` para esto, confirmado con `--help`), y
+  automatizarlo a ciegas sobre una llave de producción real es exactamente
+  el tipo de riesgo que esta migración estaba tratando de evitar. Si se
+  hace, que sea con alguien mirando cada paso del menú.
+- El primer build de la cuenta nueva se disparó para validar justamente
+  esto (que instale como actualización, sin pedir desinstalar). Confirmarlo
+  en un dispositivo real antes de asumir que la migración quedó cerrada.
+
 ## Verificación por fase
 
 - `pnpm verify` (lint + typecheck + test) antes de cerrar cualquier fase.
