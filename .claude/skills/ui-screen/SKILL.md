@@ -1,10 +1,20 @@
 ---
 name: ui-screen
-description: Design or review any Type 1A mobile screen, modal, or chart so it matches the app's real design system instead of inventing a parallel one. Use whenever building or changing anything under apps/mobile/src/components, adding a chart or data visualization, choosing colors for glucose/insulin/carb data, or when the user asks for a screen to look "professional", "clear", "comfortable", or "like MySugr/Clarity".
+description: Design or review any Type 1A mobile screen, modal, or chart so it matches the app's real design system instead of inventing a parallel one. Use whenever building or changing ANY file under apps/mobile/src/components, App.tsx, or any .tsx with JSX — even when the run's main task isn't UI-focused (a data fix, a backend-adjacent task) but incidentally touches a component. Also use when adding a chart or data visualization, choosing colors for glucose/insulin/carb data, or when the user asks for a screen to look "professional", "clear", "comfortable", or "like MySugr/Clarity".
 ---
 
 Construir o revisar una pantalla de `apps/mobile` sin reinventar el sistema de
 diseño ni la paleta.
+
+**Prioridad (2026-08-19, pedido explícito de Verónica): esta skill no es
+exclusiva de tareas de UI declaradas.** Si el cambio toca un `.tsx` con JSX
+por cualquier motivo, se invoca esta skill antes de escribir el cambio —
+aunque el pedido de la corrida haya sido otra cosa (un fix de datos, algo
+de backend que de paso roza un modal). No hay una skill de terceros más
+específica para React Native disponible en el marketplace (se buscó
+explícitamente); esta y `dataviz` son lo más afinado que hay, así que la
+disciplina está en invocarlas siempre que corresponda, no en sumar más
+herramientas.
 
 ## 0. Antes de escribir una línea de UI
 

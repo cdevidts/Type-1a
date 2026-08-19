@@ -22,6 +22,20 @@ Human Interface Guidelines y buenas prácticas de apps de salud a reglas
 concretas contra el código real del repo. No es opcional para features de UI
 nuevas ni para revisiones de pantallas existentes.
 
+**Jerarquía explícita (2026-08-19, pedido explícito de Verónica):**
+`/ui-screen` (y, dentro de ella, la skill global `dataviz` cuando aplica) se
+invoca **siempre** que una corrida toque cualquier archivo bajo
+`apps/mobile/src/components/`, `App.tsx`, o cualquier `.tsx` con JSX —
+**incluso cuando el pedido original de la corrida no es una tarea de UI**
+(ej. un fix de datos que de paso toca un componente, una corrida enfocada en
+backend que termina tocando un modal). No es una skill exclusiva de la Fase
+13 ni de features nuevas: es la que gobierna *cualquier* toque a interfaz,
+todo el tiempo. Se buscaron skills de terceros para reforzar esto (formularios,
+onboarding, revisión de layout React Native) — no existe ninguna más
+específica en el marketplace hoy; `/ui-screen` + `dataviz` son lo más
+afinado disponible, así que la disciplina recae en invocarlas siempre, no en
+sumar herramientas.
+
 ## Cómo navegar el repo
 
 Este es un monorepo pnpm (`apps/api`, `apps/mobile`, `packages/domain`,

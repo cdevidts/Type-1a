@@ -314,7 +314,7 @@ persistencia de datos de salud, o `packages/cgm`.
 | **10** | Alertas de glucosa alta/baja por umbral. | 7 (necesita datos frescos aunque la app esté cerrada) |
 | **11** | ✅ **Completada (2026-08-19).** Pantalla "Resumen" con tres sub-páginas (Días / Métricas / Comidas), abierta desde el botón ◔ de la barra superior. Time in Range real por las cinco bandas de consenso, HbA1c estimada (GMI, rotulada como *estimada* y separada de la `HbA1cLabResultSchema` de laboratorio), variabilidad (CV%), promedio, gráficos diarios y día promedio ponderado en formato AGP con selector de 7/14/30/90 días. Motor en `glucose-metrics.ts` + `agp.ts`; todo también incorporado al reporte PDF/Excel. Ver detalle abajo. | 1, 2, 7 |
 | **12** | 🟡 **Parte descriptiva completada (2026-08-19)**, en la sub-página "Comidas" del Resumen: patrones por franja horaria (`nutrition-insights.ts`) — promedio de carbohidratos confirmados e insulina por franja, y % de dosis rápidas seguidas de una lectura en rango a 1/2/3 h, con mínimo de muestra y advertencia de que es observacional. Pendiente el resto de la fase: insights conversacionales//adaptativos vía el chat (depende de la Fase 8). Nunca ajusta dosis. | 8, 11 |
-| **13** | Bugs de interfaz de la pantalla "Resumen" encontrados por Verónica probando el build real en el dispositivo (2026-08-19) — ver detalle abajo. No se tocaron en esta corrida a pedido explícito de Verónica ("en esta corrida quiero que revises exclusivamente lo del backend"). | 11 |
+| **13** | Bugs de interfaz de la pantalla "Resumen" + notas de mejora de Verónica (WhatsApp, 18-19/8) encontrados probando el build real en el dispositivo (2026-08-19) — ver detalle abajo. Interpretaciones confirmadas por Verónica; **todavía sin tocar código** — pendiente de que ella apruebe la ruta de trabajo antes de empezar. | 11 |
 
 No se numeró por prioridad de negocio sino por dependencia técnica — el
 orden de ejecución real se acuerda con Verónica fase por fase, no se asume.
@@ -998,6 +998,85 @@ no tenga que re-investigar desde cero.
    existe en el código. Antes de tocar nada: reproducir con el Metro log o
    un `adb logcat` abierto (mismo patrón que el bug de guardado anotado más
    abajo) para capturar el stack trace real en vez de adivinar la causa.
+
+### Notas de WhatsApp de Verónica (18-19/8), interpretaciones confirmadas
+
+Verónica escribió estas notas antes de ver la pantalla Resumen terminada.
+Se interpretaron una por una y ella confirmó cada una antes de agregarlas acá
+— quedan con la lectura ya validada, no una hipótesis mía.
+
+6. **Alarmas a voluntad vía el chat de IA.** No es una feature suelta para
+   construir ahora: es una capacidad que el chat de la Fase 8 tiene que
+   poder ofrecer — que la usuaria le pida en lenguaje natural un
+   recordatorio a medida, en vez de limitarse a los 3 tipos de alarma fija
+   que ya existen (post-comida, corrección, capilar). Ya está anotado como
+   capacidad de escritura (W) en `docs/AI_CHAT_ARCHITECTURE.md` §3
+   ("Programar/ajustar alarmas y recordatorios") — este ítem es el
+   recordatorio de que ese catálogo tiene que cubrir alarmas *a medida*, no
+   solo las 3 fijas, cuando se implemente el chat.
+7. **Seguimiento nutricional más allá de carbohidratos.** `MealEventSchema`
+   ya tiene `proteinG`/`fatG`/`fiberG`/`caloriesKcal`, pero ningún flujo de
+   registro los pide ni ninguna pantalla los muestra. Construir: campos en
+   el registro de comida (`EntryModal`/`MealModal`) y sumarlos como
+   dimensión de los insights alimentarios de la pestaña Comidas del Resumen
+   (hoy solo mira carbohidratos e insulina).
+8. **Registro de mediciones de cetonas.** `VitalsEventSchema` ya tiene
+   `ketonesMmolL` y aparece en el reporte PDF/Excel, pero no hay ningún
+   punto de entrada en la app para cargarlas — hoy solo llegan si vienen de
+   una importación de MySugr. Construir un flujo de registro real (atajo
+   de un dato, como Carbos/Rápida/Basal, o un campo dentro de "Nueva
+   entrada"). Relevante para riesgo de cetoacidosis, no es un "nice to
+   have" cosmético.
+9. **Marcas de hora en el gráfico principal** (pantalla de inicio,
+   `GlucoseCard`/`GlucoseChart.tsx` — **no** los gráficos nuevos del
+   Resumen, que ya las tienen). Hoy `GlucoseChart.tsx` solo dibuja línea +
+   etiqueta en los **cambios de día**, no hay marcas de hora dentro de un
+   mismo día. Agregar grilla/etiquetas de hora intradía, mismo criterio
+   visual que ya se usó en `SummaryCharts.tsx` (grilla recesiva, marcas
+   cada pocas horas).
+10. **Flujo de configuración inicial (onboarding), empezando por unidad de
+    glucosa** (mg/dL vs. mmol/L). `TherapyProfile.glucoseUnit` ya existe en
+    el modelo de datos pero nada la pregunta en el primer uso — queda en el
+    default hasta que alguien la encuentre en Ajustes. Construir una
+    pantalla de primer uso real (unidad de glucosa como primer campo, y
+    evaluar si conviene sumar ahí los demás parámetros de terapia).
+11. **Bug real encontrado a raíz de la nota anterior — unidades
+    inconsistentes en el resumen de "Episodio de comida listo".** Con la
+    app configurada en mg/dL, el resumen que genera la IA después de
+    confirmar la insulina de una comida (el texto tipo "te partió en X y
+    alcanzó un máximo de Y, 25 minutos después") mostró los valores en
+    mmol/L. Investigado (sin arreglar) hasta la causa más probable:
+    - `MealEpisodeMetricsSchema` (`packages/schemas/src/index.ts`) **no
+      tiene ningún campo de unidad** — `startingGlucose`/`glucose60`/
+      `glucose120`/`glucose180`/`peakGlucose`/`minGlucose` son solo
+      números.
+    - `calculateMealEpisodeMetrics` (`packages/domain/src/meal.ts:114-117`)
+      copia `reading.glucose` tal cual desde el `CGMReading` de origen, sin
+      pasar por `convertGlucose` — si esa lectura llegó con
+      `unit:'mmol/L'` (el schema lo permite por lectura), el número mmol/L
+      queda guardado sin ninguna etiqueta de a qué unidad corresponde.
+    - `glucoseInsightSystemPrompt` (`packages/ai/src/prompts.ts:17-19`) —
+      el prompt que arma el resumen — **nunca menciona la unidad** al
+      modelo. Sin esa información, el modelo tiene que inventar qué unidad
+      poner en el texto en español, y probablemente por sesgo de
+      entrenamiento (mmol/L es el estándar clínico internacional) eligió
+      esa aunque los números fueran otra cosa.
+    - Fix probable, no confirmado: (a) que `calculateMealEpisodeMetrics`
+      convierta siempre a `TherapyProfile.glucoseUnit` de la usuaria antes
+      de guardar las métricas (consistente con cómo ya se comporta el
+      resto de la app), y (b) que el prompt de `glucoseInsightSystemPrompt`
+      reciba y declare explícitamente la unidad, para que el texto generado
+      nunca tenga que adivinarla. Cualquier cambio acá pasa por
+      `domain-safety-reviewer` (toca `packages/domain` y el prompt de IA) y
+      necesita test nuevo — es justo el tipo de bug de unidades que puede
+      llevar a leer mal un valor de glucosa.
+12. **Reorganizar `SettingsModal` en agrupaciones lógicas** (ej. Sincronizar
+    dispositivos / Alarmas / Reportes), en vez de la lista larga y plana
+    actual (CGM, conexión FreeStyle, privacidad, 3 tipos de alarma, terapia,
+    importar MySugr, reportes). Antes de tocarlo, invocar `/ui-screen` —
+    afecta directamente el punto 3 (botones tapados por la barra de
+    estado) y probablemente el punto 2 (scroll cortado) de la lista de
+    arriba, así que conviene resolverlos juntos.
 
 ## Verificación por fase
 
