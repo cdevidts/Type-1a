@@ -13,7 +13,7 @@
 > IA". Si no se mantiene junto al código, el chat futuro nacerá ciego a la
 > mitad de la app.
 >
-> _Última actualización: 2026-08-19 (pantalla Resumen: AGP + patrones por franja)._
+> _Última actualización: 2026-08-19 (pantalla Resumen: AGP + patrones por franja; §2.1 mecanismo de implementación en Abacus)._
 
 ---
 
@@ -106,6 +106,76 @@ Decisiones clave:
    sugerir una dosis, se bloquea y se degrada a "esto lo decides con tu equipo
    clínico / usa la calculadora con tus parámetros".
 
+### 2.1 Mecanismo de implementación en Abacus: API directa, no agente entrenado en su plataforma (2026-08-19)
+
+**Pedido explícito de Verónica**: investigar cuál es la mejor práctica de
+Abacus para este chat — ¿entrenar/configurar un agente dentro de Abacus
+(Agent Studio/ChatLLM Teams) y llamarlo, o basta con API directa +
+rigurosidad de código de este repo?
+
+**Lo que se pudo verificar** (código real de este repo, ya funcionando en
+producción):
+
+- `packages/ai/src/abacus.ts` (`AbacusRouteLLMClient`) ya llama
+  `https://routellm.abacus.ai/v1` directo, con `response_format:
+  json_schema` estricto — RouteLLM es un router multi-modelo compatible con
+  la forma de la API de OpenAI (`messages`, `choices[].message.content`,
+  selección de `model`), y esto ya está probado en producción para
+  `meal-analysis`/`glucose-insight` (`AbacusMealVisionService`,
+  `AbacusGlucoseInsightService`).
+- Abacus además ofrece, como productos separados dentro de la misma
+  suscripción ChatLLM: **ChatLLM Teams** (chatbots/agentes armados dentro
+  de su UI, pensados para conectarse a sistemas internos tipo Slack/Google
+  Drive/Confluence) y **Agent Studio/AI Agents** (agentes de negocio que
+  "acceden a fuentes de datos, deciden en tiempo real, ejecutan código").
+
+**Lo que NO se pudo verificar** (queda pendiente, ver más abajo): las
+páginas públicas de marketing y las FAQ de RouteLLM/ChatLLM no exponen
+documentación técnica real (soporte de `tools`/function-calling estilo
+OpenAI, streaming, límites de tasa, si un agente configurado en su Agent
+Studio puede invocar funciones arbitrarias de un backend propio en vez de
+solo sus integraciones nativas) — esa documentación vive detrás de login en
+su panel, no accesible sin una cuenta con acceso.
+
+**Recomendación, con la evidencia disponible**: seguir con **API directa
+desde `apps/api`** (extender `AbacusRouteLLMClient` con un bucle de tool
+use propio), **no** un agente entrenado/configurado dentro de la UI de
+Abacus. Razones:
+
+1. **Auditable en git.** Todo el modelo de seguridad de este repo
+   (`containsTherapyRecommendation`, validación Zod, tests de
+   `domain-safety-reviewer`) asume que el prompt, las herramientas
+   declaradas y la validación de salida son **código en este repo**,
+   revisable y testeable con `pnpm verify`. Un agente configurado dentro
+   del panel de Abacus movería esa lógica a una UI de terceros, fuera de
+   git, sin test, sin `pnpm verify`, sin diff para revisar — exactamente lo
+   opuesto al patrón de seguridad que ya existe para `meal-analysis`/
+   `glucose-insight`.
+2. **Encaje de producto.** ChatLLM Teams/Agent Studio están armados para
+   conectar Abacus a sistemas SaaS externos *desde su propia interfaz de
+   chat* — no hay evidencia (en la documentación pública) de que sirvan
+   para que una **app móvil propia** les pase herramientas custom que
+   ejecutan contra SQLite local cifrado del dispositivo. El caso de uso de
+   Type 1A (herramientas que leen/escriben `db.ts` en el teléfono, con
+   confirmación de la usuaria) encaja con el patrón "yo declaro las
+   herramientas, yo las ejecuto, el modelo solo decide cuál llamar" — que
+   es exactamente lo que ya hace `AbacusRouteLLMClient` con `json_schema`.
+3. Ya hay un patrón probado y en producción (`abacus.ts`) que solo hay que
+   extender con `messages` tipo conversación + declaración de herramientas,
+   en vez de aprender/mantener un segundo sistema de configuración (el
+   panel de Abacus) en paralelo al código.
+
+**Bloqueante real antes de arrancar la Fase 8**: confirmar contra la
+documentación autenticada de Abacus (`routellm-apis.abacus.ai`, sección de
+API reference, requiere login) que RouteLLM soporta un parámetro `tools`/
+function-calling estilo OpenAI en `/chat/completions`. Si no lo soporta,
+el bucle de tool use hay que armarlo a mano (pedirle al modelo que devuelva
+un JSON con `{tool, args}` usando el mismo `json_schema` estricto que ya
+usa `abacus.ts`, y parsear eso en vez de un campo `tool_calls` nativo) — es
+más código pero el mismo patrón ya probado, no una alternativa impracticable.
+Quien tenga acceso al panel de Abacus debería confirmar esto y actualizar
+esta sección con el resultado, antes de que la Fase 8 escriba código real.
+
 ---
 
 ## 3. Catálogo de capacidades que el chat debe alcanzar
@@ -182,3 +252,14 @@ correspondiente con sus propios parámetros.
 - Política de contexto: cuánto timeline resumir y cómo, sin subir todo.
 - Telemetría de rechazos del guardia de seguridad (para verificar que el filtro
   efectivamente se dispara).
+- **Confirmar soporte de `tools`/function-calling en la API autenticada de
+  RouteLLM** (ver §2.1) — bloqueante antes de escribir el bucle de tool use
+  real.
+- **Si en algún momento una tarea de esta fase requiere hacer algo en el
+  panel de Abacus (ChatLLM/DeepAgent/Agent Studio)** — no solo consultar su
+  documentación, sino configurar/ejecutar algo ahí —, esa tarea necesita su
+  propio documento con el paso a paso exacto y el prompt textual a pegar,
+  mismo patrón que ya existe para el redeploy del backend
+  (`docs/DEEPAGENT_REDEPLOY_PROMPT.md`). No improvisar esos pasos en el
+  momento ni dejarlos solo en el chat de una corrida — igual que el prompt
+  de redeploy, tienen que quedar preparados de antemano y reutilizables.
