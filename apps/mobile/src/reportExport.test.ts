@@ -146,7 +146,7 @@ describe('reportWorkbookBytes', () => {
       .flat()
       .join(' | ');
     expect(text).toContain('Type 1A nunca calcula ni recomienda insulina.');
-    expect(text).toContain('En rango 1 h');
+    expect(text).toContain('Glucosa a 1 h');
   });
 
   it('notes when there is no glucose to summarize', () => {

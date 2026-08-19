@@ -467,6 +467,13 @@ async function writeMealWithEpisode(db: SQLiteDatabase, meal: MealEvent, entryGr
     parsed.createdAt,
   );
   if (parsed.confirmedCarbsG !== undefined) {
+    // El CarbEvent comparte timestamp con el MealEvent a propósito, y ese
+    // timestamp compartido es load-bearing en tres lugares que emparejan
+    // ambas filas por él: `updateCarbEvent`, `deleteMealEventRows` y
+    // `buildNutritionInsights` (packages/domain), que lo usa para no contar
+    // dos veces el mismo plato en el promedio de carbohidratos por franja.
+    // Si alguna vez se permite editar la HORA de una comida, hay que mover
+    // también su fila de carbohidratos o los tres se rompen juntos.
     await saveCarbEvent(db, {
       id: Crypto.randomUUID(),
       timestamp: parsed.timestamp,

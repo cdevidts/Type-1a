@@ -339,8 +339,8 @@ function FoodTab({ insights, rangeDays }: { insights: MealWindowInsight[]; range
   return (
     <View>
       <Text style={styles.tabIntro}>
-        Qué sueles comer y ponerte en cada franja del día, y con qué frecuencia tu glucosa quedó en rango
-        objetivo 1, 2 y 3 horas después de una dosis rápida.
+        Qué sueles comer y ponerte en cada franja del día, y dónde estaba tu glucosa 1, 2 y 3 horas después
+        de una dosis rápida — por debajo, dentro o por encima del rango objetivo.
       </Text>
 
       {insights.map((window) => (

@@ -313,7 +313,7 @@ function nutritionSectionHtml(insights: MealWindowInsight[]): string {
   return `<table>
     <thead><tr>
       <th>Franja</th><th class="num">Carbos confirmados</th><th class="num">Rápida</th><th class="num">Basal</th>
-      <th class="num">En rango 1 h</th><th class="num">2 h</th><th class="num">3 h</th>
+      <th class="num">Glucosa a 1 h</th><th class="num">a 2 h</th><th class="num">a 3 h</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>
@@ -429,7 +429,7 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
     return `en rango ${found.inTargetPct.toFixed(0)}% / bajo ${found.belowTargetPct!.toFixed(0)}% / alto ${found.aboveTargetPct!.toFixed(0)}% (n=${found.sampleSize})`;
   };
   const patternsSheetData: (string | number)[][] = [
-    ['Franja', 'Horario', 'Carbos confirmados prom. (g)', 'Rápida prom. (U)', 'Basal prom. (U)', 'En rango 1 h', 'En rango 2 h', 'En rango 3 h'],
+    ['Franja', 'Horario', 'Carbos confirmados prom. (g)', 'Rápida prom. (U)', 'Basal prom. (U)', 'Glucosa a 1 h', 'Glucosa a 2 h', 'Glucosa a 3 h'],
     ...insights.map((w) => [
       w.label,
       `${String(w.startHour).padStart(2, '0')}:00-${String(w.endHour % 24).padStart(2, '0')}:00`,
