@@ -34,7 +34,12 @@
  * - BMR: ecuación de Mifflin-St Jeor (1990), la más precisa para adultos no
  *   atletas frente a calorimetría indirecta.
  * - Reparto de carbohidratos: ISPAD recomienda 45–50 % de la energía total en
- *   diabetes tipo 1. Se usa el 50 % y la grasa queda como resto acotado.
+ *   diabetes tipo 1. Se **apunta** al 50 % y la grasa queda como resto
+ *   acotado a [20 %, 35 %]. Ojo: cuando ese acotado muerde, la diferencia se
+ *   compensa con carbohidratos, así que el valor entregado puede subir hasta
+ *   ~55 % en perfiles de peso muy bajo. Cualquier texto de interfaz debe
+ *   mostrar el porcentaje **calculado**, no repetir "50 %" como si fuera
+ *   fijo — se prometía un número y se entregaba otro.
  * - Déficit y pisos: guía general de pérdida de peso segura (0,5–1 kg/semana),
  *   recortada al extremo conservador por lo dicho arriba.
  */
@@ -77,6 +82,21 @@ export const CALORIE_FLOOR_MALE = 1500;
 export const CARB_ENERGY_FRACTION = 0.5;
 const PROTEIN_G_PER_KG_MAINTAIN = 1.2;
 const PROTEIN_G_PER_KG_DEFICIT = 1.6;
+/**
+ * Techo de proteína como fracción de la energía, dentro del AMDR (10–35 %).
+ *
+ * Sin esto, la proteína por kilo aplasta a los carbohidratos en personas de
+ * peso alto: un perfil de 200 kg en déficit daba 320 g de proteína —el 69 % de
+ * la energía— y dejaba los carbohidratos en **11 %** (50 g al día). Eso es una
+ * dieta muy baja en carbohidratos, que en diabetes tipo 1 y sin supervisión
+ * clínica es riesgo de hipoglucemia: no algo que la app pueda proponer sola.
+ *
+ * El valor es 30 % y no menos a propósito: tiene que morder **solo** en los
+ * perfiles extremos. A 25 % ya recortaba la proteína de un perfil corriente
+ * (70 kg en déficit necesita 112 g, y el techo lo bajaba a 106 g), anulando
+ * sin querer la regla de la ADA sobre cuidar la masa magra.
+ */
+const MAX_PROTEIN_ENERGY_FRACTION = 0.3;
 const MIN_FAT_ENERGY_FRACTION = 0.2;
 const MAX_FAT_ENERGY_FRACTION = 0.35;
 
@@ -152,7 +172,9 @@ export function calculateNutritionTargets(input: NutritionProfileInput): Nutriti
   // protege la masa magra, y un porcentaje de una dieta baja en calorías da
   // muy poca proteína justo cuando más hace falta.
   const proteinPerKg = input.goal === 'lose' ? PROTEIN_G_PER_KG_DEFICIT : PROTEIN_G_PER_KG_MAINTAIN;
-  const proteinG = Math.round(input.weightKg * proteinPerKg);
+  const proteinG = Math.round(
+    Math.min(input.weightKg * proteinPerKg, (caloriesKcal * MAX_PROTEIN_ENERGY_FRACTION) / KCAL_PER_G_PROTEIN),
+  );
   const proteinKcal = proteinG * KCAL_PER_G_PROTEIN;
 
   let carbKcal = caloriesKcal * CARB_ENERGY_FRACTION;

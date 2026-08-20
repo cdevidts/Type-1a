@@ -126,7 +126,7 @@ describe('reportWorkbookBytes', () => {
     ];
     const bytes = reportWorkbookBytes({ readings, rows: [labRow()], insulin: [], carbs: [], meals: [], unreadableCount: 0 });
     const workbook = XLSX.read(bytes, { type: 'array' });
-    expect(workbook.SheetNames).toEqual(['Resumen', 'Patrones', 'Reporte']);
+    expect(workbook.SheetNames).toEqual(['Resumen', 'Patrones', 'Grasa y proteína', 'Reporte']);
 
     const resumenRows = XLSX.utils.sheet_to_json<string[]>(workbook.Sheets.Resumen!, { header: 1 });
     const resumenText = resumenRows.flat().join(' | ');

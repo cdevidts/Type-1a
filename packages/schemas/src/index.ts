@@ -63,7 +63,20 @@ export type CGMProviderStatus = z.infer<typeof CGMProviderStatusSchema>;
  */
 export const NutritionProfileSchema = z.object({
   sex: z.enum(['female', 'male']),
-  ageYears: z.number().int().min(12).max(110),
+  /**
+   * **18 años como mínimo, a propósito.** Mifflin-St Jeor es una ecuación de
+   * adultos y subestima el requerimiento de un adolescente en crecimiento; los
+   * pisos de 1200/1500 kcal también son adultos, así que en un menor no
+   * muerden nunca y un déficit de 500 kcal pasaba sin ninguna advertencia.
+   *
+   * Y hay una razón clínica más fuerte que la aritmética: la adolescencia con
+   * diabetes tipo 1 es la población de mayor riesgo de trastornos de la
+   * conducta alimentaria y de omisión de insulina para bajar de peso. Una meta
+   * de pérdida de peso presentada por una app es exactamente el disparador que
+   * no se debe poner ahí. Un adolescente que necesite plan nutricional lo
+   * necesita de su equipo clínico, no de este cálculo.
+   */
+  ageYears: z.number().int().min(18).max(110),
   heightCm: z.number().min(90).max(250),
   weightKg: z.number().min(25).max(350),
   activityLevel: z.enum(['sedentary', 'light', 'moderate', 'active', 'veryActive']),

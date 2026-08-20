@@ -1418,6 +1418,60 @@ mal calibrado hace daño de verdad. Las reglas que quedaron codificadas:
    entra en la comparación de patrones (tratar el ausente como 0 la mandaría
    al grupo equivocado).
 
+### Hallazgos de `domain-safety-reviewer` corregidos en la misma corrida
+
+La revisión encontró siete cosas; dos eran graves y una la había encontrado
+yo antes con un barrido propio de perfiles.
+
+1. **Sin puerta de edad: un chico de 12 años recibía un déficit de 500 kcal
+   en silencio.** El esquema aceptaba desde los 12, pero *todos* los pisos del
+   módulo son de adulto — Mifflin-St Jeor es una ecuación de adultos y los
+   1200/1500 kcal también—, así que en un menor no muerden nunca y
+   `clampedBy` jamás se levantaba. Además de la aritmética hay una razón
+   clínica más fuerte: la adolescencia con T1D es la población de mayor riesgo
+   de trastornos de la conducta alimentaria y de omisión de insulina para
+   bajar de peso, y una meta de pérdida de peso puesta por una app es
+   exactamente el disparador que no corresponde. **`ageYears` pasó a mínimo
+   18**, con test.
+2. **Los carbohidratos del atajo rápido se contaban como 0.** `loadNutritionDay`
+   cargaba `dayCarbs` pero la pantalla **nunca los leía**: solo sumaba
+   `MealEvent.confirmedCarbsG`. Como el atajo de la pantalla principal escribe
+   un `CarbEvent`, alguien que registrara 120 g por ahí veía "0 g" y un día
+   entero de margen. Corregido sumando ambas fuentes, excluyendo los
+   `CarbEvent` con `source: 'meal_confirmed'` para no duplicar los de las
+   comidas, y marcando el día como incompleto (un carbo suelto no trae
+   proteína ni grasa).
+3. **La proteína aplastaba a los carbohidratos.** Detectado con un barrido
+   propio de las 800 combinaciones que el esquema permite: un perfil de 200 kg
+   en déficit daba 320 g de proteína (69 % de la energía) y dejaba los
+   carbohidratos en **11 %**. Una dieta muy baja en carbohidratos en T1D sin
+   supervisión es riesgo de hipoglucemia. Corregido con un techo de proteína
+   del 30 % de la energía (dentro del AMDR de 10–35 %). El 30 % no es
+   arbitrario: a 25 % ya recortaba un perfil corriente de 70 kg, anulando sin
+   querer la regla de la ADA sobre la masa magra.
+4. **La advertencia de hipoglucemia no estaba donde se decide.** Existía al
+   pie de la pestaña Metas, igual para las cuatro metas, y sin decir la
+   palabra. Ahora aparece junto al selector y solo al elegir "bajar de peso",
+   diciendo explícitamente que comer menos con la misma pauta de insulina
+   puede causar hipoglucemias y que el ajuste lo hace el equipo clínico.
+5. **La pestaña Hoy no decía que la meta es una referencia.** Es la pantalla
+   que se mira a diario, y una línea sobre gramos de carbohidrato en una app
+   de insulina se lee como un límite si nadie aclara lo contrario. Agregado.
+6. **El texto prometía "50 % de carbohidratos" y entregaba otra cosa.** Cuando
+   el acotado de grasa muerde, la diferencia se compensa con carbohidratos y
+   el valor real sube. Ahora la pantalla muestra el **porcentaje calculado**
+   de los tres macros en vez de repetir una cifra fija, así el texto no puede
+   divergir del número.
+7. **Faltaban tests de esos bordes.** Agregados: puerta de edad, techo de
+   proteína, y un barrido que falla si los carbohidratos bajan del 40 % en
+   cualquier perfil que el esquema acepte.
+
+Quedó limpio en la revisión: `macro-glucose.ts` y sus dos superficies (nada
+sugiere bolo extendido, tiempo de espera ni comer menos grasa), la ausencia de
+cualquier camino del objetivo de carbohidratos hacia un cálculo de insulina,
+la distinción "no anotado" vs "0 g" en `energyFromMacros` y en el filtro de
+elegibilidad, y la exclusión de sintéticas con `sourceTimestamp` preservado.
+
 ### Paleta
 
 `macroColors` (carbos / proteína / grasa) es **categórica** y deliberadamente

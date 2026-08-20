@@ -12,7 +12,7 @@ import {
   type NutritionGoal,
   type NutritionTargets,
 } from '@type1a/domain';
-import type { MealEvent, NutritionProfile } from '@type1a/schemas';
+import type { CarbEvent, MealEvent, NutritionProfile } from '@type1a/schemas';
 
 import { formatClock } from '../format';
 import { logSaveError } from '../log';
@@ -55,7 +55,7 @@ const TABS: { key: NutritionTab; label: string }[] = [
 ];
 
 const GOAL_OPTIONS: { value: NutritionGoal; label: string; detail: string }[] = [
-  { value: 'lose', label: 'Bajar de peso', detail: 'Déficit moderado de 500 kcal al día' },
+  { value: 'lose', label: 'Bajar de peso', detail: 'Déficit moderado de 500 kcal al día. Habla con tu equipo antes de empezar.' },
   { value: 'maintain', label: 'Mantener', detail: 'Comer alrededor de tu gasto' },
   { value: 'gain', label: 'Subir de peso', detail: 'Superávit de 300 kcal al día' },
   { value: 'trackOnly', label: 'Solo registrar', detail: 'Sin déficit ni superávit; ver lo que comes' },
@@ -214,7 +214,23 @@ function EmptyState({ title, body, action }: { title: string; body: string; acti
   );
 }
 
-function mealMacros(meals: readonly MealEvent[]): { carbsG: number; proteinG: number; fatG: number; fiberG: number; anyMissing: boolean } {
+/**
+ * Totales del día.
+ *
+ * Los carbohidratos vienen de **dos** sitios y hay que sumar los dos: las
+ * comidas (`MealEvent.confirmedCarbsG`) y los `CarbEvent` sueltos del atajo
+ * rápido de la pantalla principal — que es, de hecho, la vía más usada para
+ * registrar carbos. Contar solo las comidas mostraba "0 g" a alguien que
+ * había registrado 120 g esa mañana, e invitaba a comer un día entero de más.
+ *
+ * Se excluyen los `CarbEvent` con `source: 'meal_confirmed'` porque esos los
+ * escribe la propia confirmación de una comida: sumarlos otra vez duplicaría
+ * los carbohidratos de cada comida.
+ */
+function dayTotals(
+  meals: readonly MealEvent[],
+  carbEvents: readonly CarbEvent[],
+): { carbsG: number; proteinG: number; fatG: number; fiberG: number; anyMissing: boolean } {
   let carbsG = 0;
   let proteinG = 0;
   let fatG = 0;
@@ -227,6 +243,13 @@ function mealMacros(meals: readonly MealEvent[]): { carbsG: number; proteinG: nu
     fiberG += meal.fiberG ?? 0;
     // "Sin anotar" no es 0: si falta un macro, el total del día es un piso.
     if (meal.proteinG === undefined || meal.fatG === undefined) anyMissing = true;
+  }
+  for (const event of carbEvents) {
+    if (event.source === 'meal_confirmed') continue;
+    carbsG += event.carbsG;
+    // Un carbo suelto no trae proteína ni grasa por definición, así que la
+    // energía del día queda incompleta: es un piso, no el total.
+    anyMissing = true;
   }
   return { carbsG, proteinG, fatG, fiberG, anyMissing };
 }
@@ -249,7 +272,7 @@ function TodayTab({
       />
     );
   }
-  if (data === null || data.dayMeals.length === 0) {
+  if (data === null || (data.dayMeals.length === 0 && data.dayCarbs.length === 0)) {
     return (
       <EmptyState
         title="Sin comidas registradas hoy"
@@ -258,7 +281,7 @@ function TodayTab({
     );
   }
 
-  const totals = mealMacros(data.dayMeals);
+  const totals = dayTotals(data.dayMeals, data.dayCarbs);
   const energy = energyFromMacros({
     carbsG: totals.carbsG,
     proteinG: totals.proteinG,
@@ -333,6 +356,15 @@ function TodayTab({
         <Text style={styles.noteText}>
           La energía se calcula desde los macronutrientes que anotaste (4 kcal por gramo de carbohidrato y de
           proteína, 9 por gramo de grasa). Si no anotas proteína y grasa, el total queda corto.
+        </Text>
+        {/*
+          Obligatorio también acá, no solo en Metas: esta es la pantalla que
+          se mira a diario, y una línea roja sobre gramos de carbohidrato en
+          una app de insulina se lee como un límite si nadie dice lo contrario.
+        */}
+        <Text style={styles.noteWarning}>
+          Las cifras de referencia salen de ecuaciones poblacionales: son para orientarte, no una indicación
+          médica ni un límite que debas respetar. Tu objetivo real lo define tu equipo clínico.
         </Text>
       </View>
     </View>
@@ -483,6 +515,22 @@ function GoalsTab({
         </Pressable>
       ))}
 
+      {/*
+        La advertencia fuerte va acá, junto al control, y solo cuando la meta
+        elegida es bajar de peso. Al pie de la pantalla se leía como letra
+        chica genérica; el momento en que importa es el de elegir.
+      */}
+      {goal === 'lose' ? (
+        <View style={styles.hazardBox}>
+          <Text style={styles.hazardTitle}>Antes de bajar de peso con insulina</Text>
+          <Text style={styles.hazardText}>
+            Comer menos —sobre todo menos carbohidratos— con la misma pauta de insulina que tienes hoy puede
+            causarte hipoglucemias. Tu basal y tus bolos puede que necesiten cambiar, y ese ajuste lo hace tu
+            equipo clínico, no esta app. Coméntaselo antes de empezar.
+          </Text>
+        </View>
+      ) : null}
+
       {message === null ? null : <Text style={styles.message}>{message}</Text>}
 
       <Pressable
@@ -498,8 +546,12 @@ function GoalsTab({
         <Text style={styles.noteTitle}>Cómo se calcula, y qué no es</Text>
         <Text style={styles.noteText}>
           La energía sale de la ecuación de Mifflin-St Jeor sobre tu peso, estatura, edad y sexo, multiplicada por
-          tu nivel de actividad. El reparto de macronutrientes usa el 50 % de la energía en carbohidratos, que es
-          el rango recomendado en diabetes tipo 1, y la proteína se calcula por kilo de peso.
+          tu nivel de actividad. El reparto apunta a la mitad de la energía en carbohidratos —el rango
+          recomendado en diabetes tipo 1— con la proteína calculada por kilo de peso y la grasa como resto
+          acotado; según tu perfil puede quedar unos puntos por encima. En tu caso concreto son{' '}
+          {Math.round(((targets?.carbsG ?? 0) * 4 / (targets?.caloriesKcal ?? 1)) * 100)} % carbohidratos,{' '}
+          {Math.round(((targets?.proteinG ?? 0) * 4 / (targets?.caloriesKcal ?? 1)) * 100)} % proteína y{' '}
+          {Math.round(((targets?.fatG ?? 0) * 9 / (targets?.caloriesKcal ?? 1)) * 100)} % grasa.
         </Text>
         <Text style={styles.noteWarning}>
           Es una referencia poblacional, no una indicación médica. Tu objetivo real —sobre todo si vas a bajar de
@@ -761,6 +813,9 @@ const styles = StyleSheet.create({
   deltaUnit: { color: colors.muted, fontSize: 11, fontWeight: '600' },
   deltaInsufficient: { color: colors.muted, fontSize: 11, width: 92, textAlign: 'right' },
 
+  hazardBox: { backgroundColor: colors.warningSoft, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.md, gap: spacing.xs },
+  hazardTitle: { color: colors.warning, fontSize: 13, fontWeight: '800' },
+  hazardText: { color: colors.warning, fontSize: 12, lineHeight: 18, fontWeight: '600' },
   noteBox: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.md, gap: spacing.sm },
   noteTitle: { color: colors.ink, fontSize: 13, fontWeight: '800' },
   noteText: { color: colors.muted, fontSize: 12, lineHeight: 18 },

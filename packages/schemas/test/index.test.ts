@@ -4,6 +4,7 @@ import {
   ActivityEventSchema,
   CarbEventSchema,
   HbA1cLabResultSchema,
+  NutritionProfileSchema,
   InsulinEventSchema,
   MealEventSchema,
   TherapyProfileSchema,
@@ -94,5 +95,35 @@ describe('HbA1cLabResultSchema', () => {
     const base = { id: 'h1', timestamp: '2026-08-14T12:00:00.000Z', source: 'manual' as const, createdAt: '2026-08-14T12:00:00.000Z' };
     expect(HbA1cLabResultSchema.safeParse({ ...base, percentage: 7.2 }).success).toBe(true);
     expect(HbA1cLabResultSchema.safeParse({ ...base, percentage: 0 }).success).toBe(false);
+  });
+});
+
+describe('NutritionProfileSchema — puerta de edad', () => {
+  const base = {
+    sex: 'female' as const,
+    heightCm: 165,
+    weightKg: 60,
+    activityLevel: 'moderate' as const,
+    goal: 'lose' as const,
+    updatedAt: '2026-08-20T10:00:00.000Z',
+  };
+
+  it('rechaza a menores de 18', () => {
+    // Mifflin-St Jeor es una ecuación de adultos y los pisos de 1200/1500 kcal
+    // también, así que en un menor no muerden y un déficit de 500 kcal pasaba
+    // sin advertencia. Además, la adolescencia con T1D es la población de
+    // mayor riesgo de trastornos alimentarios y omisión de insulina.
+    for (const ageYears of [12, 15, 17]) {
+      expect(NutritionProfileSchema.safeParse({ ...base, ageYears }).success).toBe(false);
+    }
+  });
+
+  it('acepta desde los 18', () => {
+    expect(NutritionProfileSchema.safeParse({ ...base, ageYears: 18 }).success).toBe(true);
+    expect(NutritionProfileSchema.safeParse({ ...base, ageYears: 110 }).success).toBe(true);
+  });
+
+  it('rechaza edades imposibles por arriba', () => {
+    expect(NutritionProfileSchema.safeParse({ ...base, ageYears: 111 }).success).toBe(false);
   });
 });

@@ -159,3 +159,42 @@ describe('energyFromMacros', () => {
     expect(energyFromMacros({ carbsG: 50, proteinG: 20, fatG: undefined }).partial).toBe(true);
   });
 });
+
+describe('los carbohidratos no pueden colapsar', () => {
+  it('nunca bajan del 40 % de la energía, en ningún perfil que el schema acepte', () => {
+    // Regresión de un bug real: sin techo de proteína, un perfil de peso alto
+    // en déficit daba 11 % de carbohidratos (50 g/día). Una dieta muy baja en
+    // carbos en diabetes tipo 1 y sin supervisión clínica es riesgo de
+    // hipoglucemia, y la app no puede proponerla sola.
+    const rows: { pct: number; tag: string }[] = [];
+    for (const sex of ['female', 'male'] as const)
+      for (const ageYears of [18, 40, 110])
+        for (const heightCm of [90, 150, 250])
+          for (const weightKg of [25, 90, 200, 350])
+            for (const activityLevel of ['sedentary', 'veryActive'] as const)
+              for (const goal of ['lose', 'maintain', 'gain'] as const) {
+                const t = calculateNutritionTargets({ sex, ageYears, heightCm, weightKg, activityLevel, goal });
+                rows.push({
+                  pct: (t.carbsG * 4) / t.caloriesKcal,
+                  tag: `${sex} ${ageYears}y ${heightCm}cm ${weightKg}kg ${activityLevel} ${goal}`,
+                });
+              }
+    const lowest = rows.reduce((a, b) => (a.pct < b.pct ? a : b));
+    expect(lowest.pct, `peor caso: ${lowest.tag}`).toBeGreaterThanOrEqual(0.4);
+  });
+
+  it('la proteína nunca supera el 30 % de la energía', () => {
+    const t = calculateNutritionTargets({
+      sex: 'female', ageYears: 40, heightCm: 150, weightKg: 200,
+      activityLevel: 'sedentary', goal: 'lose',
+    });
+    expect((t.proteinG * 4) / t.caloriesKcal).toBeLessThanOrEqual(0.31);
+  });
+
+  it('sigue subiendo la proteína en déficit cuando el techo no aplica', () => {
+    // El techo no debe anular la regla de la ADA en perfiles normales.
+    const maintain = calculateNutritionTargets({ ...baseProfile });
+    const lose = calculateNutritionTargets({ ...baseProfile, goal: 'lose' });
+    expect(lose.proteinG).toBeGreaterThan(maintain.proteinG);
+  });
+});
