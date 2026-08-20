@@ -427,16 +427,29 @@ function Type1AApp() {
         ? {}
         : {
             aiEstimatedCarbsG: draft.analysis.totals.carbsG,
-            proteinG: draft.analysis.totals.proteinG,
-            fatG: draft.analysis.totals.fatG,
-            fiberG: draft.analysis.totals.fiberG,
-            caloriesKcal: draft.analysis.totals.caloriesKcal,
             aiAnalysisId: draft.analysis.analysisId,
+            // Los macros del análisis solo si ella NO vació ninguno. Si borró
+            // un campo precargado está diciendo "no lo sé", y volver a
+            // escribir el número de la IA convertiría ese blanco en un dato
+            // que ella nunca anotó.
+            ...(draft.clearedMacros === true
+              ? {}
+              : {
+                  proteinG: draft.analysis.totals.proteinG,
+                  fatG: draft.analysis.totals.fatG,
+                  fiberG: draft.analysis.totals.fiberG,
+                  caloriesKcal: draft.analysis.totals.caloriesKcal,
+                }),
           }),
       ...(draft.proteinG === undefined ? {} : { proteinG: draft.proteinG }),
       ...(draft.fatG === undefined ? {} : { fatG: draft.fatG }),
       ...(draft.fiberG === undefined ? {} : { fiberG: draft.fiberG }),
       ...(draft.macrosSource === undefined ? {} : { macrosSource: draft.macrosSource }),
+      // Un carbo venido del catálogo conserva su procedencia de IA. Solo si no
+      // hubo análisis propio, que ya escribió el suyo más arriba.
+      ...(draft.catalogSuggestedCarbsG === undefined || draft.analysis !== undefined
+        ? {}
+        : { aiEstimatedCarbsG: draft.catalogSuggestedCarbsG }),
     };
     const episodeId = await saveMealWithEpisode(db, meal);
     // El catálogo se alimenta de cada análisis, y nunca puede impedir que la
@@ -468,11 +481,16 @@ function Type1AApp() {
         ? {}
         : {
             aiEstimatedCarbsG: draft.analysis.totals.carbsG,
+            aiAnalysisId: draft.analysis.analysisId,
             proteinG: draft.analysis.totals.proteinG,
             fatG: draft.analysis.totals.fatG,
             fiberG: draft.analysis.totals.fiberG,
             caloriesKcal: draft.analysis.totals.caloriesKcal,
-            aiAnalysisId: draft.analysis.analysisId,
+            // Esta hoja no tiene campos de macros que la usuaria pueda tocar:
+            // vienen enteros del análisis. Marcarlo es obligatorio — si no,
+            // "ausente" mezclaría comidas viejas con comidas 100 % IA
+            // guardadas hoy, y la semántica del campo sería falsa.
+            macrosSource: 'ai' as const,
           }),
     });
     if (outcome.episodeId !== null) {

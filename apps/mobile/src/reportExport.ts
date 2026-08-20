@@ -16,6 +16,7 @@ import type { CGMReading } from '@type1a/schemas';
 import * as XLSX from 'xlsx';
 
 import type { ReportRow } from '@type1a/domain';
+import type { MealEvent } from '@type1a/schemas';
 import type { ReportExport } from './types';
 import { formatReportTimestamp } from './format';
 import { colors } from './theme';
@@ -292,7 +293,7 @@ function agpSectionHtml(profile: AmbulatoryProfile | null): string {
     ${agpChartSvg(profile)}`;
 }
 
-function nutritionSectionHtml(insights: MealWindowInsight[]): string {
+function nutritionSectionHtml(insights: MealWindowInsight[], meals: readonly MealEvent[]): string {
   const withData = insights.filter(
     (w) => w.mealCount > 0 || w.rapidDoseCount > 0 || w.confirmedCarbsSampleSize > 0,
   );
@@ -337,7 +338,7 @@ function nutritionSectionHtml(insights: MealWindowInsight[]): string {
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>
-  <p class="summary-footnote">Promedios de lo registrado por franja horaria. "En rango" = porcentaje de dosis rápidas tras las cuales había una lectura entre 70 y 180 mg/dL a esa hora; ↓ y ↑ son el porcentaje que quedó por debajo de 70 y por encima de 180, y se muestran a propósito porque quedar fuera de rango por abajo y por arriba son cosas opuestas. Es una observación descriptiva, no una medida de si la dosis fue adecuada, y depende también de comida, actividad, estrés y basal. Solo se muestra un porcentaje con al menos ${MIN_SAMPLE_FOR_RATE} dosis.${anyMacros ? ' Proteína, grasa y fibra son promedios de las comidas donde la usuaria los anotó: un guion significa que no los registró en esa franja, no que fueran cero.' : ''} Type 1A nunca decide ni sugiere una dosis por su cuenta: su calculadora solo aplica los parámetros que cargó la propia usuaria.</p>`;
+  <p class="summary-footnote">Promedios de lo registrado por franja horaria. "En rango" = porcentaje de dosis rápidas tras las cuales había una lectura entre 70 y 180 mg/dL a esa hora; ↓ y ↑ son el porcentaje que quedó por debajo de 70 y por encima de 180, y se muestran a propósito porque quedar fuera de rango por abajo y por arriba son cosas opuestas. Es una observación descriptiva, no una medida de si la dosis fue adecuada, y depende también de comida, actividad, estrés y basal. Solo se muestra un porcentaje con al menos ${MIN_SAMPLE_FOR_RATE} dosis.${anyMacros ? ' Proteína, grasa y fibra son promedios de las comidas donde la usuaria los anotó: un guion significa que no los registró en esa franja, no que fueran cero.' + macroProvenanceNote(meals) : ''} Type 1A nunca decide ni sugiere una dosis por su cuenta: su calculadora solo aplica los parámetros que cargó la propia usuaria.</p>`;
 }
 
 /**
@@ -347,6 +348,29 @@ function nutritionSectionHtml(insights: MealWindowInsight[]): string {
  * es una decisión del equipo médico, nunca de la app. Ver la cabecera de
  * `packages/domain/src/macro-glucose.ts`.
  */
+/**
+ * De dónde vienen los macros del período.
+ *
+ * Sin esta frase, un equipo clínico lee "proteína promedio 38 g" como ingesta
+ * anotada por la paciente, cuando puede ser enteramente una estimación de IA a
+ * partir de una foto. No son el mismo dato y la diferencia importa para
+ * decidir cuánto peso darle. Ver `MealEvent.macrosSource`.
+ */
+export function macroProvenanceNote(meals: readonly MealEvent[]): string {
+  const withMacros = meals.filter((meal) => meal.proteinG !== undefined || meal.fatG !== undefined);
+  if (withMacros.length === 0) return '';
+  const counts: Record<'ai' | 'user' | 'mixed' | 'unknown', number> = { ai: 0, user: 0, mixed: 0, unknown: 0 };
+  for (const meal of withMacros) {
+    counts[meal.macrosSource ?? 'unknown'] += 1;
+  }
+  const parts: string[] = [];
+  if (counts.ai > 0) parts.push(`${counts.ai} estimada(s) por IA sin corregir`);
+  if (counts.mixed > 0) parts.push(`${counts.mixed} estimada(s) por IA y corregida(s) por la usuaria`);
+  if (counts.user > 0) parts.push(`${counts.user} anotada(s) por la usuaria`);
+  if (counts.unknown > 0) parts.push(`${counts.unknown} de procedencia no registrada`);
+  return ` Procedencia de esos macros, sobre ${withMacros.length} comida(s) con macros: ${parts.join(', ')}.`;
+}
+
 function macroGlucoseSectionHtml(comparison: MacroGlucoseComparison | null): string {
   if (comparison === null) {
     return '<p class="summary-empty">Todavía no hay suficientes comidas con grasa y proteína anotadas para comparar.</p>';
@@ -441,7 +465,7 @@ export function reportHtml(data: ReportExport, rangeLabel: string): string {
   <h2>Día promedio (perfil ambulatorio)</h2>
   ${agpSectionHtml(profile)}
   <h2>Patrones por franja horaria</h2>
-  ${nutritionSectionHtml(insights)}
+  ${nutritionSectionHtml(insights, data.meals)}
   <h2>Grasa y proteína frente a la glucosa tardía</h2>
   ${macroGlucoseSectionHtml(macroGlucose)}
   <h2>Glucosa por día</h2>
@@ -518,6 +542,7 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
     ['"Bajo" (<70) y "alto" (>180) se muestran por separado: quedar fuera de rango por abajo y por arriba son cosas opuestas.'],
     [`Observación descriptiva, no una medida de si la dosis fue adecuada. Solo se muestra con al menos ${MIN_SAMPLE_FOR_RATE} dosis.`],
     ['Proteína, grasa y fibra: promedio de las comidas donde se anotaron. Un guion significa que no se registraron, no que fueran cero.'],
+    [macroProvenanceNote(data.meals).trim() || 'Sin comidas con macros en este rango.'],
     ['Type 1A nunca decide ni sugiere una dosis por su cuenta: su calculadora solo aplica los parámetros que cargó la propia usuaria.'],
   ];
 

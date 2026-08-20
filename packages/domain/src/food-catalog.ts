@@ -67,7 +67,7 @@ export interface CatalogFood {
 export function foodKey(name: string): string {
   return name
     .normalize('NFD')
-    .replace(/[̀-ͯ]/gu, '')
+    .replace(/[\u0300-\u036f]/gu, '')
     .toLowerCase()
     .replace(/[^a-z0-9\s]/gu, ' ')
     .replace(/\s+/gu, ' ')
@@ -113,9 +113,65 @@ export function catalogEntriesFrom(
     const entry = toCatalogEntry(food, seenAt);
     // El último gana: si un análisis nombra el mismo alimento dos veces, es
     // más probable que sea una corrección que dos platos distintos.
-    if (entry !== null) byKey.set(entry.key, entry);
+    if (entry !== null && isPlausibleCatalogEntry(entry)) byKey.set(entry.key, entry);
   }
   return [...byKey.values()];
+}
+
+/**
+ * Máximos físicamente posibles por 100 g. 100 g de un alimento no pueden
+ * contener más de 100 g de un macro, y ~900 kcal es el techo (grasa pura).
+ * Un valor por encima solo puede venir de una estimación con la porción muy
+ * equivocada — y sin este filtro quedaba fosilizado en el catálogo para
+ * siempre, sugiriendo cientos de gramos de carbohidratos.
+ */
+const MAX_MACRO_PER_100G = 100;
+const MAX_KCAL_PER_100G = 900;
+
+export function isPlausibleCatalogEntry(entry: Omit<CatalogFood, 'timesSeen'>): boolean {
+  const macros = [entry.carbsPer100g, entry.proteinPer100g, entry.fatPer100g, entry.fiberPer100g];
+  if (macros.some((value) => !Number.isFinite(value) || value < 0 || value > MAX_MACRO_PER_100G)) return false;
+  if (!Number.isFinite(entry.kcalPer100g) || entry.kcalPer100g < 0 || entry.kcalPer100g > MAX_KCAL_PER_100G) return false;
+  // La fibra es un subconjunto de los carbohidratos: más fibra que carbos es
+  // una estimación incoherente, no un alimento raro.
+  if (entry.fiberPer100g > entry.carbsPer100g + 1) return false;
+  return true;
+}
+
+/**
+ * Fusiona una estimación nueva con lo que ya había, ponderando por las veces
+ * vistas: dos estimaciones del mismo alimento convergen en vez de que la
+ * última pise a la anterior.
+ *
+ * Vive acá y no en `db.ts` porque es un cálculo que termina sugiriendo
+ * carbohidratos, y `AGENTS.md` pide que los cálculos sensibles sean puros,
+ * determinísticos y estén en `packages/domain`.
+ *
+ * **El peso está acotado** (`MAX_BLEND_WEIGHT`): sin tope, un alimento visto
+ * 50 veces vuelve casi inmutable, así que un error grande temprano no se
+ * puede corregir nunca — la inercia crece justo al revés de lo deseable. Con
+ * el tope, una estimación nueva siempre conserva algo de influencia.
+ */
+export const MAX_BLEND_WEIGHT = 10;
+
+export function blendCatalogEntry(
+  existing: CatalogFood,
+  next: Omit<CatalogFood, 'timesSeen'>,
+): CatalogFood {
+  const weight = Math.min(existing.timesSeen, MAX_BLEND_WEIGHT);
+  const mix = (old: number, incoming: number): number =>
+    Number(((old * weight + incoming) / (weight + 1)).toFixed(2));
+  return {
+    key: existing.key,
+    name: next.name,
+    carbsPer100g: mix(existing.carbsPer100g, next.carbsPer100g),
+    proteinPer100g: mix(existing.proteinPer100g, next.proteinPer100g),
+    fatPer100g: mix(existing.fatPer100g, next.fatPer100g),
+    fiberPer100g: mix(existing.fiberPer100g, next.fiberPer100g),
+    kcalPer100g: mix(existing.kcalPer100g, next.kcalPer100g),
+    timesSeen: existing.timesSeen + 1,
+    lastSeenAt: next.lastSeenAt,
+  };
 }
 
 /** Escala una entrada del catálogo a una porción concreta. */

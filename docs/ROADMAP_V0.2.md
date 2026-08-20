@@ -1548,6 +1548,57 @@ suyo gana.
   decisión de `docs/adr/0001-local-first.md` y merece su propio ADR, no ser el
   efecto colateral de una corrida de features.
 
+### Hallazgos de `domain-safety-reviewer` corregidos en la misma corrida
+
+Siete, dos de severidad alta. Los dos primeros los introduje yo en esta misma
+fase, y son un buen recordatorio de que precargar campos cambia qué bugs son
+posibles.
+
+1. **Los macros se filtraban de una comida a la siguiente.** El `useEffect` de
+   reset de `MealModal` no limpiaba los campos nuevos. Antes casi siempre
+   estaban vacíos y no se notaba; ahora que la IA los precarga en cada
+   análisis, era la norma: registrar una fruta después de un plato de pastas
+   la guardaba con la proteína y la grasa de las pastas, **y etiquetada como
+   estimación de IA de esa fruta**. Esos números entraban al promedio del
+   reporte médico como ingesta real.
+2. **Borrar un macro precargado no lo borraba.** Un campo en blanco significa
+   "no lo anoté", pero como el spread del análisis ahora va primero, el número
+   de la IA se volvía a escribir — y encima quedaba como `mixed`, o sea "ella
+   lo revisó". Se agregó `clearedMacros`: vaciar un campo precargado descarta
+   los macros del análisis, en vez de restaurarlos.
+3. **Un carbo del catálogo quedaba indistinguible de uno pesado en balanza.**
+   Al reusar un alimento sin sacar foto no había `analysis`, así que la comida
+   se guardaba sin `aiEstimatedCarbsG`: ni ella ni el médico podían saber que
+   ese número venía de una media de estimaciones de IA. Ahora el catálogo
+   arrastra su procedencia.
+4. **El promedio del catálogo podía corromperse sin salida.** Se movió a
+   `packages/domain` (era un cálculo que termina sugiriendo carbohidratos y
+   vivía suelto en `db.ts`, contra la regla de `AGENTS.md`), se le puso
+   **tope al peso** —sin él, un alimento visto 50 veces quedaba inmutable y un
+   error temprano no se corregía nunca, con la inercia creciendo al revés de
+   lo deseable—, se agregó `isPlausibleCatalogEntry` (nada supera 100 g de un
+   macro por 100 g de alimento, ni 900 kcal, ni más fibra que carbohidratos) y
+   un `deleteCatalogFood`. Con tests.
+5. **`macrosSource` era un campo de solo escritura.** Se guardaba y no se
+   mostraba en ningún lado, incumpliendo el punto 5 del checklist de cierre
+   (dato útil al médico → al reporte, PDF **y** Excel). Ahora el reporte trae
+   una nota de procedencia: cuántas comidas tienen macros estimados por IA,
+   corregidos, anotados a mano, o de procedencia no registrada. Además
+   `saveEntry` —el otro camino que guarda una comida con análisis— no seteaba
+   el campo, así que "ausente" mezclaba comidas viejas con comidas 100 % IA
+   guardadas hoy y la semántica documentada era falsa.
+6. **La rama `undefined` de `macrosSource` era inalcanzable**, así que una
+   comida sin ningún macro se guardaba como `'user'`, afirmando una
+   confirmación que nunca ocurrió.
+7. `foodKey` llevaba los caracteres combinantes crudos en el fuente; ahora usa
+   `\u0300-\u036f`. Un reformateo del archivo podía romperlo en silencio y
+   partir "plátano"/"platano" en dos entradas con macros distintos.
+
+Quedó limpio: los carbohidratos nunca se precargan en el campo de
+confirmación por ningún camino; nada calcula ni sugiere insulina; el catálogo
+es 100 % local y de hecho **reduce** lo que sale del teléfono; y un fallo al
+escribirlo no impide guardar la comida.
+
 ### Pendiente
 
 - El catálogo local no se muestra ni se edita en ninguna pantalla de gestión:

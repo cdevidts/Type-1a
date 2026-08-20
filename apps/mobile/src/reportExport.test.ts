@@ -3,7 +3,7 @@ import type { ReportRow } from '@type1a/domain';
 import * as XLSX from 'xlsx';
 import { describe, expect, it } from 'vitest';
 
-import { reportHtml, reportWorkbookBytes } from './reportExport';
+import { macroProvenanceNote, reportHtml, reportWorkbookBytes } from './reportExport';
 import type { ReportExport } from './types';
 
 function reading(overrides: Partial<CGMReading>): CGMReading {
@@ -223,5 +223,36 @@ describe('sección de grasa/proteína en el reporte (Fase 14)', () => {
     expect(section).not.toMatch(/bolo (extendido|dual)/iu);
     expect(section).not.toMatch(/\b(deberías|aumenta|reduce|ajusta)\b/iu);
     expect(section).toContain('nunca decide ni sugiere una dosis');
+  });
+});
+
+describe('procedencia de los macros en el reporte (Fase 15)', () => {
+  function mealWithMacros(id: string, macrosSource?: 'ai' | 'user' | 'mixed'): MealEvent {
+    const at = '2026-08-18T13:00:00.000Z';
+    return {
+      id, timestamp: at, createdAt: at, confirmedCarbsG: 50,
+      proteinG: 20, fatG: 10, fiberG: 4,
+      ...(macrosSource === undefined ? {} : { macrosSource }),
+    } as MealEvent;
+  }
+
+  it('distingue lo estimado por IA de lo anotado por la usuaria', () => {
+    // Un endocrinólogo leyendo "proteína promedio 38 g" no puede saber si es
+    // ingesta anotada o una adivinanza a partir de una foto. No son el mismo
+    // dato.
+    const meals = [mealWithMacros('a', 'ai'), mealWithMacros('b', 'user'), mealWithMacros('c', 'mixed')];
+    expect(macroProvenanceNote(meals)).toContain('1 estimada(s) por IA sin corregir');
+    expect(macroProvenanceNote(meals)).toContain('1 anotada(s) por la usuaria');
+    expect(macroProvenanceNote(meals)).toContain('corregida(s) por la usuaria');
+  });
+
+  it('las comidas sin el campo salen como procedencia no registrada, nunca como confirmadas', () => {
+    expect(macroProvenanceNote([mealWithMacros('a')])).toContain('procedencia no registrada');
+  });
+
+  it('no dice nada si ninguna comida tiene macros', () => {
+    const at = '2026-08-18T13:00:00.000Z';
+    const bare = { id: 'x', timestamp: at, createdAt: at, confirmedCarbsG: 30 } as MealEvent;
+    expect(macroProvenanceNote([bare])).toBe('');
   });
 });

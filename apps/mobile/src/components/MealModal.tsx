@@ -27,6 +27,20 @@ export interface ConfirmedMealDraft {
   fiberG?: number;
   /** Ver `MealEventSchema.macrosSource`. */
   macrosSource?: 'ai' | 'user' | 'mixed';
+  /**
+   * La usuaria vació al menos un macro que la IA había precargado. Quien
+   * guarde debe entonces **descartar** los macros del análisis en vez de
+   * dejarlos: un campo en blanco significa "no lo anoté", no "usa el de la
+   * IA".
+   */
+  clearedMacros?: boolean;
+  /**
+   * Carbohidratos que sugirió el catálogo, si se usó uno. Se guarda como
+   * `aiEstimatedCarbsG` cuando no hubo análisis propio: el catálogo es una
+   * media de estimaciones de IA, así que ese número tiene el mismo estatus
+   * que el de una foto y no puede pasar por dato confirmado sin rastro.
+   */
+  catalogSuggestedCarbsG?: number;
 }
 
 /**
@@ -93,6 +107,7 @@ export function MealModal({
   const [aiMacros, setAiMacros] = useState<{ proteinG: number; fatG: number; fiberG: number } | null>(null);
   const [pendingFood, setPendingFood] = useState<CatalogFood | null>(null);
   const [portionInput, setPortionInput] = useState('');
+  const [catalogSuggestedCarbsG, setCatalogSuggestedCarbsG] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -102,6 +117,20 @@ export function MealModal({
     setDescription('');
     setConfirmedCarbs('');
     setMessage(null);
+    // Todo lo de macros y catálogo también, o la comida siguiente hereda los
+    // números de la anterior. Antes de la Fase 15 estos campos casi siempre
+    // estaban vacíos y la fuga no se notaba; ahora la IA los precarga en cada
+    // análisis, así que sería la norma: una fruta registrada después de un
+    // plato de pastas se guardaba con la proteína y la grasa de las pastas, y
+    // encima etiquetada como estimación de IA de esa fruta.
+    setProteinInput('');
+    setFatInput('');
+    setFiberInput('');
+    setAiMacros(null);
+    setMacrosOpen(false);
+    setPendingFood(null);
+    setPortionInput('');
+    setCatalogSuggestedCarbsG(null);
   }, [visible]);
 
   async function captureAndAnalyze(): Promise<void> {
@@ -193,6 +222,12 @@ export function MealModal({
     setFiberInput(String(scaled.fiberG));
     setAiMacros({ proteinG: scaled.proteinG, fatG: scaled.fatG, fiberG: scaled.fiberG });
     setMacrosOpen(true);
+    // Se recuerda de dónde salió la sugerencia de carbos. Sin esto, si ella
+    // transcribe el número al campo de confirmación sin haber sacado foto, la
+    // comida queda sin `aiEstimatedCarbsG` y ese carbo —que viene de una media
+    // de estimaciones de IA— se vuelve indistinguible de uno pesado en balanza,
+    // tanto para ella como para el reporte al médico.
+    setCatalogSuggestedCarbsG(scaled.carbsG);
     setPendingFood(null);
     setMessage(`${pendingFood.name}, ${grams} g: ≈ ${scaled.carbsG} g de carbohidratos. Escríbelos abajo si los confirmas.`);
   }
@@ -245,16 +280,30 @@ export function MealModal({
         setMessage('Revisa proteína, grasa y fibra: deben ser números, o quedar en blanco.');
         return;
       }
-      // Procedencia de los macros: si la IA los precargó y siguen idénticos es
-      // `ai`; si ella tocó alguno, `mixed`; sin análisis de por medio, `user`.
+
+      const anyEntered = protein !== undefined || fat !== undefined || fiber !== undefined;
+      // Procedencia. Ojo con el caso "lo borró a propósito": si la IA precargó
+      // un valor y ella lo dejó en blanco, está diciendo "no lo sé", no "usa
+      // el de la IA". Sin `clearedMacros`, el spread del análisis en
+      // `confirmMeal` volvía a escribir el número de la IA y encima lo
+      // etiquetaba como revisado por ella.
+      const clearedMacros = aiMacros !== null
+        && (protein === undefined || fat === undefined || fiber === undefined);
       const macrosSource: 'ai' | 'user' | 'mixed' | undefined =
         aiMacros === null
-          ? (protein === null && fat === null && fiber === null ? undefined : 'user')
-          : (protein === aiMacros.proteinG && fat === aiMacros.fatG && fiber === aiMacros.fiberG ? 'ai' : 'mixed');
+          ? (anyEntered ? 'user' : undefined)
+          : (!clearedMacros
+              && protein === aiMacros.proteinG
+              && fat === aiMacros.fatG
+              && fiber === aiMacros.fiberG
+            ? 'ai'
+            : 'mixed');
 
       await onConfirm({
         confirmedCarbsG: parsed,
         ...(macrosSource === undefined ? {} : { macrosSource }),
+        ...(clearedMacros ? { clearedMacros: true } : {}),
+        ...(catalogSuggestedCarbsG === null ? {} : { catalogSuggestedCarbsG }),
         ...(imageUri === null ? {} : { imageUri }),
         ...(analysis === null ? {} : { analysis }),
         ...(protein === undefined ? {} : { proteinG: protein }),

@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { z } from 'zod';
 
-import { convertGlucose, planMySugrImport, type CatalogFood } from '@type1a/domain';
+import { blendCatalogEntry, convertGlucose, planMySugrImport, type CatalogFood } from '@type1a/domain';
 import {
   ActivityEventSchema,
   CGMReadingSchema,
@@ -1685,12 +1685,13 @@ export async function recordCatalogFoods(
   if (entries.length === 0) return;
   await db.withTransactionAsync(async () => {
     for (const entry of entries) {
-      const existing = await db.getFirstAsync<{
-        carbs_per_100g: number; protein_per_100g: number; fat_per_100g: number;
-        fiber_per_100g: number; kcal_per_100g: number; times_seen: number;
+      const row = await db.getFirstAsync<{
+        key: string; name: string; carbs_per_100g: number; protein_per_100g: number;
+        fat_per_100g: number; fiber_per_100g: number; kcal_per_100g: number;
+        times_seen: number; last_seen_at: string;
       }>('SELECT * FROM food_catalog WHERE key = ?', entry.key);
 
-      if (existing === null) {
+      if (row === null) {
         await db.runAsync(
           `INSERT INTO food_catalog
              (key, name, carbs_per_100g, protein_per_100g, fat_per_100g, fiber_per_100g, kcal_per_100g, times_seen, last_seen_at)
@@ -1702,38 +1703,36 @@ export async function recordCatalogFoods(
         continue;
       }
 
-      const n = existing.times_seen;
-      const blend = (old: number, next: number): number => Number(((old * n + next) / (n + 1)).toFixed(2));
+      // La fusión vive en `packages/domain` (pura y con test): termina
+      // sugiriendo carbohidratos, así que `AGENTS.md` pide que no sea lógica
+      // suelta dentro de la capa de datos.
+      const merged = blendCatalogEntry(rowToCatalogFood(row), entry);
       await db.runAsync(
         `UPDATE food_catalog SET
            name = ?, carbs_per_100g = ?, protein_per_100g = ?, fat_per_100g = ?,
            fiber_per_100g = ?, kcal_per_100g = ?, times_seen = ?, last_seen_at = ?
          WHERE key = ?`,
-        entry.name,
-        blend(existing.carbs_per_100g, entry.carbsPer100g),
-        blend(existing.protein_per_100g, entry.proteinPer100g),
-        blend(existing.fat_per_100g, entry.fatPer100g),
-        blend(existing.fiber_per_100g, entry.fiberPer100g),
-        blend(existing.kcal_per_100g, entry.kcalPer100g),
-        n + 1,
-        entry.lastSeenAt,
-        entry.key,
+        merged.name, merged.carbsPer100g, merged.proteinPer100g, merged.fatPer100g,
+        merged.fiberPer100g, merged.kcalPer100g, merged.timesSeen, merged.lastSeenAt,
+        merged.key,
       );
     }
   });
 }
 
-/** Alimentos del catálogo, los más usados primero. */
-export async function getCatalogFoods(db: SQLiteDatabase, limit = 60): Promise<CatalogFood[]> {
-  const rows = await db.getAllAsync<{
-    key: string; name: string; carbs_per_100g: number; protein_per_100g: number;
-    fat_per_100g: number; fiber_per_100g: number; kcal_per_100g: number;
-    times_seen: number; last_seen_at: string;
-  }>(
-    'SELECT * FROM food_catalog ORDER BY times_seen DESC, last_seen_at DESC LIMIT ?',
-    limit,
-  );
-  return rows.map((row) => ({
+/** Borra un alimento del catálogo — la salida cuando una estimación quedó mal. */
+export async function deleteCatalogFood(db: SQLiteDatabase, key: string): Promise<void> {
+  await db.runAsync('DELETE FROM food_catalog WHERE key = ?', key);
+}
+
+interface FoodCatalogRow {
+  key: string; name: string; carbs_per_100g: number; protein_per_100g: number;
+  fat_per_100g: number; fiber_per_100g: number; kcal_per_100g: number;
+  times_seen: number; last_seen_at: string;
+}
+
+function rowToCatalogFood(row: FoodCatalogRow): CatalogFood {
+  return {
     key: row.key,
     name: row.name,
     carbsPer100g: row.carbs_per_100g,
@@ -1743,7 +1742,16 @@ export async function getCatalogFoods(db: SQLiteDatabase, limit = 60): Promise<C
     kcalPer100g: row.kcal_per_100g,
     timesSeen: row.times_seen,
     lastSeenAt: row.last_seen_at,
-  }));
+  };
+}
+
+/** Alimentos del catálogo, los más usados primero. */
+export async function getCatalogFoods(db: SQLiteDatabase, limit = 60): Promise<CatalogFood[]> {
+  const rows = await db.getAllAsync<FoodCatalogRow>(
+    'SELECT * FROM food_catalog ORDER BY times_seen DESC, last_seen_at DESC LIMIT ?',
+    limit,
+  );
+  return rows.map(rowToCatalogFood);
 }
 
 export async function getSetting(db: SQLiteDatabase, key: string): Promise<string | null> {
