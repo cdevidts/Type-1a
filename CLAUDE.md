@@ -143,7 +143,7 @@ documentación se mantiene **en la misma corrida** que el código, no después.
 Si se desactualiza, la corrida siguiente gasta tokens re-explorando lo que ya
 estaba resuelto, y el chat de IA futuro nace ciego a media app.
 
-Antes de dar por terminada cualquier corrida, repasa estos cinco puntos. Los
+Antes de dar por terminada cualquier corrida, repasa estos seis puntos. Los
 que no apliquen, se saltan explícitamente — no en silencio.
 
 1. **`pnpm verify` en verde.** Sin excepciones.
@@ -172,6 +172,14 @@ que no apliquen, se saltan explícitamente — no en silencio.
      tocaste, anótalo en la tabla "corridas que NO requirieron redeploy" de
      ese mismo documento, para que la corrida siguiente no vuelva a
      preguntárselo.
+6. **`docs/PROMPT_SIGUIENTE_CORRIDA.md`, apuntando a la corrida siguiente.**
+   Pedido explícito de Verónica (2026-08-20): no se escribe cuando ella lo
+   pide, se reescribe **al cierre de cada corrida**, siempre. Tiene que
+   quedar con el alcance de lo próximo, los archivos y líneas ya localizados,
+   y las trampas conocidas del repo (Metro y los imports `.js`, los iconos
+   por subpath, qué necesita redeploy y qué necesita build). Una corrida que
+   termina sin dejarlo actualizado no está cerrada: la siguiente arranca
+   gastando tokens en re-descubrir lo que esta ya sabía.
 
 Y si en el camino descubres que estas reglas o las skills del repo no
 alcanzaron para evitar un error, arregla la regla o la skill en la misma

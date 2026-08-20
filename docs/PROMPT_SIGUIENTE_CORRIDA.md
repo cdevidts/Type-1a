@@ -1,108 +1,128 @@
-# Prompt para la corrida siguiente — Fase 16
+# Prompt para la corrida siguiente — Fase 17
 
 Copiar y pegar **todo lo que está dentro del bloque**. Está escrito para que la
 corrida no gaste tokens re-explorando: las decisiones ya están tomadas y los
 archivos y constantes ya están localizados.
 
+> **Hábito permanente (pedido de Verónica, 2026-08-20):** este archivo se
+> reescribe **al cierre de cada corrida**, apuntando a la corrida siguiente.
+> Es el punto 6 del checklist de `CLAUDE.md § Cierre de corrida`. Una corrida
+> que termina sin dejar este prompt apuntando a lo próximo no está cerrada.
+
 ---
 
 ```
-Fase 16 del roadmap (barra inferior, swipe, iconos SVG, marcas de hora). Todo
-es JS, no toca nada nativo, así que no requiere build hasta el final.
+Fase 17 del roadmap: editar una comida con la misma potencia que crearla.
+Todo el lado móvil es JS (no toca nada nativo), pero el modo nuevo de IA vive
+en apps/api → NO alcanza con el build: necesita redeploy para funcionar.
 
-Lee primero docs/ROADMAP_V0.2.md § "Fase 16" — está el detalle completo y las
-decisiones ya tomadas. No re-explores el repo: los datos que necesitas están
-abajo. Invoca /app-shell y /iconography (son del repo, disparo automático).
+Lee primero docs/ROADMAP_V0.2.md § "Fase 17". No re-explores el repo: los
+datos que necesitas están abajo. Invoca /ui-screen (tocas .tsx) y el subagente
+domain-safety-reviewer al cierre (tocas packages/ai y packages/domain).
+
+EL PROBLEMA: hoy MealModal.tsx crea una comida con foto, texto o catálogo,
+pero TimelineDetailModal.tsx en `item.kind === 'meal'` solo deja editar la
+NOTA (App.tsx línea ~643 → updateMealNote). Si guardaste solo los carbos, no
+hay forma de decir después "esto era un sándwich de queso" y completar macros.
 
 TRABAJO, en este orden:
 
-1. ICONOS. Usa lucide-react-native, que YA está instalado (v1.33, ISC,
-   construido sobre react-native-svg). NO dibujes SVG a mano. Importa por
-   nombre, nunca `import *` (mata el tree-shaking).
-   CRÍTICO: importa por subpath, no por nombre desde el barrel. Metro no hace
-   tree-shaking y el barrel mete los ~1.500 iconos (medido: 1.263 → 3.088
-   módulos; por subpath quedan 1.316).
-     import Plus from 'lucide-react-native/icons/plus';   // ✅
-     import { Plus } from 'lucide-react-native';          // ❌
-   El archivo va en kebab-case: UtensilsCrossed → icons/utensils-crossed.
-   size=24, color desde theme.ts, strokeWidth por defecto.
-   Crea apps/mobile/src/branding.ts con `export const APP_LOGO = require(...)`
-   apuntando a apps/mobile/assets/icon.png. Ningún componente puede escribir
-   el nombre del archivo — solo la variable.
+1. SCHEMAS (packages/schemas/src/index.ts). Agrega:
+   - MealSnapshotSchema: lo que se le manda a la IA de la comida actual —
+     note, confirmedCarbsG, proteinG, fatG, fiberG, caloriesKcal y los foods
+     del análisis previo si existen.
+     PROHIBIDO incluir insulina, glucosa o parámetros de terapia. La frontera
+     se hace ESTRUCTURAL: si el campo no existe en el schema, no hay prompt
+     que lo alcance.
+   - MealEditInputSchema = { instruction: string (1..300), current:
+     MealSnapshot }.
+   La salida reusa MealAnalysisSchema/MealAnalysisResultSchema tal cual.
 
-2. BARRA INFERIOR. Componente nuevo apps/mobile/src/components/BottomNav.tsx.
-   Cinco destinos: Nutrición | Catálogo | (+) | Chat IA | Resumen.
-   - El (+) va al centro, más grande, fondo colors.teal — es la acción
-     primaria.
-   - El botón de Chat IA usa APP_LOGO y queda inerte (Fase 8): al tocarlo,
-     un aviso de que aún no está.
-   - El de Catálogo también queda inerte hasta la Fase 18, con su aviso.
-   - Fija: position absolute, bottom 0. Suma useSafeAreaInsets().bottom al
-     padding — con edge-to-edge la barra de Android tapa el contenido. NO
-     ocultes la barra del sistema.
-   - 44x44 mínimo tocable en los cinco.
+2. IA (packages/ai). prompts.ts: MEAL_EDIT_PROMPT_VERSION =
+   'meal-analysis-edit.v1' + mealEditSystemPrompt. El prompt recibe la comida
+   actual + la instrucción y devuelve la comida COMPLETA revisada (no un
+   diff): un diff obliga a fusionar en el cliente y ahí se cuelan errores.
+   abacus.ts: tercera variante de MealVisionInput. Mismo guardrail
+   containsTherapyRecommendation sobre la salida.
 
-3. MOVER, NO DUPLICAR. En App.tsx:
-   - Elimina el Pressable de styles.entryButton (línea ~787, el botón grande
-     "Nueva entrada" del cuerpo) — su función pasa al (+) de la barra.
-   - Los botones ◔ (Resumen) y ◍ (Nutrición) de la barra superior se eliminan
-     de arriba y pasan a la barra inferior.
-   - Ajustes (•••) SE QUEDA arriba a la derecha, pero con icono SVG.
-   - Agrega paddingBottom al ScrollView de la pantalla principal para que la
-     barra no tape la última tarjeta.
+3. GUARDRAIL DE ENTRADA (packages/domain/src/ai-safety.ts). Función nueva
+   `requestsInsulinAdvice(instruction)`: si la usuaria escribe "cuánta
+   insulina me pongo", se rechaza ANTES de gastar la llamada, con un mensaje
+   que explique por qué. Hoy solo se filtra la salida; una instrucción así
+   nunca debería llegar al modelo. Test obligatorio (AGENTS.md § Completion).
 
-4. SWIPE. PanResponder (sin librería nueva) para navegar lateralmente entre
-   los cinco destinos, en el mismo orden que la barra.
-   CUIDADO: GlucoseChart es un ScrollView HORIZONTAL. El reconocedor debe
-   exigir |dx| claramente mayor que |dy| y no activarse si el gesto empezó
-   sobre el gráfico, o le robas el scroll al gráfico principal.
+4. BACKEND (apps/api/src/app.ts). MealAnalysisBodySchema es un z.union —
+   agrégale la tercera rama { instruction, current }. Mismo endpoint
+   /v1/ai/meal-analysis, mismo manejo de errores.
 
-5. MARCAS DE HORA. apps/mobile/src/components/GlucoseChart.tsx:
-   HOUR_TICK_STEP (línea 26) pasa de 6 a 1.
-   PROBLEMA A RESOLVER: PIXELS_PER_HOUR es 30 (línea 14); con una etiqueta por
-   hora se solapan. Dibuja la LÍNEA de cada hora pero etiqueta solo cada 2 o 3
-   según quepa (o sube PIXELS_PER_HOUR). Líneas finas en colors.line,
-   etiquetas en colors.muted.
+5. MÓVIL. apps/mobile/src/api.ts: editMealWithInstruction(...).
+   apps/mobile/src/db.ts: updateMealFromEdit(db, id, patch) que actualice
+   macros + note + confirmedCarbsG. OJO: los carbos confirmados viven
+   DUPLICADOS en carb_events (source 'meal_confirmed', pareado por
+   timestamp) — reusa el propagador de updateMealCarbsAndNoteRows o los dos
+   se bifurcan. Y aiEstimatedCarbsG/aiAnalysisId son el registro de lo que
+   la IA dijo: se REEMPLAZAN cuando hay análisis nuevo, no se borran.
+
+6. UI: apps/mobile/src/components/MealEditModal.tsx (nuevo). Tres caminos,
+   los mismos que al crear más el propio de edición:
+     a. Foto → re-analiza y reemplaza.
+     b. Texto → estima desde descripción.
+     c. "Explícale el cambio" → instrucción en lenguaje natural.
+   CONFIRMACIÓN OBLIGATORIA: la IA propone, se muestra el antes/después
+   campo por campo, y no se guarda nada hasta que ella toca Guardar.
+   Engánchalo desde el branch `meal` de TimelineDetailModal.tsx (hoy solo
+   muestra el campo de nota).
+
+FRONTERA DE SEGURIDAD (AGENTS.md, no negociable):
+- La IA propone macros; NUNCA insulina. Si la comida tiene dosis registrada,
+  la edición no la toca — de hecho la dosis ni siquiera se envía.
+- macrosSource pasa a 'ai' o 'mixed' según corresponda; nunca a 'user' por
+  una edición de IA.
+- Los carbos confirmados los sigue escribiendo ella. La IA los sugiere.
 
 CIERRE OBLIGATORIO (CLAUDE.md § Cierre de corrida):
 - pnpm verify en verde.
 - npx expo export:embed --eager --platform android --dev false desde
-  apps/mobile, para reproducir el bundle de Metro ANTES de gastar build.
-- Actualiza docs/CODE_MAP.md (BottomNav, icons/, branding.ts) y marca la
-  Fase 16 como completada en docs/ROADMAP_V0.2.md.
-- docs/DEEPAGENT_REDEPLOY_PROMPT.md: agrega la fila "no requirió redeploy".
-- domain-safety-reviewer NO hace falta si no tocas packages/domain ni textos
-  sobre dosis. Si terminas tocándolos, sí.
+  apps/mobile, ANTES de gastar build. Metro NO reescribe .js→.ts en imports
+  relativos: si escribes './algo.js' en un paquete, tsc y vitest pasan y el
+  build muere. Ya pasó dos veces.
+- Iconos: SIEMPRE por subpath, nunca desde el barrel. Metro no hace
+  tree-shaking (medido: 1.263 → 3.088 módulos por el barrel; 1.316 por
+  subpath). Archivo en kebab-case.
+    import Plus from 'lucide-react-native/icons/plus';   // ✅
+    import { Plus } from 'lucide-react-native';          // ❌
+- domain-safety-reviewer: OBLIGATORIO (tocas packages/ai y packages/domain).
+- docs/CODE_MAP.md: MealEditModal, requestsInsulinAdvice, updateMealFromEdit.
+- docs/AI_CHAT_ARCHITECTURE.md § 3: la edición por instrucción es
+  exactamente el patrón que va a usar el chat. Anótala como W con su nota
+  de seguridad.
+- docs/DEEPAGENT_REDEPLOY_PROMPT.md: esta corrida SÍ toca apps/api →
+  documenta el redeploy, NO lo dispares.
+- docs/ROADMAP_V0.2.md: marca la Fase 17 completada.
+- Reescribe docs/PROMPT_SIGUIENTE_CORRIDA.md apuntando a la Fase 18.
 - Commit + push a claude/revision-build-prep-b6p20n.
 
-Si sobra contexto después de la Fase 16, sigue con la Fase 17 (editar con IA)
-leyendo su sección del roadmap. Si no, para en un commit limpio y dime dónde
-quedaste.
-
-Haz el build al final solo si todo quedó verde.
+NO hagas el build al final: reporta los cambios y espera aprobación.
 ```
 
 ---
 
-## Por qué este prompt y no otro
+## Por qué la Fase 17 y no la 18
 
-- **La Fase 16 es la base de las demás.** Las Fases 17 y 18 agregan pantallas
-  que tienen que colgar de la barra nueva; hacerlas antes obligaría a rehacer
-  la navegación después.
-- **Es la única de las tres que no toca el backend**, así que no arrastra la
-  pregunta del redeploy ni gasta créditos de Abacus.
-- **Cabe en una corrida.** Las Fases 17 y 18 juntas no caben con la 16, y
-  partirlas a la mitad deja la app en un estado peor que antes.
+- **La 18 depende de la 17.** El catálogo editable de la Fase 18 edita
+  alimentos con IA por texto — es el mismo modo de instrucción que se
+  construye acá. Hacer la 18 primero significaría escribirlo dos veces.
+- **Es el bug de uso más frecuente que queda.** Una comida mal registrada hoy
+  se borra y se rehace; no se corrige.
 
-## Ruta completa sin build nuevo (contexto, no para pegar)
+## Ruta sin build nuevo (contexto, no para pegar)
 
 | Fase | Alcance | ¿Build? | ¿Redeploy? |
 |---|---|---|---|
-| **16** | Barra inferior, swipe, iconos, marcas de hora | No (JS) | No |
+| ~~16~~ | ~~Barra inferior, swipe, iconos, marcas de hora~~ | Hecho (`98acb218`) | No |
 | **17** | Editar con IA (foto, texto, "explícale el cambio") | No (JS) | **Sí** — modo nuevo en `/v1/ai/meal-analysis` |
 | **18** | Catálogo editable, porciones, pregunta de 3 salidas | No (JS) | Solo la parte de editar catálogo con IA |
 
-Las tres se acumulan en **un solo build al final**. Las Fases 19
-(notificaciones) y 20 (widget) quedan fuera: ambas tocan configuración nativa
-y **cada una necesita su propio build**, así que no entran en una ruta "sin
-build".
+Las Fases 19 (notificaciones) y 20 (widget) tocan configuración nativa y
+**cada una necesita su propio build**, así que quedan fuera de cualquier ruta
+"sin build".
