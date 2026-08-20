@@ -1781,9 +1781,42 @@ instalaciones anteriores, así que cambiar sus propiedades en código **no hace
 nada**. Cambiar el sonido de un canal existente obliga a **crear un canal con
 un id nuevo**.
 
-**Necesita build**: los iconos pequeños de notificación de Android tienen que
-ser drawables monocromos con transparencia, configurados vía `app.json`. No es
-JS.
+### Hasta dónde se puede diferenciar, verificado contra la versión instalada
+
+Esto se comprobó leyendo `expo-notifications@57` en `node_modules`, no de
+memoria, porque marca el techo de la fase.
+
+`NotificationContentAndroid` expone exactamente **cuatro** campos por
+notificación: `badge`, `color`, `priority`, `vibrationPattern`. No hay
+`smallIcon` ni `largeIcon`. Y el config plugin
+(`withNotificationsAndroid`) toma **un** `icon` y **un** `color`, que compila
+al recurso fijo `@drawable/notification_icon`.
+
+**Se puede, sin código nativo:**
+
+| Recurso | Alcance | Impacto |
+|---|---|---|
+| Emoji al inicio del título | Por notificación | El más alto. Es texto, se ve grande y es lo que hacen las apps reales para distinguir tipos |
+| `content.color` | Por notificación | Android tiñe con él el icono pequeño y el nombre de la app |
+| Título propio y explícito | Por notificación | Alto |
+| **Un canal por tipo de alarma** | Por canal | Alto, y es el camino nativo correcto: cada canal trae su propio sonido, su propia vibración **y su propio interruptor en los ajustes de Android**, así que la usuaria puede silenciar "corrección" sin perder "capilar" |
+| `priority` / importancia | Por canal | Medio |
+
+**NO se puede sin salir de `expo-notifications`:** un **icono pequeño
+distinto por tipo**. El icono de la barra de estado es uno solo para toda la
+app, fijado en tiempo de compilación. Cambiar eso exige un config plugin
+propio que agregue varios drawables y llame a `setSmallIcon` por
+notificación — es trabajo nativo de verdad, no una prop.
+
+**Conclusión de diseño**: la diferenciación se apoya en **emoji + color +
+título + canal por tipo**, no en el icono de la barra de estado. Con eso
+alcanza para que las tres alarmas se distingan de un vistazo. El icono
+distinto por tipo se evalúa aparte, y solo si con lo anterior no basta.
+
+**Sigue necesitando build** aunque el icono sea uno solo: los canales nuevos
+y el drawable se fijan en configuración nativa. Y ojo con lo de siempre —
+Android congela las propiedades de un canal al crearlo, así que los canales
+por tipo tienen que nacer con ids nuevos.
 
 ---
 
