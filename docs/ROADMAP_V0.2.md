@@ -316,6 +316,14 @@ persistencia de datos de salud, o `packages/cgm`.
 | **12** | 🟡 **Parte descriptiva completada (2026-08-19)**, en la sub-página "Comidas" del Resumen: patrones por franja horaria (`nutrition-insights.ts`) — promedio de carbohidratos confirmados e insulina por franja, y % de dosis rápidas seguidas de una lectura en rango a 1/2/3 h, con mínimo de muestra y advertencia de que es observacional. Pendiente el resto de la fase: insights conversacionales//adaptativos vía el chat (depende de la Fase 8). Nunca ajusta dosis. | 8, 11 |
 | **13** | 🟡 **Grupos A, B y C completados (2026-08-19)**. Grupo A: ítems 1, 2, 4, 9 y 11. Grupo B: ítems 3, 5, 10a y 12. Grupo C: ítems 7, 8 y **la conexión al sensor por usuaria** (ver § "Conexión al sensor" más abajo — se descubrió que la app era de un solo usuario). Queda pendiente el ítem **10b** (elegir mmol/L, que resultó ser un cambio de modelo de datos y no de presentación). El ítem 6 no es construible hasta la Fase 8 (chat). Ver detalle abajo. | 11 |
 
+| **14** | ✅ **Completada (2026-08-20).** Pantalla de Nutrición: metas de calorías/macros y patrones de grasa/proteína vs. glucosa tardía. Ver detalle abajo. | 1, 7 |
+| **15** | ✅ **Completada (2026-08-20).** La IA estima todos los macros (foto y texto) y arma el catálogo propio de alimentos. Ver detalle abajo. | 14 |
+| **16** | **Barra inferior, swipe y sistema de iconos.** Reorganiza la navegación entera y reemplaza los glifos Unicode por iconos SVG reales. **Todo JS: no necesita build nativo.** Ver detalle abajo. | 14, 15 |
+| **17** | **Editar entradas con la misma potencia que crearlas**, incluida la IA en modo edición (foto, texto, y "explícale el cambio"). Ver detalle abajo. | 15 |
+| **18** | **Catálogo de comidas editable** (pantalla propia), porciones, y la pregunta de "¿editar la del catálogo o crear una nueva?". Ver detalle abajo. | 15, 17 |
+| **19** | **Notificaciones distinguibles**: un icono, un color y un título propios por tipo de alarma. **Necesita build nativo** (los iconos de notificación de Android son recursos drawable). Ver detalle abajo. | 16 (usa el sistema de iconos) |
+| **20** | **Widget de pantalla de inicio** 4×3. **Necesita build nativo** (config plugin). Ver detalle abajo. | 8 (para los accesos al chat), 16 |
+
 No se numeró por prioridad de negocio sino por dependencia técnica — el
 orden de ejecución real se acuerda con Verónica fase por fase, no se asume.
 
@@ -1606,6 +1614,209 @@ escribirlo no impide guardar la comida.
   corregirlo o borrarlo. Es lo primero a agregar si el catálogo se usa mucho.
 - `macrosSource` se guarda pero **no se muestra** todavía en el reporte
   PDF/Excel que va al médico.
+
+## Fase 16 — Barra inferior, swipe y sistema de iconos (planificada 2026-08-20)
+
+Pedido de Verónica. Hoy Ajustes está bien arriba a la derecha, pero Resumen y
+Nutrición no: son navegación, no configuración, y están escondidos en la misma
+esquina.
+
+### Barra inferior
+
+Fija y sticky (sobrevive al scroll), con cinco destinos en este orden:
+
+| Posición | Destino | Icono |
+|---|---|---|
+| 1 (izq) | Nutrición | (mover el actual ◍) |
+| 2 | Catálogo de comidas | plato |
+| 3 (centro, **más grande**) | Nueva entrada | **+** |
+| 4 | Chat de IA (reservado, Fase 8) | **el logo de la app** |
+| 5 (der) | Resumen | (mover el actual ◔) |
+
+- **Tres botones se MUEVEN, no se duplican**: nueva entrada (hoy es el botón
+  grande del medio de la pantalla principal), Resumen y Nutrición. El botón
+  de "Nueva entrada" que existe hoy en el cuerpo de la pantalla **se elimina**.
+- Ajustes **se queda** arriba a la derecha: es configuración, no navegación.
+- El botón del chat queda visible pero inerte hasta la Fase 8, con un aviso
+  al tocarlo. Ponerlo desde ya fija el layout y evita rehacer la barra después.
+
+### El logo, por variable
+
+`APP_LOGO` en `apps/mobile/src/branding.ts`. **Ningún componente escribe el
+nombre del archivo**; cambiar el logo debe ser cambiar una línea. Ver la skill
+`/iconography`.
+
+### Swipe
+
+Navegación lateral entre los cinco destinos, además del toque. Con
+`PanResponder`, sin librería nueva.
+
+**El riesgo concreto**: `GlucoseChart` **es un `ScrollView` horizontal**. El
+reconocedor tiene que exigir desplazamiento horizontal claramente mayor que el
+vertical y no activarse si el gesto empezó sobre el gráfico, o se le roba el
+scroll al gráfico principal de la app.
+
+### Los tres botones del sistema Android
+
+Con edge-to-edge (obligatorio desde SDK 54) la barra de navegación de Android
+se dibuja **encima** del contenido. Una barra a `bottom: 0` sin inset queda
+debajo de los botones del sistema y es intocable.
+
+Se resuelve sumando `useSafeAreaInsets().bottom` al padding — **no**
+ocultando la barra del sistema. Esconderla y reaparecerla con el scroll pelea
+con el gesto de volver atrás y no es lo que hacen las apps nativas.
+
+### Iconos
+
+Reemplazar los glifos Unicode (`◔ ◍ ••• ƒ(x) ◎`) por componentes SVG en
+`apps/mobile/src/components/icons/`, con `react-native-svg` — **que ya es
+dependencia**, así que no se instala nada. Ver `/iconography` para las
+convenciones (tamaño, trazo, color desde `theme.ts`, nunca color solo).
+
+### Gráfico principal: marcas cada hora
+
+`HOUR_TICK_STEP` en `GlucoseChart.tsx` pasa de 6 a **1**. Con marcas cada seis
+horas es imposible ubicar a qué hora fue una medición.
+
+**Ojo con la densidad**: a `PIXELS_PER_HOUR = 30` una etiqueta por hora se
+solapa. Hay que dibujar la línea de cada hora pero **etiquetar solo algunas**
+(cada 2 o 3 según el ancho), o subir `PIXELS_PER_HOUR`. Las líneas finas y
+recesivas (`colors.line`), la etiqueta en `colors.muted`.
+
+---
+
+## Fase 17 — Editar una entrada con la misma potencia que crearla (planificada 2026-08-20)
+
+Hoy se puede crear una comida con IA pero **no editarla con IA**. Si guardaste
+solo los carbohidratos, no hay forma de decirle después "esto era un sándwich
+de queso" y que complete los macros.
+
+Al editar tiene que haber **exactamente las mismas opciones que al crear**:
+
+1. **Foto** — agregar o reemplazar la foto y re-analizar.
+2. **Texto** — describir la comida y que la IA estime.
+3. **Solo en modo edición: explicarle el cambio en lenguaje natural.**
+   "Agrégale una cucharada de aceite", "en realidad fue media porción",
+   "esto era pan integral, no blanco". La IA recibe **la entrada actual + la
+   instrucción** y devuelve la entrada modificada.
+
+**Confirmación obligatoria antes de guardar.** La IA propone, la usuaria
+confirma. Es el mismo patrón que ya rige en toda la app y lo exige
+`AGENTS.md`: la estimación de la IA nunca se escribe sola.
+
+**Frontera de seguridad**: la IA puede proponer macros; **no puede proponer
+insulina**. Si la entrada tiene una dosis registrada, la instrucción de
+edición no la toca. Esto necesita `domain-safety-reviewer` y probablemente un
+guardrail nuevo en `packages/ai`.
+
+**Backend**: la edición por instrucción es un modo nuevo de
+`/v1/ai/meal-analysis` (o un endpoint hermano) → **requiere redeploy**.
+Anotarlo en `docs/DEEPAGENT_REDEPLOY_PROMPT.md` cuando se construya.
+
+---
+
+## Fase 18 — Catálogo de comidas editable y porciones (planificada 2026-08-20)
+
+### Pantalla de catálogo
+
+Hoy el catálogo se llena solo pero **no hay dónde verlo ni corregirlo**: si la
+IA guardó un alimento con una estimación mala, queda mala para siempre. La
+función de borrado existe en el código, sin botón.
+
+La pantalla necesita: listar, buscar, editar a mano, **editar con IA por
+texto** ("el arroz que guardaste está mal, son 28 g de carbos por 100 g"), y
+borrar.
+
+### Porciones
+
+- Al crear un alimento, la IA **o** la usuaria definen el tamaño de la
+  porción de referencia (ej. 100 g).
+- Al reutilizarlo, se elige **cuántas porciones**, de **0,1 a 10**.
+- El tamaño de la porción de referencia **también se edita desde el catálogo**.
+
+### La regla que evita corromper el catálogo
+
+**El único campo editable sin tocar el catálogo es "Porción".** Cambiar la
+cantidad de porciones es un dato de *esa comida*, no del alimento.
+
+Cualquier otro cambio (macros, nombre, tamaño de la porción de referencia)
+sobre una comida que vino del catálogo dispara, **antes de guardar**, una
+pregunta de tres salidas:
+
+1. **Editar el alimento del catálogo** — corrige el alimento para siempre.
+2. **Crear uno nuevo** — deja el original intacto y guarda una variante.
+3. **No guardar en el catálogo** — el cambio vale solo para esta comida.
+
+Sin esa pregunta, corregir una comida puntual corrompería silenciosamente el
+alimento que se reutiliza en todas las demás.
+
+---
+
+## Fase 19 — Notificaciones distinguibles (planificada 2026-08-20)
+
+**Es un problema de seguridad, no de estética.** Con las tres alarmas
+(post-comida, corrección, capilar) llegando con el mismo símbolo y color, se
+vuelven indistinguibles y se ignoran todas — incluidas las que importan.
+Fatiga de alarma.
+
+Cada tipo lleva icono propio, color propio y un título que diga de qué es.
+
+### Sobre si suenan: lo que se verificó en el código
+
+Los canales están **bien configurados** (`apps/mobile/src/notifications.ts`):
+`reminders-sound` es `importance: HIGH` + `sound: 'default'` +
+`vibrationPattern: [0]`, y `reminders-vibrate` es `sound: null` + patrón de
+vibración. Con la app **cerrada o en segundo plano, suena**.
+
+**Pero con la app abierta, no suena**, y es un bug: el
+`setNotificationHandler` devuelve `shouldPlaySound: false`, que gobierna la
+presentación en primer plano. Si Verónica probó las alarmas con la app
+abierta, escuchó silencio aunque hubiera elegido "sonido". Arreglarlo es
+respetar el estilo elegido también en primer plano.
+
+**Segunda trampa, ya documentada en el propio archivo**: Android **congela el
+sonido y la vibración de un canal en el momento de crearlo** e ignora los
+cambios posteriores. Los canales ya existen en el teléfono de Verónica desde
+instalaciones anteriores, así que cambiar sus propiedades en código **no hace
+nada**. Cambiar el sonido de un canal existente obliga a **crear un canal con
+un id nuevo**.
+
+**Necesita build**: los iconos pequeños de notificación de Android tienen que
+ser drawables monocromos con transparencia, configurados vía `app.json`. No es
+JS.
+
+---
+
+## Fase 20 — Widget de pantalla de inicio (planificada 2026-08-20)
+
+Widget de **4 de ancho × 3 de alto**, en la pantalla de inicio (no en
+notificaciones):
+
+| Fila | Contenido |
+|---|---|
+| 1 | Glucemia actual + botón de actualizar (refresca el widget sin pasar por la notificación) |
+| 2 | Cuatro accesos de un toque: comida manual (con su insulina), corrección (calcular), insulina basal, cetonas |
+| 3 | Comida con foto (1 celda) + entrada al chat de IA (3 celdas) |
+
+### Viabilidad, verificada
+
+Es factible en Expo por dos vías: `react-native-android-widget` (comunidad,
+con config plugin, funciona con CNG/EAS) o `expo-widgets` (más nuevo,
+componentes de Expo UI, sin setup nativo manual). Hay que evaluar cuál soporta
+SDK 57 al momento de construirlo.
+
+**Las dos requieren un config plugin → cambio nativo → build.** No hay forma
+de entregar el widget en una corrida "sin build".
+
+### Fronteras que el widget hereda
+
+- La glucemia del widget **nunca puede presentarse como en vivo si está
+  atrasada**: `assessFreshness` y `sourceTimestamp` aplican igual que en la
+  app. Un widget que muestra un número viejo sin marcarlo es más peligroso que
+  la app, porque se mira de pasada.
+- Los accesos de insulina **abren la app**; el widget no calcula ni registra
+  dosis por su cuenta.
+- Depende de la Fase 8 para las celdas de chat.
 
 ## Verificación por fase
 

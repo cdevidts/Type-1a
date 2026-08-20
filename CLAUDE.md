@@ -36,6 +36,27 @@ específica en el marketplace hoy; `/ui-screen` + `dataviz` son lo más
 afinado disponible, así que la disciplina recae en invocarlas siempre, no en
 sumar herramientas.
 
+**Tabla de disparo automático (2026-08-20).** Ninguna de estas se pide por
+prompt: se invocan solas cuando la corrida toca lo que la fila describe. Si
+una corrida toca varias filas, se cargan varias.
+
+| Si la corrida toca… | Invoca, sin que te lo pidan |
+|---|---|
+| cualquier `.tsx` con JSX, `App.tsx`, `apps/mobile/src/components/` | `/ui-screen` |
+| un gráfico, una barra de progreso, un medidor, una paleta de datos | `dataviz` (global) |
+| la barra inferior, el swipe entre secciones, insets de sistema, agregar/mover un destino de nivel superior | `/app-shell` |
+| poner o cambiar un símbolo en pantalla, el logo, o el aspecto de una notificación | `/iconography` |
+| `packages/domain`, `packages/ai`, `packages/cgm`, `.env`, o texto visible sobre dosis/insulina | subagente `domain-safety-reviewer` |
+| un `CGMProvider` nuevo | `/new-cgm-provider` |
+| cerrar cualquier corrida | `/verify` |
+
+Se volvió a buscar en el marketplace (2026-08-20) skills de React Native,
+iconos, widgets de Android y navegación: **no existe ninguna**. Lo único
+adyacente es el plugin `design` (crítica, design-system, ux-copy), que está
+orientado a Figma y handoff, no a este stack. Por eso `/app-shell` y
+`/iconography` se escribieron **en este repo**: la alternativa era no tener
+nada. Antes de crear una skill nueva, revisa que no exista ya una fila acá.
+
 ## Cómo navegar el repo
 
 Este es un monorepo pnpm (`apps/api`, `apps/mobile`, `packages/domain`,
