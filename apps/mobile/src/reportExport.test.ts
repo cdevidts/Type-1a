@@ -1,4 +1,4 @@
-import type { CGMReading, InsulinEvent } from '@type1a/schemas';
+import type { CGMReading, InsulinEvent, MealEvent } from '@type1a/schemas';
 import type { ReportRow } from '@type1a/domain';
 import * as XLSX from 'xlsx';
 import { describe, expect, it } from 'vitest';
@@ -195,5 +195,33 @@ describe('declaración de registros ilegibles (integridad del reporte)', () => {
     const withoutSummaryText = XLSX.utils.sheet_to_csv(withoutSummary.Sheets[withoutSummary.SheetNames[0]!]!);
     expect(withoutSummaryText).toContain('Registros ilegibles excluidos');
     expect(withoutSummaryText).toContain('4');
+  });
+});
+
+describe('sección de grasa/proteína en el reporte (Fase 14)', () => {
+  function mealAt(dayOffset: number, fatG: number, proteinG: number): MealEvent {
+    const at = new Date(Date.UTC(2026, 7, 1 + dayOffset, 12, 0, 0)).toISOString();
+    return { id: `m${dayOffset}`, timestamp: at, createdAt: at, confirmedCarbsG: 50, fatG, proteinG } as MealEvent;
+  }
+
+  it('no aparece la sección con datos insuficientes, pero lo dice', () => {
+    const html = reportHtml({ readings: [], rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 0 }, '7 días');
+    expect(html).toContain('Grasa y proteína frente a la glucosa tardía');
+    expect(html).toContain('Todavía no hay suficientes comidas');
+  });
+
+  it('nunca sugiere una acción con insulina, que es la respuesta clínica a este patrón', () => {
+    const meals = [
+      mealAt(0, 5, 5), mealAt(1, 5, 5), mealAt(2, 5, 5),
+      mealAt(3, 60, 60), mealAt(4, 60, 60), mealAt(5, 60, 60),
+    ];
+    const html = reportHtml(
+      { readings: [], rows: [], insulin: [], carbs: [], meals, unreadableCount: 0 },
+      '30 días',
+    );
+    const section = html.slice(html.indexOf('Grasa y proteína frente a la glucosa tardía'));
+    expect(section).not.toMatch(/bolo (extendido|dual)/iu);
+    expect(section).not.toMatch(/\b(deberías|aumenta|reduce|ajusta)\b/iu);
+    expect(section).toContain('nunca decide ni sugiere una dosis');
   });
 });

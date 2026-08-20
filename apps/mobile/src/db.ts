@@ -13,6 +13,7 @@ import {
   InsulinEventSchema,
   MealEpisodeMetricsSchema,
   MealEventSchema,
+  NutritionProfileSchema,
   NoteEventSchema,
   TherapyProfileSchema,
   VitalsEventSchema,
@@ -24,6 +25,7 @@ import {
   type InsulinEvent,
   type MealEpisodeMetrics,
   type MealEvent,
+  type NutritionProfile,
   type NoteEvent,
   type TherapyProfile,
   type VitalsEvent,
@@ -1619,6 +1621,32 @@ export async function deleteSensorReadings(db: SQLiteDatabase): Promise<number> 
     "DELETE FROM cgm_readings WHERE json_extract(payload, '$.origin') = 'real'",
   );
   return result.changes;
+}
+
+/**
+ * Perfil de nutrición (Fase 14). Va en `app_settings` como JSON y no en su
+ * propia tabla: es una preferencia, no un parámetro de terapia, y a diferencia
+ * de `therapy_profile` no alimenta ningún cálculo de dosis. Si no decodifica
+ * se devuelve `null` y la pantalla ofrece configurarlo de nuevo — acá sí es
+ * seguro caer a "no configurado", porque no hay ningún placeholder que se
+ * pueda confundir con un valor elegido por la usuaria.
+ */
+export const NUTRITION_PROFILE_KEY = 'nutritionProfile';
+
+export async function getNutritionProfile(db: SQLiteDatabase): Promise<NutritionProfile | null> {
+  const raw = await getSetting(db, NUTRITION_PROFILE_KEY);
+  if (raw === null) return null;
+  const parsed = NutritionProfileSchema.safeParse(safeJsonParse(raw));
+  return parsed.success ? parsed.data : null;
+}
+
+export async function saveNutritionProfile(db: SQLiteDatabase, profile: NutritionProfile): Promise<void> {
+  const parsed = NutritionProfileSchema.parse(profile);
+  await setSetting(db, NUTRITION_PROFILE_KEY, JSON.stringify(parsed));
+}
+
+export async function clearNutritionProfile(db: SQLiteDatabase): Promise<void> {
+  await db.runAsync('DELETE FROM app_settings WHERE key = ?', NUTRITION_PROFILE_KEY);
 }
 
 export async function getSetting(db: SQLiteDatabase, key: string): Promise<string | null> {

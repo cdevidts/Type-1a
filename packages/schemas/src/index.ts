@@ -51,6 +51,27 @@ export const CGMProviderStatusSchema = z.object({
 });
 export type CGMProviderStatus = z.infer<typeof CGMProviderStatusSchema>;
 
+/**
+ * Perfil antropométrico para las metas de alimentación (Fase 14).
+ *
+ * Separado de `TherapyProfileSchema` a propósito: aquel guarda **parámetros
+ * de terapia** que alimentan cálculos de dosis y que `AGENTS.md` prohíbe
+ * inferir; este guarda datos corporales y una preferencia de meta, que la app
+ * sí puede usar para estimar una referencia nutricional. Mezclarlos haría
+ * fácil que un cambio en la meta de peso tocara sin querer algo que llega a
+ * una jeringa.
+ */
+export const NutritionProfileSchema = z.object({
+  sex: z.enum(['female', 'male']),
+  ageYears: z.number().int().min(12).max(110),
+  heightCm: z.number().min(90).max(250),
+  weightKg: z.number().min(25).max(350),
+  activityLevel: z.enum(['sedentary', 'light', 'moderate', 'active', 'veryActive']),
+  goal: z.enum(['lose', 'maintain', 'gain', 'trackOnly']),
+  updatedAt: IsoTimestampSchema,
+});
+export type NutritionProfile = z.infer<typeof NutritionProfileSchema>;
+
 export const TherapyProfileSchema = z.object({
   glucoseUnit: GlucoseUnitSchema,
   targetGlucose: z.number().positive().finite(),

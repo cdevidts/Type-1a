@@ -6,6 +6,8 @@ export * from './freshness';
 export * from './glucose-metrics';
 export * from './glucose-thresholds';
 export * from './ketones';
+export * from './macro-glucose';
+export * from './nutrition-targets';
 export * from './meal';
 export * from './mysugr-import';
 export * from './nutrition-insights';

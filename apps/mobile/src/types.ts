@@ -52,6 +52,21 @@ export interface ReportExport {
   unreadableCount: number;
 }
 
+/**
+ * Lo que la pantalla de Nutrición necesita para un día concreto, más la
+ * ventana larga que alimenta los patrones de grasa/proteína vs. glucosa.
+ * `readings` incluye las lecturas de la ventana larga porque la respuesta a
+ * una comida puede caer al día siguiente (un almuerzo a las 21:00 mide hasta
+ * las 02:00).
+ */
+export interface NutritionDayData {
+  dayMeals: MealEvent[];
+  dayCarbs: CarbEvent[];
+  patternMeals: MealEvent[];
+  readings: CGMReading[];
+  unreadableCount: number;
+}
+
 export type QuickRoute = 'carbs' | 'rapid' | 'basal' | 'correction';
 
 /**

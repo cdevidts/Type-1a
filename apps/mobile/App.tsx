@@ -37,6 +37,7 @@ import { MealModal, type ConfirmedMealDraft } from './src/components/MealModal';
 import { NumericEntryModal } from './src/components/NumericEntryModal';
 import { SettingsModal } from './src/components/SettingsModal';
 import { KetonesModal } from './src/components/KetonesModal';
+import { NutritionModal } from './src/components/NutritionModal';
 import { OnboardingModal } from './src/components/OnboardingModal';
 import { SummaryModal } from './src/components/SummaryModal';
 import { Timeline } from './src/components/Timeline';
@@ -72,6 +73,8 @@ import {
   getInsulinEvents,
   getMealAlarmOffsets,
   getMealEvents,
+  getNutritionProfile,
+  saveNutritionProfile,
   getNoteEvents,
   getPendingInsulinAssociations,
   createDecodeTally,
@@ -122,7 +125,8 @@ import {
 } from './src/notifications';
 import { capillaryReminderTimes } from './src/format';
 import { colors, radius, spacing } from './src/theme';
-import type { PendingInsulinAssociation, QuickRoute, ReminderAlertStyle, ReportExport, SummaryData, TimelineEditPayload, TimelineItem } from './src/types';
+import type { NutritionProfile } from '@type1a/schemas';
+import type { NutritionDayData, PendingInsulinAssociation, QuickRoute, ReminderAlertStyle, ReportExport, SummaryData, TimelineEditPayload, TimelineItem } from './src/types';
 
 /** Flag de "ya vio la bienvenida"; vive en `settings`, no en el perfil de terapia. */
 const ONBOARDING_SEEN_KEY = 'onboardingSeenAt';
@@ -158,6 +162,8 @@ function Type1AApp() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [ketonesOpen, setKetonesOpen] = useState(false);
+  const [nutritionOpen, setNutritionOpen] = useState(false);
+  const [nutritionProfile, setNutritionProfile] = useState<NutritionProfile | null>(null);
   const [showGlucoseOnLockScreen, setShowGlucoseOnLockScreen] = useState(false);
   const [mealAlarmOffsets, setMealAlarmOffsets] = useState<number[]>([...DEFAULT_MEAL_ALARM_OFFSETS_MINUTES]);
   const [correctionReminder, setCorrectionReminder] = useState<CorrectionReminderSettings>({
@@ -191,7 +197,7 @@ function Type1AApp() {
     // latestLiveReading() finds the true latest live point regardless of
     // how wide this window is.
     const from = new Date(to.getTime() - 30 * 24 * 60 * 60_000);
-    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending, mealOffsets, correctionSettings, alertStyle, capillarySettings, onboardingSeen, isLegacyBackendInstall] = await Promise.all([
+    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending, mealOffsets, correctionSettings, alertStyle, capillarySettings, onboardingSeen, isLegacyBackendInstall, nutrition] = await Promise.all([
       getCGMReadings(db, from, to, readTally),
       getTimeline(db),
       getTherapyProfile(db),
@@ -205,6 +211,7 @@ function Type1AApp() {
       getCapillaryReminderSettings(db),
       getSetting(db, ONBOARDING_SEEN_KEY),
       resolveLegacyBackendSensor(db, LEGACY_BACKEND_SENSOR_KEY),
+      getNutritionProfile(db),
     ]);
     setReadings(cached);
     setReadingsUnreadable(readTally.unreadable);
@@ -227,6 +234,7 @@ function Type1AApp() {
     setReminderAlertStyle(alertStyle);
     setCapillaryReminder(capillarySettings);
     setOnboardingDone(onboardingSeen === 'true');
+    setNutritionProfile(nutrition);
     sensorSourceRef.current = await resolveSensorSource(isLegacyBackendInstall);
   }, [db]);
 
@@ -482,6 +490,32 @@ function Type1AApp() {
     [db],
   );
 
+  /**
+   * Dos ventanas distintas a propósito: el día de hoy para las metas, y 90
+   * días para los patrones de grasa/proteína, que necesitan muchas comidas
+   * con macros anotados para tener algo que comparar. Las lecturas cubren la
+   * ventana larga más un margen, porque la respuesta a una comida tardía cae
+   * al día siguiente.
+   */
+  const loadNutritionDay = useCallback(async (): Promise<NutritionDayData> => {
+    const tally = createDecodeTally();
+    const now = new Date();
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const patternStart = new Date(now.getTime() - 90 * 24 * 60 * 60_000);
+    const [patternMeals, dayCarbs, readings] = await Promise.all([
+      getMealEvents(db, patternStart, now, tally),
+      getCarbEvents(db, dayStart, now, tally),
+      getCGMReadings(db, patternStart, now, tally),
+    ]);
+    return {
+      dayMeals: patternMeals.filter((meal) => Date.parse(meal.timestamp) >= dayStart.getTime()),
+      dayCarbs,
+      patternMeals,
+      readings,
+      unreadableCount: tally.unreadable,
+    };
+  }, [db]);
+
   async function exportReport(range: { from: Date; to: Date }): Promise<ReportExport> {
     const tally = createDecodeTally();
     const [readings, insulin, carbs, meals, activities, notes, vitals, hba1c] = await Promise.all([
@@ -672,6 +706,9 @@ function Type1AApp() {
             <Pressable style={styles.settingsButton} onPress={() => { setSummaryOpen(true); }} accessibilityRole="button" accessibilityLabel="Resumen: métricas y patrones">
               <Text style={styles.settingsGlyph}>◔</Text>
             </Pressable>
+            <Pressable style={styles.settingsButton} onPress={() => { setNutritionOpen(true); }} accessibilityRole="button" accessibilityLabel="Nutrición: metas y macronutrientes">
+              <Text style={styles.settingsGlyph}>◍</Text>
+            </Pressable>
             <Pressable style={styles.settingsButton} onPress={() => { setSettingsOpen(true); }} accessibilityLabel="Ajustes">
               <Text style={styles.settingsGlyph}>•••</Text>
             </Pressable>
@@ -839,6 +876,16 @@ function Type1AApp() {
         visible={summaryOpen}
         onClose={() => { setSummaryOpen(false); }}
         onLoadSummary={loadSummary}
+      />
+      <NutritionModal
+        visible={nutritionOpen}
+        onClose={() => { setNutritionOpen(false); }}
+        profile={nutritionProfile}
+        onSaveProfile={async (next) => {
+          await saveNutritionProfile(db, next);
+          setNutritionProfile(next);
+        }}
+        onLoadDay={loadNutritionDay}
       />
       <KetonesModal
         visible={ketonesOpen}

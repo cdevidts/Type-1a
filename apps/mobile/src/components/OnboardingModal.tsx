@@ -91,6 +91,17 @@ const STEPS: Step[] = [
       'Tu contraseña de LibreLinkUp se guarda cifrada en este teléfono y viaja solo hacia Abbott: no pasa por los servidores de Type 1A. Sin sensor conectado la app igual sirve para registrar todo a mano.',
   },
   {
+    title: '¿También quieres cuidar lo que comes?',
+    body:
+      'Además de la diabetes, Type 1A puede seguir tus calorías y macronutrientes: bajar de peso, mantenerte, o simplemente ver qué estás comiendo. Es opcional y puedes activarlo o apagarlo cuando quieras.',
+    bullets: [
+      'Se configura en la pestaña Nutrición (el botón ◍ de arriba), con tu peso, estatura, edad y nivel de actividad.',
+      'Ahí verás algo que el conteo de carbohidratos no muestra: cómo se mueve tu glucosa varias horas después de las comidas altas en grasa y proteína.',
+    ],
+    warning:
+      'Las metas de alimentación son una referencia calculada con ecuaciones poblacionales, no una indicación médica — y menos si vas a bajar de peso usando insulina. Eso se decide con tu equipo clínico.',
+  },
+  {
     title: 'Falta un paso, y lo das tú',
     body:
       'Las calculadoras de dosis quedan bloqueadas hasta que cargues tus parámetros en Ajustes → Terapia: objetivo, factor de corrección e incremento de la pluma.',

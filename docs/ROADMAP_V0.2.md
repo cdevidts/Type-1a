@@ -1355,6 +1355,88 @@ Además:
   de Verónica. Cuando ella conecte su cuenta desde la app, conviene sacarlas
   del entorno de Abacus para que no quede una credencial global viva.
 
+## Fase 14 — Nutrición (2026-08-20)
+
+Pedido de Verónica: una página aparte de la principal donde se lleven de
+verdad los datos de comida que ya se guardaban y no se mostraban, con metas de
+calorías y macros al estilo de Nutria / Fitia / MyFitnessPal, y que **integre
+el cuidado de la diabetes con el de la comida**.
+
+### Lo que se construyó
+
+- **`packages/domain/src/nutrition-targets.ts`** — Mifflin-St Jeor → TDEE →
+  reparto de macros. Puro, con 18 tests.
+- **`packages/domain/src/macro-glucose.ts`** — la integración real entre las
+  dos mitades (ver abajo). 8 tests.
+- **`apps/mobile/src/components/NutritionModal.tsx`** — la pantalla, en tres
+  pestañas: Hoy / Metas / Patrones. Botón ◍ en la barra superior.
+- **`NutritionProfileSchema`** + persistencia en `app_settings`, paso nuevo en
+  el onboarding, `macroColors` en `theme.ts`, y la sección de grasa/proteína
+  en el reporte PDF.
+
+### La decisión de producto que importa
+
+La integración no es poner las dos cosas en la misma app: es **medir lo que el
+conteo de carbohidratos no explica**. La evidencia en diabetes tipo 1 dice que
+la grasa y la proteína mueven la glucosa de forma **retrasada y prolongada**
+—entre 1,5 y 6 h, con la grasa haciendo pico cerca de las 2 h, la proteína
+cerca de las 3,5 h, y un efecto **aditivo** entre las 3 y las 5 h cuando la
+comida es alta en ambas—. Nada de eso se veía en la app, que solo miraba la
+primera hora tras una dosis rápida.
+
+Ahora que se registran proteína y grasa (Fase 13, ítem 7), se puede comparar
+las comidas de mayor y menor carga de grasa+proteína contra el cambio de
+glucosa a 2/3/4/5 h, con los datos de la propia usuaria. Eso es lo que hace
+`macro-glucose.ts`, y va también al reporte que se lleva al médico.
+
+### Las fronteras de seguridad, que acá son estrechas
+
+Esta fase mezcla metas de peso con una app de insulina, que es donde un texto
+mal calibrado hace daño de verdad. Las reglas que quedaron codificadas:
+
+1. **El déficit está capado a 500 kcal/día**, no a los 1000 que usan las
+   calculadoras genéricas. Un déficit agresivo sobre una pauta de insulina que
+   no cambió al mismo tiempo es riesgo de hipoglucemia, no solo de perder
+   músculo.
+2. **Pisos duros**: nunca bajo el metabolismo basal, nunca bajo 1200 kcal
+   (mujeres) / 1500 (hombres). Si un piso muerde, `clampedBy` lo reporta y la
+   pantalla lo dice — una meta corregida en silencio es una meta que la
+   usuaria no puede evaluar.
+3. **La proteína sube en déficit** (1,6 vs 1,2 g/kg): la ADA pide cuidar
+   específicamente la insuficiencia proteica en pérdida de peso intencional.
+4. **Carbohidratos al 50 % de la energía**, el techo del rango que ISPAD
+   recomienda en T1D — no un porcentaje inventado ni una dieta baja en carbos.
+5. **`macro-glucose.ts` describe y nunca acciona.** La respuesta que da la
+   literatura a la subida tardía es *ajustar la insulina* (bolos duales o
+   extendidos). Eso es exactamente lo que `AGENTS.md` prohíbe, y este es el
+   módulo desde donde sería más tentador. Hay un test en
+   `reportExport.test.ts` que falla si la sección del reporte llega a
+   mencionar un bolo extendido o un verbo imperativo de ajuste.
+6. **"Sin anotar" nunca es 0 g.** Sostiene toda la pantalla:
+   `energyFromMacros` devuelve `partial`, el total del día se muestra como un
+   mínimo cuando falta un macro, y una comida sin grasa **o** sin proteína no
+   entra en la comparación de patrones (tratar el ausente como 0 la mandaría
+   al grupo equivocado).
+
+### Paleta
+
+`macroColors` (carbos / proteína / grasa) es **categórica** y deliberadamente
+distinta de `glucoseBands`, que es de **estado** clínico: reusar el color de
+una banda de glucosa para un macro haría que una barra de proteína se leyera
+como "en rango". Validada con el script de la skill `dataviz` contra la
+superficie real de la app — los cinco checks pasan. El par más justo está
+apenas sobre el umbral de daltonismo, así que cada barra lleva siempre su
+etiqueta y sus gramos.
+
+### Pendiente
+
+- Las calorías se derivan de los macros (4/4/9). No hay base de datos de
+  alimentos ni código de barras: quien quiera un seguimiento fino tiene que
+  anotar los macros a mano. Es la diferencia más grande contra Fitia/MFP y el
+  candidato natural a la fase siguiente.
+- `caloriesKcal` existe en `MealEventSchema` pero no tiene campo de entrada:
+  se deriva. Pedirla aparte invita a que no cuadre con los macros.
+
 ## Verificación por fase
 
 - `pnpm verify` (lint + typecheck + test) antes de cerrar cualquier fase.

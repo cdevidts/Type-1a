@@ -73,6 +73,26 @@ docs/
   **siempre mg/dL** de acá en más (ver JSDoc en
   `packages/schemas/src/index.ts`); ningún consumidor debe volver a
   convertir.
+- `nutrition-targets.ts` (2026-08-20, Fase 14) — metas de energía y macros:
+  Mifflin-St Jeor → TDEE → reparto. **Cabecera con frontera de seguridad
+  obligatoria de leer**: el déficit está capado a 500 kcal/día (no 1000 como
+  las calculadoras genéricas) porque un déficit agresivo sobre una pauta de
+  insulina que no cambió es riesgo de hipoglucemia; hay pisos duros (BMR y
+  1200/1500 kcal) y `clampedBy` para que la interfaz diga cuándo un piso
+  modificó la meta en vez de corregirla en silencio. Carbohidratos al 50 % de
+  la energía (rango ISPAD para T1D), proteína por kg de peso (sube en
+  déficit, ADA). `energyFromMacros` devuelve `partial`: un total sin todos los
+  macros es un piso, no el valor real.
+- `macro-glucose.ts` (2026-08-20, Fase 14) — **el módulo más delicado del
+  repo.** Compara las comidas de mayor y menor carga de grasa+proteína contra
+  el cambio de glucosa a 2/3/4/5 h. Horizontes distintos a los de
+  `nutrition-insights.ts` a propósito: la evidencia en T1D describe una subida
+  **retrasada y prolongada** (1,5–6 h, aditiva cuando la comida es alta en
+  ambos macros). La respuesta que da la literatura a ese patrón es ajustar la
+  insulina con bolos duales o extendidos — **nada de eso puede aparecer acá ni
+  en la pantalla**; el módulo solo describe. Mide el cambio desde el momento
+  de comer, no la glucosa absoluta. Solo entran comidas con grasa **y**
+  proteína anotadas.
 - `ketones.ts` (2026-08-19) — `assessKetones()` y las bandas de cetonas **en
   sangre** (0,6 / 1,5 / 3,0 mmol/L). Convención clínica fija, del mismo tipo
   que `glucose-thresholds.ts`: describe una medición ya hecha, nunca calcula
@@ -332,6 +352,15 @@ docs/
   al sensor" y la guía de usuaria `docs/CONECTAR_SENSOR.md`. Nota: si la ruta
   del dispositivo falla **no** se cae al backend, a propósito — sería mostrar
   el sensor de otra persona como propio.
+- `src/components/NutritionModal.tsx` (2026-08-20, Fase 14) — la pantalla de
+  Nutrición: metas de calorías/macros y, por fin, los datos de comida que se
+  guardaban sin mostrarse (proteína, grasa, fibra, energía). Tres pestañas:
+  Hoy (progreso del día), Metas (perfil + referencia diaria) y Patrones (la
+  integración con la diabetes: grasa/proteína vs. glucosa tardía). Separada de
+  la pantalla principal a propósito — la glucosa se mira muchas veces al día,
+  la alimentación se revisa. Todo el cálculo vive en `packages/domain`.
+  Paleta: `macroColors` en `theme.ts` (categórica, validada, **distinta de
+  `glucoseBands`** que es de estado clínico).
 - `src/components/KetonesModal.tsx` (2026-08-19) — registro de cetonas en
   sangre. Las bandas viven en `packages/domain/src/ketones.ts`, no acá.
 - `src/rowDecode.ts` (2026-08-19) — decodificación tolerante de filas de

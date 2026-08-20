@@ -38,6 +38,32 @@ export const colors = {
  * descansa solo en el color.** Cada banda se muestra siempre con su etiqueta
  * y su rango en mg/dL al lado.
  */
+/**
+ * Macronutrientes (Fase 14). Paleta **categórica** — tres cosas distintas,
+ * no una escala — y deliberadamente separada de `glucoseBands`, que es de
+ * **estado** clínico: reusar el color de una banda de glucosa para un macro
+ * haría que una barra de proteína se leyera como "en rango".
+ *
+ * - `carbs` es el naranja de marca que la app ya usa para carbohidratos en
+ *   los atajos de la pantalla principal; cambiarlo acá rompería la
+ *   asociación que la usuaria ya tiene.
+ * - `protein` y `fat` son hues nuevos, elegidos para no chocar con el azul
+ *   (rápida) ni el navy (basal) de insulina.
+ *
+ * Validada con `scripts/validate_palette.js` de la skill `dataviz` contra la
+ * superficie real de la app (#FFFFFF), no a ojo: **los cinco checks pasan**
+ * (banda de luminosidad, piso de croma, separación para daltonismo — peor par
+ * ΔE 8.4 protan —, piso de visión normal ΔE 23.1 y contraste ≥3:1). El par
+ * más justo está apenas sobre el umbral de 8, así que **cada barra lleva
+ * siempre su etiqueta y sus gramos**: la identidad nunca descansa solo en el
+ * color. No cambiar sin volver a correr el validador.
+ */
+export const macroColors = {
+  carbs: '#D96B27',
+  protein: '#19734B',
+  fat: '#7C4DA0',
+} as const;
+
 export const glucoseBands = {
   veryLow: '#7A1610',
   low: '#B42318',

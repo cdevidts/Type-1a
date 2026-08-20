@@ -1,5 +1,6 @@
 import {
   buildAmbulatoryProfile,
+  buildMacroGlucoseComparison,
   buildNutritionInsights,
   convertGlucose,
   HIGH_THRESHOLD,
@@ -8,6 +9,7 @@ import {
   summarizeGlucose,
   type AmbulatoryProfile,
   type GlucoseSummary,
+  type MacroGlucoseComparison,
   type MealWindowInsight,
 } from '@type1a/domain';
 import type { CGMReading } from '@type1a/schemas';
@@ -338,6 +340,39 @@ function nutritionSectionHtml(insights: MealWindowInsight[]): string {
   <p class="summary-footnote">Promedios de lo registrado por franja horaria. "En rango" = porcentaje de dosis rápidas tras las cuales había una lectura entre 70 y 180 mg/dL a esa hora; ↓ y ↑ son el porcentaje que quedó por debajo de 70 y por encima de 180, y se muestran a propósito porque quedar fuera de rango por abajo y por arriba son cosas opuestas. Es una observación descriptiva, no una medida de si la dosis fue adecuada, y depende también de comida, actividad, estrés y basal. Solo se muestra un porcentaje con al menos ${MIN_SAMPLE_FOR_RATE} dosis.${anyMacros ? ' Proteína, grasa y fibra son promedios de las comidas donde la usuaria los anotó: un guion significa que no los registró en esa franja, no que fueran cero.' : ''} Type 1A nunca decide ni sugiere una dosis por su cuenta: su calculadora solo aplica los parámetros que cargó la propia usuaria.</p>`;
 }
 
+/**
+ * Fase 14. La subida tardía por grasa/proteína es justo lo que el conteo de
+ * carbohidratos no explica, así que es información útil para una consulta —
+ * pero **descriptiva**: la respuesta clínica a este patrón (bolo extendido)
+ * es una decisión del equipo médico, nunca de la app. Ver la cabecera de
+ * `packages/domain/src/macro-glucose.ts`.
+ */
+function macroGlucoseSectionHtml(comparison: MacroGlucoseComparison | null): string {
+  if (comparison === null) {
+    return '<p class="summary-empty">Todavía no hay suficientes comidas con grasa y proteína anotadas para comparar.</p>';
+  }
+  const cell = (group: MacroGlucoseComparison['higher'], hours: number): string => {
+    const point = group.points.find((p) => p.horizonHours === hours);
+    if (point === undefined || point.meanDeltaMgDl === undefined) {
+      return `<td class="num muted">n=${point?.sampleSize ?? 0}</td>`;
+    }
+    const sign = point.meanDeltaMgDl >= 0 ? '+' : '';
+    return `<td class="num">${sign}${point.meanDeltaMgDl.toFixed(0)}<br /><span class="muted">n=${point.sampleSize}</span></td>`;
+  };
+  const row = (label: string, group: MacroGlucoseComparison['higher']): string =>
+    `<tr>
+      <td>${escapeHtml(label)} <span class="muted">≈${group.avgFatProteinG.toFixed(0)} g · ${group.mealCount} comidas</span></td>
+      ${[2, 3, 4, 5].map((hours) => cell(group, hours)).join('')}
+    </tr>`;
+  return `<table>
+    <thead><tr>
+      <th>Grupo de comidas</th><th class="num">+2 h</th><th class="num">+3 h</th><th class="num">+4 h</th><th class="num">+5 h</th>
+    </tr></thead>
+    <tbody>${row('Más grasa + proteína', comparison.higher)}${row('Menos', comparison.lower)}</tbody>
+  </table>
+  <p class="summary-footnote">Cambio promedio de glucosa respecto del momento de comer, en mg/dL, según la carga de grasa más proteína de la comida (corte en ${comparison.splitAtFatProteinG.toFixed(0)} g, la mediana de ${comparison.eligibleMealCount} comidas con ambos macros anotados). En diabetes tipo 1 la grasa y la proteína tienden a mover la glucosa de forma retrasada y prolongada, entre 1,5 y 6 h, con efecto aditivo cuando la comida es alta en ambas — por eso se miran estos horizontes y no la primera hora. Es una descripción de lo ya ocurrido, no una medida de si una dosis fue adecuada. Type 1A nunca decide ni sugiere una dosis por su cuenta: su calculadora solo aplica los parámetros que cargó la propia usuaria.</p>`;
+}
+
 function eventTableHtml(rows: ReportRow[]): string {
   const nonGlucose = rows.filter((row) => row.kind !== 'glucose');
   if (nonGlucose.length === 0) {
@@ -361,6 +396,7 @@ export function reportHtml(data: ReportExport, rangeLabel: string): string {
   const summary = summarizeGlucose(data.readings);
   const profile = buildAmbulatoryProfile(data.readings);
   const insights = buildNutritionInsights(data);
+  const macroGlucose = buildMacroGlucoseComparison({ meals: data.meals, readings: data.readings });
   const dayBuckets = groupReadingsByDay(data.readings);
   const chartsSection = dayBuckets.length === 0
     ? '<p class="summary-empty">Sin lecturas de glucosa en este rango.</p>'
@@ -406,6 +442,8 @@ export function reportHtml(data: ReportExport, rangeLabel: string): string {
   ${agpSectionHtml(profile)}
   <h2>Patrones por franja horaria</h2>
   ${nutritionSectionHtml(insights)}
+  <h2>Grasa y proteína frente a la glucosa tardía</h2>
+  ${macroGlucoseSectionHtml(macroGlucose)}
   <h2>Glucosa por día</h2>
   ${chartsSection}
   <h2>Insulina, carbohidratos y otros eventos</h2>
@@ -454,6 +492,7 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
   ];
 
   const insights = buildNutritionInsights(data);
+  const macroGlucose = buildMacroGlucoseComparison({ meals: data.meals, readings: data.readings });
   const outcomeCell = (window: MealWindowInsight, hours: number): string => {
     const found = window.outcomes.find((o) => o.horizonHours === hours);
     if (found === undefined || found.inTargetPct === undefined) return `sin dato (n=${found?.sampleSize ?? 0})`;
@@ -482,9 +521,42 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
     ['Type 1A nunca decide ni sugiere una dosis por su cuenta: su calculadora solo aplica los parámetros que cargó la propia usuaria.'],
   ];
 
+  // Fase 14: la misma comparación que el PDF. Un dato que solo existe en la
+  // app no llega a la consulta médica.
+  const macroGlucoseRow = (label: string, group: MacroGlucoseComparison['higher']): (string | number)[] => [
+    label,
+    Number(group.avgFatProteinG.toFixed(0)),
+    group.mealCount,
+    ...[2, 3, 4, 5].map((hours) => {
+      const point = group.points.find((p) => p.horizonHours === hours);
+      if (point === undefined || point.meanDeltaMgDl === undefined) return `sin dato (n=${point?.sampleSize ?? 0})`;
+      const sign = point.meanDeltaMgDl >= 0 ? '+' : '';
+      return `${sign}${point.meanDeltaMgDl.toFixed(0)} (n=${point.sampleSize})`;
+    }),
+  ];
+  const macroGlucoseSheetData: (string | number)[][] = macroGlucose === null
+    ? [
+      ['Grasa y proteína frente a la glucosa tardía'],
+      ['Todavía no hay suficientes comidas con grasa y proteína anotadas para comparar.'],
+    ]
+    : [
+      ['Grasa y proteína frente a la glucosa tardía'],
+      ['Cambio promedio de glucosa (mg/dL) respecto del momento de comer'],
+      [],
+      ['Grupo', 'Grasa+proteína prom. (g)', 'Comidas', '+2 h', '+3 h', '+4 h', '+5 h'],
+      macroGlucoseRow('Más grasa + proteína', macroGlucose.higher),
+      macroGlucoseRow('Menos', macroGlucose.lower),
+      [],
+      [`Corte en ${macroGlucose.splitAtFatProteinG.toFixed(0)} g, la mediana de ${macroGlucose.eligibleMealCount} comidas con ambos macros anotados.`],
+      ['En diabetes tipo 1 la grasa y la proteína tienden a mover la glucosa de forma retrasada y prolongada (1,5-6 h), con efecto aditivo cuando la comida es alta en ambas.'],
+      ['Descripción de lo ya ocurrido, no una medida de si una dosis fue adecuada.'],
+      ['Type 1A nunca decide ni sugiere una dosis por su cuenta: su calculadora solo aplica los parámetros que cargó la propia usuaria.'],
+    ];
+
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(summarySheetData), 'Resumen');
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(patternsSheetData), 'Patrones');
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(macroGlucoseSheetData), 'Grasa y proteína');
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(reportSheetData), 'Reporte');
   return XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as Uint8Array;
 }

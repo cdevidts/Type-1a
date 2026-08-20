@@ -154,12 +154,28 @@ function windowForHour(hour: number): MealTimeWindow | undefined {
   return MEAL_TIME_WINDOWS.find((w) => hour >= w.startHour && hour < w.endHour);
 }
 
+/**
+ * Serie de glucosa normalizada a mg/dL, ordenada y sin sintéticas — la forma
+ * que esperan `readingNear` y todo lo que mide una respuesta post-comida.
+ * Exportada para que `macro-glucose.ts` no repita el mismo preprocesado (y
+ * con él la exclusión de sintéticas, que es una regla de seguridad).
+ */
+export function toGlucoseSeries(readings: readonly CGMReading[]): TimedGlucose[] {
+  return readings
+    .filter((r) => r.origin !== 'synthetic')
+    .map((r) => ({
+      atMs: Date.parse(r.sourceTimestamp),
+      mgDl: convertGlucose(r.glucose, r.unit, 'mg/dL'),
+    }))
+    .sort((a, b) => a.atMs - b.atMs);
+}
+
 function mean(values: readonly number[]): number | undefined {
   if (values.length === 0) return undefined;
   return values.reduce((sum, v) => sum + v, 0) / values.length;
 }
 
-interface TimedGlucose {
+export interface TimedGlucose {
   atMs: number;
   mgDl: number;
 }
@@ -173,7 +189,7 @@ interface TimedGlucose {
  * el rango de 90 días la serie ronda las 26.000 lecturas — recorrerla entera
  * cada vez bloquearía el hilo de JS al abrir el Resumen.
  */
-function readingNear(series: readonly TimedGlucose[], targetMs: number): TimedGlucose | undefined {
+export function readingNear(series: readonly TimedGlucose[], targetMs: number): TimedGlucose | undefined {
   const toleranceMs = HORIZON_TOLERANCE_MINUTES * 60_000;
   let low = 0;
   let high = series.length;
@@ -198,13 +214,7 @@ function readingNear(series: readonly TimedGlucose[], targetMs: number): TimedGl
 }
 
 export function buildNutritionInsights(input: NutritionInsightsInput): MealWindowInsight[] {
-  const series: TimedGlucose[] = input.readings
-    .filter((r) => r.origin !== 'synthetic')
-    .map((r) => ({
-      atMs: Date.parse(r.sourceTimestamp),
-      mgDl: convertGlucose(r.glucose, r.unit, 'mg/dL'),
-    }))
-    .sort((a, b) => a.atMs - b.atMs);
+  const series = toGlucoseSeries(input.readings);
 
   return MEAL_TIME_WINDOWS.map((window) => {
     const inWindow = (timestamp: string): boolean => {
