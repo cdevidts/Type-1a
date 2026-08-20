@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { z } from 'zod';
 
-import { convertGlucose, planMySugrImport } from '@type1a/domain';
+import { convertGlucose, planMySugrImport, type CatalogFood } from '@type1a/domain';
 import {
   ActivityEventSchema,
   CGMReadingSchema,
@@ -145,6 +145,24 @@ export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS hba1c_results_timestamp ON hba1c_results(timestamp);
+
+    -- Fase 15: catálogo de alimentos propio, construido con lo que la IA va
+    -- identificando. Todo por 100 g para que una porción distinta escale sola
+    -- (ver \`packages/domain/src/food-catalog.ts\`). \`key\` es el nombre
+    -- normalizado, así que reconocer el mismo alimento otra vez actualiza la
+    -- fila en vez de duplicarla.
+    CREATE TABLE IF NOT EXISTS food_catalog (
+      key TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      carbs_per_100g REAL NOT NULL,
+      protein_per_100g REAL NOT NULL,
+      fat_per_100g REAL NOT NULL,
+      fiber_per_100g REAL NOT NULL,
+      kcal_per_100g REAL NOT NULL,
+      times_seen INTEGER NOT NULL,
+      last_seen_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS food_catalog_last_seen ON food_catalog(last_seen_at DESC);
   `);
 
   const episodeColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(meal_episodes)');
@@ -1647,6 +1665,85 @@ export async function saveNutritionProfile(db: SQLiteDatabase, profile: Nutritio
 
 export async function clearNutritionProfile(db: SQLiteDatabase): Promise<void> {
   await db.runAsync('DELETE FROM app_settings WHERE key = ?', NUTRITION_PROFILE_KEY);
+}
+
+/**
+ * Guarda los alimentos que la IA identificó en un análisis.
+ *
+ * Al reconocer un alimento ya conocido se **promedia** con lo que había,
+ * ponderando por las veces vistas: dos estimaciones del mismo pan convergen en
+ * vez de que la última pise a la anterior. Es lo que hace que el catálogo
+ * mejore con el uso en lugar de oscilar.
+ *
+ * Nunca falla hacia afuera: el catálogo es una comodidad, y no poder
+ * escribirlo no puede impedir que se guarde la comida.
+ */
+export async function recordCatalogFoods(
+  db: SQLiteDatabase,
+  entries: readonly Omit<CatalogFood, 'timesSeen'>[],
+): Promise<void> {
+  if (entries.length === 0) return;
+  await db.withTransactionAsync(async () => {
+    for (const entry of entries) {
+      const existing = await db.getFirstAsync<{
+        carbs_per_100g: number; protein_per_100g: number; fat_per_100g: number;
+        fiber_per_100g: number; kcal_per_100g: number; times_seen: number;
+      }>('SELECT * FROM food_catalog WHERE key = ?', entry.key);
+
+      if (existing === null) {
+        await db.runAsync(
+          `INSERT INTO food_catalog
+             (key, name, carbs_per_100g, protein_per_100g, fat_per_100g, fiber_per_100g, kcal_per_100g, times_seen, last_seen_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+          entry.key, entry.name,
+          entry.carbsPer100g, entry.proteinPer100g, entry.fatPer100g, entry.fiberPer100g, entry.kcalPer100g,
+          entry.lastSeenAt,
+        );
+        continue;
+      }
+
+      const n = existing.times_seen;
+      const blend = (old: number, next: number): number => Number(((old * n + next) / (n + 1)).toFixed(2));
+      await db.runAsync(
+        `UPDATE food_catalog SET
+           name = ?, carbs_per_100g = ?, protein_per_100g = ?, fat_per_100g = ?,
+           fiber_per_100g = ?, kcal_per_100g = ?, times_seen = ?, last_seen_at = ?
+         WHERE key = ?`,
+        entry.name,
+        blend(existing.carbs_per_100g, entry.carbsPer100g),
+        blend(existing.protein_per_100g, entry.proteinPer100g),
+        blend(existing.fat_per_100g, entry.fatPer100g),
+        blend(existing.fiber_per_100g, entry.fiberPer100g),
+        blend(existing.kcal_per_100g, entry.kcalPer100g),
+        n + 1,
+        entry.lastSeenAt,
+        entry.key,
+      );
+    }
+  });
+}
+
+/** Alimentos del catálogo, los más usados primero. */
+export async function getCatalogFoods(db: SQLiteDatabase, limit = 60): Promise<CatalogFood[]> {
+  const rows = await db.getAllAsync<{
+    key: string; name: string; carbs_per_100g: number; protein_per_100g: number;
+    fat_per_100g: number; fiber_per_100g: number; kcal_per_100g: number;
+    times_seen: number; last_seen_at: string;
+  }>(
+    'SELECT * FROM food_catalog ORDER BY times_seen DESC, last_seen_at DESC LIMIT ?',
+    limit,
+  );
+  return rows.map((row) => ({
+    key: row.key,
+    name: row.name,
+    carbsPer100g: row.carbs_per_100g,
+    proteinPer100g: row.protein_per_100g,
+    fatPer100g: row.fat_per_100g,
+    fiberPer100g: row.fiber_per_100g,
+    kcalPer100g: row.kcal_per_100g,
+    timesSeen: row.times_seen,
+    lastSeenAt: row.last_seen_at,
+  }));
 }
 
 export async function getSetting(db: SQLiteDatabase, key: string): Promise<string | null> {

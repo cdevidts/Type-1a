@@ -6,6 +6,7 @@ export * from './freshness';
 export * from './glucose-metrics';
 export * from './glucose-thresholds';
 export * from './ketones';
+export * from './food-catalog';
 export * from './macro-glucose';
 export * from './nutrition-targets';
 export * from './meal';

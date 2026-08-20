@@ -1491,6 +1491,71 @@ etiqueta y sus gramos.
 - `caloriesKcal` existe en `MealEventSchema` pero no tiene campo de entrada:
   se deriva. Pedirla aparte invita a que no cuadre con los macros.
 
+## Fase 15 — La IA estima los macros y arma nuestro catálogo (2026-08-20)
+
+Verónica corrigió una suposición mía de la Fase 14: yo había dado por hecho
+que los macros se anotaban a mano. No hacía falta.
+
+### Lo que ya existía y no se estaba usando
+
+**La IA siempre estimó todos los macros.** El prompt de visión y el de texto
+(`packages/ai/src/prompts.ts`) piden por cada alimento: gramos,
+carbohidratos, proteína, grasa, fibra, calorías y confianza. `FoodEstimateSchema`
+los lleva. El backend los devolvía. La app los guardaba en el `MealEvent`…
+y el desglose **por alimento** se usaba una vez y se tiraba.
+
+### Bug real encontrado y corregido
+
+En `confirmMeal` (`App.tsx`), el spread del análisis de IA iba **después** de
+los macros escritos por la usuaria, así que **pisaba en silencio sus
+correcciones**. Si ella corregía la proteína que la IA había estimado mal, su
+número se descartaba. Es exactamente lo contrario de lo que manda `AGENTS.md`
+sobre separar lo estimado de lo confirmado. Ahora el análisis va primero y lo
+suyo gana.
+
+### Lo que se construyó
+
+1. **La IA precarga proteína, grasa y fibra** al analizar (foto o texto),
+   editables. **Los carbohidratos no se precargan, a propósito**: son los que
+   determinan el bolo de comida, y ahí la regla de separar estimado de
+   confirmado no admite comodidad. Proteína/grasa/fibra no entran en ningún
+   cálculo de dosis, así que precargarlas sí es legítimo.
+2. **`MealEvent.macrosSource`** (`'ai'`/`'user'`/`'mixed'`): la procedencia
+   queda guardada. Para un equipo clínico, "la IA estimó 30 g de proteína" y
+   "la paciente pesó y anotó 30 g" no son el mismo dato. Ausente = procedencia
+   desconocida (comidas viejas), y nunca se asume confirmado.
+3. **Catálogo de alimentos local** (`packages/domain/src/food-catalog.ts` +
+   tabla `food_catalog`): cada alimento identificado se guarda normalizado por
+   100 g. Volver a comer lo mismo se registra **sin llamar a la IA** — se elige
+   del catálogo, se indican los gramos y escala solo. Instantáneo, sin
+   conexión, y sin mandar otra foto afuera. Es el caso de uso real: la gente
+   come casi siempre lo mismo.
+   El upsert **promedia ponderado por veces vistas**, así que dos estimaciones
+   del mismo pan convergen en vez de que la última pise a la anterior.
+
+### La base compartida en Abacus: investigada, viable, y NO disparada
+
+- El **Feature Store** de Abacus **no sirve** para esto: es ingeniería de
+  features para entrenar modelos y correr predicciones batch desde
+  S3/Snowflake/Redshift. Es analítico, no transaccional.
+- Lo que **sí** sirve: las instancias de app de DeepAgent traen **Postgres
+  persistente** incluido, y nuestro backend ya vive en una.
+- Se dejó el prompt completo, con esquema de tabla, endpoints y reglas de
+  privacidad, en `docs/DEEPAGENT_REDEPLOY_PROMPT.md` § "Catálogo de alimentos
+  compartido". **No se disparó**, por tres razones: la mayor parte del valor
+  es local y ya está; el catálogo local es el prerrequisito; y darle una base
+  de datos al backend lo saca de ser un proxy **sin estado**, que es una
+  decisión de `docs/adr/0001-local-first.md` y merece su propio ADR, no ser el
+  efecto colateral de una corrida de features.
+
+### Pendiente
+
+- El catálogo local no se muestra ni se edita en ninguna pantalla de gestión:
+  si la IA guardó un alimento con una estimación mala, no hay dónde
+  corregirlo o borrarlo. Es lo primero a agregar si el catálogo se usa mucho.
+- `macrosSource` se guarda pero **no se muestra** todavía en el reporte
+  PDF/Excel que va al médico.
+
 ## Verificación por fase
 
 - `pnpm verify` (lint + typecheck + test) antes de cerrar cualquier fase.

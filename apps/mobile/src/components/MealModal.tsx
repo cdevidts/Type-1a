@@ -3,6 +3,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { scaleCatalogFood, type CatalogFood } from '@type1a/domain';
 import type { MealAnalysisResult } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api';
@@ -24,16 +25,60 @@ export interface ConfirmedMealDraft {
   proteinG?: number;
   fatG?: number;
   fiberG?: number;
+  /** Ver `MealEventSchema.macrosSource`. */
+  macrosSource?: 'ai' | 'user' | 'mixed';
+}
+
+/**
+ * Alimentos ya conocidos, para volver a registrarlos sin llamar a la IA.
+ *
+ * Es el retorno del catálogo: la gente come casi siempre lo mismo, y un
+ * desayuno repetido no debería costar una foto, una espera y una llamada
+ * remota. Al tocar uno se escala desde los valores por 100 g guardados.
+ */
+function CatalogPicker({
+  foods,
+  onPick,
+}: {
+  foods: readonly CatalogFood[];
+  onPick: (food: CatalogFood) => void;
+}) {
+  if (foods.length === 0) return null;
+  return (
+    <View style={styles.catalogBox}>
+      <Text style={styles.catalogTitle}>Lo que sueles comer</Text>
+      <Text style={styles.catalogHint}>
+        Alimentos que la IA ya reconoció antes. Tócalos para reusar su estimación sin gastar otra foto.
+      </Text>
+      <View style={styles.catalogRow}>
+        {foods.map((food) => (
+          <Pressable
+            key={food.key}
+            style={styles.catalogChip}
+            onPress={() => { onPick(food); }}
+            accessibilityRole="button"
+            accessibilityLabel={`Reusar ${food.name}`}
+          >
+            <Text style={styles.catalogChipName}>{food.name}</Text>
+            <Text style={styles.catalogChipMeta}>{food.carbsPer100g.toFixed(0)} g carbos/100 g</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
 }
 
 export function MealModal({
   visible,
   onClose,
   onConfirm,
+  catalogFoods,
 }: {
   visible: boolean;
   onClose: () => void;
   onConfirm: (draft: ConfirmedMealDraft) => Promise<void>;
+  /** Alimentos ya conocidos, para reusar sin llamar a la IA (Fase 15). */
+  catalogFoods: readonly CatalogFood[];
 }) {
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<MealAnalysisResult | null>(null);
@@ -44,6 +89,10 @@ export function MealModal({
   const [proteinInput, setProteinInput] = useState('');
   const [fatInput, setFatInput] = useState('');
   const [fiberInput, setFiberInput] = useState('');
+  /** Lo que precargó la IA, para saber después si la usuaria lo corrigió. */
+  const [aiMacros, setAiMacros] = useState<{ proteinG: number; fatG: number; fiberG: number } | null>(null);
+  const [pendingFood, setPendingFood] = useState<CatalogFood | null>(null);
+  const [portionInput, setPortionInput] = useState('');
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -92,7 +141,8 @@ export function MealModal({
         ...(description.trim() === '' ? {} : { description: description.trim() }),
       });
       setAnalysis(nextAnalysis);
-      setMessage('Estimación lista. Revisa la porción y escribe los carbohidratos que confirmas.');
+      prefillMacrosFrom(nextAnalysis);
+      setMessage('Estimación lista: proteína, grasa y fibra quedaron precargadas y puedes corregirlas. Los carbohidratos los confirmas tú.');
     } catch (error) {
       setMessage(error instanceof MobileApiError
         ? `${error.message} Continúa con el ingreso manual.`
@@ -100,6 +150,51 @@ export function MealModal({
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * Precarga los macros con lo que estimó la IA y abre la sección.
+   *
+   * Los carbohidratos **no** se precargan: `AGENTS.md` exige que lo estimado
+   * por IA no se confunda con lo confirmado por la usuaria, y los carbos son
+   * los que alimentan el bolo. Proteína, grasa y fibra no entran en ningún
+   * cálculo de dosis, así que ahí precargar es una comodidad legítima —
+   * quedan editables y la procedencia se guarda en `macrosSource`.
+   */
+  function prefillMacrosFrom(next: MealAnalysisResult): void {
+    setProteinInput(String(next.totals.proteinG));
+    setFatInput(String(next.totals.fatG));
+    setFiberInput(String(next.totals.fiberG));
+    setAiMacros({
+      proteinG: next.totals.proteinG,
+      fatG: next.totals.fatG,
+      fiberG: next.totals.fiberG,
+    });
+    setMacrosOpen(true);
+  }
+
+  /**
+   * Aplica un alimento del catálogo a la porción indicada.
+   *
+   * Precarga proteína, grasa y fibra, y **sugiere** los carbohidratos en el
+   * mensaje sin escribirlos en el campo: siguen siendo un valor que confirma
+   * la usuaria, igual que con una estimación por foto.
+   */
+  function applyCatalogFood(): void {
+    if (pendingFood === null) return;
+    const grams = Number(portionInput.trim().replace(',', '.'));
+    if (!Number.isFinite(grams) || grams <= 0) {
+      setMessage('Escribe cuántos gramos comiste.');
+      return;
+    }
+    const scaled = scaleCatalogFood(pendingFood, grams);
+    setProteinInput(String(scaled.proteinG));
+    setFatInput(String(scaled.fatG));
+    setFiberInput(String(scaled.fiberG));
+    setAiMacros({ proteinG: scaled.proteinG, fatG: scaled.fatG, fiberG: scaled.fiberG });
+    setMacrosOpen(true);
+    setPendingFood(null);
+    setMessage(`${pendingFood.name}, ${grams} g: ≈ ${scaled.carbsG} g de carbohidratos. Escríbelos abajo si los confirmas.`);
   }
 
   async function analyzeFromDescription(): Promise<void> {
@@ -113,7 +208,8 @@ export function MealModal({
     try {
       const nextAnalysis = await analyzeMealDescription(description.trim());
       setAnalysis(nextAnalysis);
-      setMessage('Estimación lista a partir del texto (sin foto, así que la incertidumbre es mayor). Escribe tú los carbohidratos que confirmas.');
+      prefillMacrosFrom(nextAnalysis);
+      setMessage('Estimación lista desde el texto (sin foto, la incertidumbre es mayor). Proteína, grasa y fibra quedaron precargadas y puedes corregirlas; los carbohidratos los confirmas tú.');
     } catch (error) {
       setMessage(error instanceof MobileApiError
         ? `${error.message} Continúa con el ingreso manual.`
@@ -149,8 +245,16 @@ export function MealModal({
         setMessage('Revisa proteína, grasa y fibra: deben ser números, o quedar en blanco.');
         return;
       }
+      // Procedencia de los macros: si la IA los precargó y siguen idénticos es
+      // `ai`; si ella tocó alguno, `mixed`; sin análisis de por medio, `user`.
+      const macrosSource: 'ai' | 'user' | 'mixed' | undefined =
+        aiMacros === null
+          ? (protein === null && fat === null && fiber === null ? undefined : 'user')
+          : (protein === aiMacros.proteinG && fat === aiMacros.fatG && fiber === aiMacros.fiberG ? 'ai' : 'mixed');
+
       await onConfirm({
         confirmedCarbsG: parsed,
+        ...(macrosSource === undefined ? {} : { macrosSource }),
         ...(imageUri === null ? {} : { imageUri }),
         ...(analysis === null ? {} : { analysis }),
         ...(protein === undefined ? {} : { proteinG: protein }),
@@ -221,6 +325,40 @@ export function MealModal({
         </View>
       )}
 
+      {pendingFood === null ? (
+        <CatalogPicker foods={catalogFoods} onPick={(food) => { setPendingFood(food); setPortionInput(''); }} />
+      ) : (
+        <View style={styles.catalogBox}>
+          <Text style={styles.catalogTitle}>{pendingFood.name}</Text>
+          <Text style={styles.catalogHint}>¿Cuántos gramos comiste? Se escala desde la estimación guardada.</Text>
+          <View style={styles.portionRow}>
+            <TextInput
+              value={portionInput}
+              onChangeText={setPortionInput}
+              keyboardType="decimal-pad"
+              style={styles.portionInput}
+              placeholder="gramos"
+              placeholderTextColor={colors.muted}
+              accessibilityLabel="Porción en gramos"
+            />
+            <Pressable
+              style={styles.portionButton}
+              onPress={() => { applyCatalogFood(); }}
+              accessibilityRole="button"
+            >
+              <Text style={styles.portionButtonText}>Usar</Text>
+            </Pressable>
+            <Pressable
+              style={styles.portionCancel}
+              onPress={() => { setPendingFood(null); }}
+              accessibilityRole="button"
+            >
+              <Text style={styles.portionCancelText}>Cancelar</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
       <Text style={styles.confirmLabel}>CARBOHIDRATOS QUE CONFIRMAS</Text>
       <View style={styles.confirmInputWrap}>
         <TextInput
@@ -247,13 +385,16 @@ export function MealModal({
         accessibilityState={{ expanded: macrosOpen }}
       >
         <Text style={styles.macroToggleText}>
-          {macrosOpen ? 'Ocultar' : 'Agregar'} proteína, grasa y fibra (opcional)
+          {macrosOpen ? 'Ocultar' : aiMacros !== null ? 'Ver' : 'Agregar'} proteína, grasa y fibra
+          {aiMacros === null ? ' (opcional)' : ' (estimadas por IA)'}
         </Text>
       </Pressable>
       {macrosOpen ? (
         <View>
           <Text style={styles.macroHint}>
-            Déjalos en blanco si no los sabes. En blanco significa “no lo anoté”, que no es lo mismo que 0 g.
+            {aiMacros === null
+              ? 'Déjalos en blanco si no los sabes. En blanco significa “no lo anoté”, que no es lo mismo que 0 g.'
+              : 'Los estimó la IA a partir de lo que identificó. Corrígelos si sabes que van desviados; queda guardado si el número es suyo o tuyo.'}
           </Text>
           <View style={styles.macroRow}>
             <MacroField label="Proteína" value={proteinInput} onChange={setProteinInput} />
@@ -300,6 +441,28 @@ function MacroField({
 }
 
 const styles = StyleSheet.create({
+  catalogBox: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.md },
+  catalogTitle: { color: colors.ink, fontSize: 14, fontWeight: '800' },
+  catalogHint: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: 2, marginBottom: spacing.sm },
+  catalogRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  catalogChip: {
+    borderColor: colors.line, borderWidth: 1, borderRadius: radius.sm,
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.md, minHeight: 44, justifyContent: 'center',
+  },
+  catalogChipName: { color: colors.ink, fontSize: 13, fontWeight: '700' },
+  catalogChipMeta: { color: colors.muted, fontSize: 10, marginTop: 1 },
+  portionRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'center' },
+  portionInput: {
+    flex: 1, minHeight: 44, backgroundColor: colors.background, borderRadius: radius.sm,
+    borderColor: colors.line, borderWidth: 1, color: colors.ink, fontSize: 15, paddingHorizontal: spacing.md,
+  },
+  portionButton: {
+    minHeight: 44, paddingHorizontal: spacing.lg, alignItems: 'center', justifyContent: 'center',
+    borderRadius: radius.sm, backgroundColor: colors.teal,
+  },
+  portionButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+  portionCancel: { minHeight: 44, paddingHorizontal: spacing.md, alignItems: 'center', justifyContent: 'center' },
+  portionCancelText: { color: colors.muted, fontSize: 13, fontWeight: '700' },
   macroToggle: { minHeight: 44, justifyContent: 'center', marginTop: spacing.md },
   macroToggleText: { color: colors.teal, fontSize: 14, fontWeight: '700' },
   macroHint: { color: colors.muted, fontSize: 11, lineHeight: 17, marginBottom: spacing.sm },

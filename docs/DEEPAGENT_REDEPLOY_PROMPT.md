@@ -20,6 +20,7 @@ en vez de abrir la pregunta de nuevo.
 | 2026-08-19 | Fase 13 Grupo B: `SafeAreaView` de los modales, lectura tolerante de filas (`rowDecode.ts` + `DecodeTally`), `ErrorBoundary`, botón "Reintentar" del Resumen, onboarding de primer uso, Ajustes en 4 pestañas | No. Todo es `apps/mobile` y `packages/domain` (`units.ts`: `formatGlucose`). `apps/api` y `packages/ai` no se tocaron, así que a diferencia de la corrida anterior acá no hay ni siquiera un matiz: el backend desplegado sirve exactamente el mismo código que necesita esta versión de la app. |
 | 2026-08-19 | Fase 13 Grupo C: conexión al sensor por usuaria, cetonas, macronutrientes | No, **y es el punto interesante de esta corrida**. `apps/api/src/app.ts` sí se tocó (inyecta `sha256Hex` al construir `LibreLinkUpCGMProvider`), pero es un refactor sin cambio de comportamiento: el backend desplegado sigue funcionando igual con el código viejo. La conexión al sensor por usuaria se resolvió **en el teléfono** justamente para no depender de un redeploy y para no arriesgar la conexión existente de Verónica — ver `docs/ROADMAP_V0.2.md` § "Conexión al sensor". **Pendiente para cuando sí haya un redeploy:** una vez que Verónica confirme que su cuenta quedó conectada desde la app, conviene **quitar `LIBRELINKUP_EMAIL`/`LIBRELINKUP_PASSWORD` del entorno de Abacus**, para que no quede viva una credencial global que cualquier instalación sin cuenta propia seguiría usando. |
 | 2026-08-20 | Fase 14: pantalla de Nutrición (metas de calorías/macros, patrones de grasa/proteína vs. glucosa tardía) | No — solo `packages/domain`, `packages/schemas` y `apps/mobile`. Todo el cálculo es local por diseño (`docs/adr/0001-local-first.md`): no hay llamada nueva al backend ni a ninguna API de alimentos. |
+| 2026-08-20 | Fase 15: catálogo de alimentos propio + macros de la IA en el registro de comida | No para lo construido — es todo `packages/domain`, `packages/schemas` y `apps/mobile`, y el catálogo es **local** (tabla `food_catalog` en SQLite). El backend ya devolvía todos los macros; el bug era que la app los tiraba. **Pero sí hay trabajo de backend preparado y sin disparar**: el catálogo compartido entre usuarias, ver § "Catálogo de alimentos compartido" más abajo. |
 
 ## Cuándo usarlo
 
@@ -78,6 +79,88 @@ Este backend no persiste datos de usuario (es un proxy sin estado hacia
 CGM/Abacus RouteLLM — ver docs/adr/0001-local-first.md del repo), así que
 un redeploy no tiene riesgo de pérdida de datos ni de downtime con estado.
 ```
+
+## Catálogo de alimentos compartido (preparado, NO disparado)
+
+Investigado el 2026-08-20 a pedido de Verónica. **Es viable**, con una
+salvedad importante sobre qué producto de Abacus sirve.
+
+### Qué de Abacus sirve y qué no
+
+- **El "Feature Store" de Abacus NO sirve para esto.** Es ingeniería de
+  features para entrenar modelos y correr predicciones batch, alimentado
+  desde S3/Snowflake/Redshift, con feature groups en SQL. Es un sistema
+  analítico, no una base transaccional: mal encaje para "buscar un alimento y
+  escribir una fila en cada comida".
+- **Lo que sí sirve: las instancias de app de DeepAgent traen su propia base
+  de datos persistente (Postgres), disco persistente, HTTPS de entrada, 2
+  vCPU y 8 GB.** Nuestro backend ya vive en una de esas
+  (`237e8b7f1.abacusai.cloud`), así que el catálogo compartido no requiere
+  contratar nada nuevo.
+
+### Por qué NO se hizo compartido de entrada
+
+El orden importa y lo local va primero, por tres razones:
+
+1. **La mayor parte del valor es local.** La gente come casi siempre lo mismo:
+   un catálogo del propio teléfono ya elimina la foto, la espera y la llamada
+   remota del desayuno repetido. Funciona sin conexión y sin redeploy.
+2. **Es el prerrequisito.** Hay que tener los registros por alimento antes de
+   poder compartirlos.
+3. **Compartir cambia la arquitectura.** El backend hoy es un proxy **sin
+   estado** por decisión explícita (`docs/adr/0001-local-first.md`). Darle una
+   base de datos propia merece su propio ADR, no ser el efecto colateral de
+   una corrida de features.
+
+### Qué pedirle a DeepAgent cuando se decida hacerlo
+
+```
+Necesito agregarle al backend de Type 1A (apps/api de
+github.com/cdevidts/type-1a) un catálogo de alimentos compartido, usando la
+base de datos Postgres que ya viene con esta instancia de app.
+
+Contexto: la app estima los macros de cada alimento con IA (visión y texto) y
+ya guarda un catálogo LOCAL por usuaria en SQLite, normalizado por 100 g (ver
+packages/domain/src/food-catalog.ts en el repo). Quiero que ese conocimiento
+se acumule también del lado del servidor, para que una usuaria nueva reciba
+buenas estimaciones de alimentos comunes desde el primer día.
+
+Por favor:
+1. Crea una tabla `food_catalog` en el Postgres de la instancia:
+   key TEXT PRIMARY KEY, name TEXT NOT NULL,
+   carbs_per_100g, protein_per_100g, fat_per_100g, fiber_per_100g,
+   kcal_per_100g  (todos DOUBLE PRECISION NOT NULL),
+   times_seen INTEGER NOT NULL, last_seen_at TIMESTAMPTZ NOT NULL.
+   `key` es el nombre normalizado que ya produce foodKey() en el repo
+   (minusculas, sin acentos ni puntuacion, espacios colapsados).
+2. Agrega dos endpoints a apps/api:
+   - GET  /v1/food-catalog?q=<texto>&limit=<n>  -> alimentos que hacen match.
+   - POST /v1/food-catalog  -> recibe entradas ya normalizadas por 100 g y
+     hace upsert promediando ponderado por times_seen, igual que
+     recordCatalogFoods() en apps/mobile/src/db.ts.
+3. IMPORTANTE - privacidad: estos endpoints reciben y devuelven SOLO nombres
+   de alimentos y macros por 100 g. Nunca un identificador de usuaria, ni una
+   foto, ni una glucosa, ni una dosis de insulina, ni una marca de tiempo de
+   comida. Un alimento no puede quedar asociado a quien lo comio.
+4. Rechaza entradas absurdas antes de escribir: gramos no positivos, macros
+   negativos, o cuya energia no cuadre con los macros (4/4/9 kcal/g) con mas
+   de un 25 % de desvio.
+5. No cambies el dominio ni la URL que ya usa la app movil.
+
+apps/api no persiste datos de usuario hoy (es un proxy sin estado, ver
+docs/adr/0001-local-first.md). Esta tabla es la primera excepcion y es
+deliberadamente anonima: catalogo de alimentos, no de personas.
+```
+
+### Antes de disparar eso
+
+- Escribir el ADR que registra el cambio de "backend sin estado" a "backend
+  con un catálogo anónimo". Sin eso, la próxima corrida se encuentra una base
+  de datos que ningún documento explica.
+- Decidir moderación: un catálogo compartido acepta escrituras de cualquier
+  instalación, así que una estimación muy mala se propaga. El promedio
+  ponderado ayuda, pero conviene un piso de `times_seen` antes de servir un
+  alimento a otras usuarias.
 
 ## Nota de costo
 

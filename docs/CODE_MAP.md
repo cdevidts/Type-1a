@@ -73,6 +73,17 @@ docs/
   **siempre mg/dL** de acá en más (ver JSDoc en
   `packages/schemas/src/index.ts`); ningún consumidor debe volver a
   convertir.
+- `food-catalog.ts` (2026-08-20, Fase 15) — catálogo de alimentos propio,
+  construido con lo que la IA identifica. Normaliza cada alimento a valores
+  **por 100 g** (`toCatalogEntry`, `catalogEntriesFrom`) y los escala a una
+  porción (`scaleCatalogFood`); `foodKey` es la clave de agrupación
+  (minúsculas, sin acentos ni puntuación). **Un alimento sin
+  `estimatedGrams` no entra**: sin porción no se puede normalizar, y escalar
+  desde una desconocida sería inventar el dato. `foodKey` a propósito **no**
+  junta singular y plural — necesitaría un diccionario de español y
+  equivocarse mezcla macros de alimentos distintos. La persistencia está en
+  `apps/mobile/src/db.ts` (`recordCatalogFoods`, que promedia ponderado por
+  veces vistas, y `getCatalogFoods`), no acá.
 - `nutrition-targets.ts` (2026-08-20, Fase 14) — metas de energía y macros:
   Mifflin-St Jeor → TDEE → reparto. **Cabecera con frontera de seguridad
   obligatoria de leer**: el déficit está capado a 500 kcal/día (no 1000 como
@@ -361,6 +372,14 @@ docs/
   la alimentación se revisa. Todo el cálculo vive en `packages/domain`.
   Paleta: `macroColors` en `theme.ts` (categórica, validada, **distinta de
   `glucoseBands`** que es de estado clínico).
+- `src/components/MealModal.tsx` — registro de comida. **2026-08-20 (Fase
+  15)**: la IA precarga proteína/grasa/fibra (editables) desde su análisis, y
+  `CatalogPicker` deja reusar un alimento ya conocido sin llamar a la IA
+  (pide gramos y escala con `scaleCatalogFood`). **Los carbohidratos nunca se
+  precargan** — determinan el bolo y `AGENTS.md` exige separarlos de lo
+  estimado; el catálogo los *sugiere* en un mensaje, no los escribe en el
+  campo. `MealEvent.macrosSource` registra si los macros son `ai`, `user` o
+  `mixed`.
 - `src/components/KetonesModal.tsx` (2026-08-19) — registro de cetonas en
   sangre. Las bandas viven en `packages/domain/src/ketones.ts`, no acá.
 - `src/rowDecode.ts` (2026-08-19) — decodificación tolerante de filas de

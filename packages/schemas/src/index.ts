@@ -229,6 +229,23 @@ export const MealEventSchema = z.object({
   fiberG: z.number().nonnegative().max(200).finite().optional(),
   caloriesKcal: z.number().nonnegative().max(10000).finite().optional(),
   aiAnalysisId: z.string().min(1).optional(),
+  /**
+   * De dónde salieron `proteinG`/`fatG`/`fiberG` (Fase 15).
+   *
+   * Los carbohidratos ya distinguen estimado (`aiEstimatedCarbsG`) de
+   * confirmado (`confirmedCarbsG`) porque `AGENTS.md` lo exige. El resto de
+   * los macros no tenía esa distinción: un mismo campo servía para "lo estimó
+   * la IA de una foto" y para "la usuaria pesó y anotó". Para un equipo
+   * clínico leyendo el reporte no son lo mismo.
+   *
+   * - `ai`: los tres vienen del análisis, sin tocar.
+   * - `user`: los escribió ella.
+   * - `mixed`: precargados por la IA y corregidos en al menos uno.
+   *
+   * Ausente en comidas anteriores a este campo: procedencia desconocida, y
+   * así se muestra — nunca se asume "confirmado por la usuaria".
+   */
+  macrosSource: z.enum(['ai', 'user', 'mixed']).optional(),
   createdAt: IsoTimestampSchema,
 });
 export type MealEvent = z.infer<typeof MealEventSchema>;

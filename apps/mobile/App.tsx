@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
-import { buildReportRows, latestLiveReading } from '@type1a/domain';
+import { buildReportRows, catalogEntriesFrom, latestLiveReading, type CatalogFood } from '@type1a/domain';
 import type {
   CGMProviderStatus,
   CGMReading,
@@ -72,8 +72,10 @@ import {
   getHbA1cResults,
   getInsulinEvents,
   getMealAlarmOffsets,
+  getCatalogFoods,
   getMealEvents,
   getNutritionProfile,
+  recordCatalogFoods,
   saveNutritionProfile,
   getNoteEvents,
   getPendingInsulinAssociations,
@@ -164,6 +166,7 @@ function Type1AApp() {
   const [ketonesOpen, setKetonesOpen] = useState(false);
   const [nutritionOpen, setNutritionOpen] = useState(false);
   const [nutritionProfile, setNutritionProfile] = useState<NutritionProfile | null>(null);
+  const [catalogFoods, setCatalogFoods] = useState<CatalogFood[]>([]);
   const [showGlucoseOnLockScreen, setShowGlucoseOnLockScreen] = useState(false);
   const [mealAlarmOffsets, setMealAlarmOffsets] = useState<number[]>([...DEFAULT_MEAL_ALARM_OFFSETS_MINUTES]);
   const [correctionReminder, setCorrectionReminder] = useState<CorrectionReminderSettings>({
@@ -197,7 +200,7 @@ function Type1AApp() {
     // latestLiveReading() finds the true latest live point regardless of
     // how wide this window is.
     const from = new Date(to.getTime() - 30 * 24 * 60 * 60_000);
-    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending, mealOffsets, correctionSettings, alertStyle, capillarySettings, onboardingSeen, isLegacyBackendInstall, nutrition] = await Promise.all([
+    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending, mealOffsets, correctionSettings, alertStyle, capillarySettings, onboardingSeen, isLegacyBackendInstall, nutrition, catalog] = await Promise.all([
       getCGMReadings(db, from, to, readTally),
       getTimeline(db),
       getTherapyProfile(db),
@@ -212,6 +215,7 @@ function Type1AApp() {
       getSetting(db, ONBOARDING_SEEN_KEY),
       resolveLegacyBackendSensor(db, LEGACY_BACKEND_SENSOR_KEY),
       getNutritionProfile(db),
+      getCatalogFoods(db),
     ]);
     setReadings(cached);
     setReadingsUnreadable(readTally.unreadable);
@@ -235,6 +239,7 @@ function Type1AApp() {
     setCapillaryReminder(capillarySettings);
     setOnboardingDone(onboardingSeen === 'true');
     setNutritionProfile(nutrition);
+    setCatalogFoods(catalog);
     sensorSourceRef.current = await resolveSensorSource(isLegacyBackendInstall);
   }, [db]);
 
@@ -412,10 +417,12 @@ function Type1AApp() {
       timestamp,
       confirmedCarbsG: draft.confirmedCarbsG,
       createdAt: timestamp,
-      ...(draft.proteinG === undefined ? {} : { proteinG: draft.proteinG }),
-      ...(draft.fatG === undefined ? {} : { fatG: draft.fatG }),
-      ...(draft.fiberG === undefined ? {} : { fiberG: draft.fiberG }),
       ...(draft.imageUri === undefined ? {} : { imageUri: draft.imageUri }),
+      // El análisis va PRIMERO y los valores de la usuaria después, para que
+      // los suyos ganen. Estaba al revés: el spread del análisis pisaba en
+      // silencio la proteína o la grasa que ella hubiera corregido a mano,
+      // que es justo lo contrario de lo que manda `AGENTS.md` sobre separar
+      // lo estimado por IA de lo confirmado por la usuaria.
       ...(draft.analysis === undefined
         ? {}
         : {
@@ -426,8 +433,21 @@ function Type1AApp() {
             caloriesKcal: draft.analysis.totals.caloriesKcal,
             aiAnalysisId: draft.analysis.analysisId,
           }),
+      ...(draft.proteinG === undefined ? {} : { proteinG: draft.proteinG }),
+      ...(draft.fatG === undefined ? {} : { fatG: draft.fatG }),
+      ...(draft.fiberG === undefined ? {} : { fiberG: draft.fiberG }),
+      ...(draft.macrosSource === undefined ? {} : { macrosSource: draft.macrosSource }),
     };
     const episodeId = await saveMealWithEpisode(db, meal);
+    // El catálogo se alimenta de cada análisis, y nunca puede impedir que la
+    // comida se guarde: es una comodidad, no parte del registro.
+    if (draft.analysis !== undefined) {
+      try {
+        await recordCatalogFoods(db, catalogEntriesFrom(draft.analysis.estimate.foods, timestamp));
+      } catch (error) {
+        logSaveError('App.recordCatalogFoods', error);
+      }
+    }
     await scheduleEpisodeNotifications(episodeId, timestamp, mealAlarmOffsets, reminderChannelId(reminderAlertStyle));
     setNotice(`Comida guardada. El episodio se completará con CGM a ${mealAlarmOffsets.map((minutes) => `+${minutes}`).join(', ')} minutos.`);
     await loadLocalState();
@@ -821,7 +841,7 @@ function Type1AApp() {
         onClose={() => { setEntryOpen(false); }}
         onSave={saveEntry}
       />
-      <MealModal visible={mealOpen} onClose={() => { setMealOpen(false); }} onConfirm={confirmMeal} />
+      <MealModal visible={mealOpen} onClose={() => { setMealOpen(false); }} onConfirm={confirmMeal} catalogFoods={catalogFoods} />
       <SettingsModal
         visible={settingsOpen}
         onClose={() => { setSettingsOpen(false); }}
