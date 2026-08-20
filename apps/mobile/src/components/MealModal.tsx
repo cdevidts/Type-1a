@@ -124,7 +124,9 @@ export function MealModal({
   }
 
   async function confirm(): Promise<void> {
-    const parsed = parseNonNegativeNumber(confirmedCarbs);
+    // Mismo problema que los macros: en blanco daba 0, y "0 g confirmados"
+    // es una afirmación distinta de "no escribí nada".
+    const parsed = confirmedCarbs.trim() === '' ? null : parseNonNegativeNumber(confirmedCarbs);
     if (parsed === null || parsed > 500) {
       setMessage('Escribe los carbohidratos confirmados entre 0 y 500 g.');
       return;
@@ -132,12 +134,18 @@ export function MealModal({
     setBusy(true);
     setMessage(null);
     try {
-      const protein = parseNonNegativeNumber(proteinInput);
-      const fat = parseNonNegativeNumber(fatInput);
-      const fiber = parseNonNegativeNumber(fiberInput);
-      if ((proteinInput.trim() !== '' && protein === null)
-        || (fatInput.trim() !== '' && fat === null)
-        || (fiberInput.trim() !== '' && fiber === null)) {
+      // OJO: `parseNonNegativeNumber('')` devuelve **0**, no `null`, porque
+      // `Number('')` es 0. Sin este chequeo de blanco explícito, cada comida
+      // se guardaba con `proteinG: 0, fatG: 0, fiberG: 0` aunque la usuaria
+      // nunca hubiera abierto la sección — y el reporte al médico mostraba
+      // "0 g de proteína, promedio de N" como si fuera un dato medido. La
+      // distinción "no anotado" vs "0 g" es justamente el punto del ítem 7.
+      const parseOptionalMacro = (input: string): number | null | undefined =>
+        input.trim() === '' ? undefined : parseNonNegativeNumber(input);
+      const protein = parseOptionalMacro(proteinInput);
+      const fat = parseOptionalMacro(fatInput);
+      const fiber = parseOptionalMacro(fiberInput);
+      if (protein === null || fat === null || fiber === null) {
         setMessage('Revisa proteína, grasa y fibra: deben ser números, o quedar en blanco.');
         return;
       }
@@ -145,9 +153,9 @@ export function MealModal({
         confirmedCarbsG: parsed,
         ...(imageUri === null ? {} : { imageUri }),
         ...(analysis === null ? {} : { analysis }),
-        ...(protein === null ? {} : { proteinG: protein }),
-        ...(fat === null ? {} : { fatG: fat }),
-        ...(fiber === null ? {} : { fiberG: fiber }),
+        ...(protein === undefined ? {} : { proteinG: protein }),
+        ...(fat === undefined ? {} : { fatG: fat }),
+        ...(fiber === undefined ? {} : { fiberG: fiber }),
       });
       onClose();
     } catch (error) {

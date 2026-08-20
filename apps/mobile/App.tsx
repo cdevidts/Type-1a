@@ -41,7 +41,14 @@ import { OnboardingModal } from './src/components/OnboardingModal';
 import { SummaryModal } from './src/components/SummaryModal';
 import { Timeline } from './src/components/Timeline';
 import { logSaveError } from './src/log';
-import { fetchSensorReadings, fetchSensorStatus } from './src/sensorConnection';
+import {
+  fetchSensorReadings,
+  fetchSensorStatus,
+  LEGACY_BACKEND_SENSOR_KEY,
+  resetSensorProviderCache,
+  resolveSensorSource,
+  type SensorSource,
+} from './src/sensorConnection';
 import {
   getCGMReadings,
   attachEntryToReading,
@@ -68,6 +75,7 @@ import {
   getNoteEvents,
   getPendingInsulinAssociations,
   createDecodeTally,
+  deleteSensorReadings,
   getRecentRapidInsulin,
   getReminderAlertStyle,
   getSetting,
@@ -85,6 +93,7 @@ import {
   saveMealAlarmOffsets,
   saveMealWithEpisode,
   saveReminderAlertStyle,
+  resolveLegacyBackendSensor,
   saveTherapyProfile,
   saveVitalsEvent,
   saveUnifiedEntry,
@@ -162,6 +171,8 @@ function Type1AApp() {
   const [refreshing, setRefreshing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const refreshingRef = useRef(false);
+  /** Espejo de `sensorSource` legible dentro de `refresh()` sin re-crear el callback. */
+  const sensorSourceRef = useRef<SensorSource>('none');
 
   const latest = latestLiveReading(readings);
 
@@ -180,7 +191,7 @@ function Type1AApp() {
     // latestLiveReading() finds the true latest live point regardless of
     // how wide this window is.
     const from = new Date(to.getTime() - 30 * 24 * 60 * 60_000);
-    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending, mealOffsets, correctionSettings, alertStyle, capillarySettings, onboardingSeen] = await Promise.all([
+    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending, mealOffsets, correctionSettings, alertStyle, capillarySettings, onboardingSeen, isLegacyBackendInstall] = await Promise.all([
       getCGMReadings(db, from, to, readTally),
       getTimeline(db),
       getTherapyProfile(db),
@@ -193,6 +204,7 @@ function Type1AApp() {
       getReminderAlertStyle(db),
       getCapillaryReminderSettings(db),
       getSetting(db, ONBOARDING_SEEN_KEY),
+      resolveLegacyBackendSensor(db, LEGACY_BACKEND_SENSOR_KEY),
     ]);
     setReadings(cached);
     setReadingsUnreadable(readTally.unreadable);
@@ -215,6 +227,7 @@ function Type1AApp() {
     setReminderAlertStyle(alertStyle);
     setCapillaryReminder(capillarySettings);
     setOnboardingDone(onboardingSeen === 'true');
+    sensorSourceRef.current = await resolveSensorSource(isLegacyBackendInstall);
   }, [db]);
 
   const refresh = useCallback(async (manual = false): Promise<void> => {
@@ -232,9 +245,16 @@ function Type1AApp() {
         // `fetchSensor*` usa la cuenta LibreLinkUp propia de la usuaria si la
         // conectó, y si no la ruta del backend de siempre — ver
         // `src/sensorConnection.ts`.
+        // La fuente se resuelve acá y no dentro de `fetchSensor*` para que
+        // ambas llamadas usen exactamente la misma, y para que "no hay
+        // sensor" sea un estado explícito en vez de una caída al backend.
+        const source = await resolveSensorSource(
+          (await getSetting(db, LEGACY_BACKEND_SENSOR_KEY)) === 'true',
+        );
+        sensorSourceRef.current = source;
         [nextStatus, remoteReadings] = await Promise.all([
-          fetchSensorStatus(),
-          fetchSensorReadings(from, to),
+          fetchSensorStatus(source),
+          fetchSensorReadings(source, from, to),
         ]);
       } catch (error) {
         // A genuine network/backend failure — the only case that should ever
@@ -243,14 +263,22 @@ function Type1AApp() {
         // failure with nothing to do with the network — e.g. a stale
         // connection colliding with a background-sync run — got mislabeled
         // as a backend outage, which sent debugging in the wrong direction).
+        // Qué falló depende de la fuente: con la cuenta propia no interviene
+        // nuestro backend en absoluto, y decir "Backend sin conexión" mandaba
+        // a depurar lo que no era.
+        const ownAccount = sensorSourceRef.current === 'own';
         setStatus({
           state: 'offline',
-          provider: 'backend',
-          detail: error instanceof Error ? error.message : 'Sin conexión al backend.',
+          provider: ownAccount ? 'librelinkup-freestyle-libre' : 'backend',
+          detail: error instanceof Error
+            ? error.message
+            : ownAccount ? 'Sin conexión con LibreLinkUp.' : 'Sin conexión al backend.',
           checkedAt: new Date().toISOString(),
           isSynthetic: false,
         });
-        setNotice('Backend sin conexión. El registro local sigue funcionando.');
+        setNotice(ownAccount
+          ? 'No se pudo contactar a LibreLinkUp. El registro local sigue funcionando.'
+          : 'Backend sin conexión. El registro local sigue funcionando.');
       }
       if (nextStatus !== null) {
         try {
@@ -789,12 +817,22 @@ function Type1AApp() {
         onSaveCapillaryReminder={updateCapillaryReminder}
         onExportReport={exportReport}
         onSensorConnectionChange={async () => {
-          // Al cambiar de cuenta hay que soltar el estado en memoria del
-          // sensor anterior antes de recargar, para no mostrar ni un instante
-          // la glucosa de otra persona como si fuera la propia.
+          // Limpiar el estado en memoria NO alcanza: las lecturas de la cuenta
+          // anterior están en SQLite, y `refresh()` arranca con
+          // `loadLocalState()`, que las vuelve a leer antes de que llegue la
+          // primera respuesta de red. Sin borrarlas, el timeline, el gráfico,
+          // las métricas y el reporte mezclarían la glucosa de dos personas, y
+          // `latestLiveReading` podría devolver la de la cuenta anterior como
+          // "actual". Se borran solo las de sensor (`origin:'real'`); lo
+          // manual y lo importado lo cargó la usuaria y se conserva.
+          resetSensorProviderCache();
+          const removed = await deleteSensorReadings(db);
           setReadings([]);
           setStatus(null);
           await refresh(true);
+          if (removed > 0) {
+            setNotice(`Se borraron ${removed} lectura(s) del sensor anterior para no mezclarlas con las nuevas. Tus registros manuales e importados siguen ahí.`);
+          }
         }}
       />
       <SummaryModal

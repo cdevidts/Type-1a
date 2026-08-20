@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { capillaryReminderTimes, formatMinutesAsClock, parseClockToMinutes } from './format';
+import { capillaryReminderTimes, formatMinutesAsClock, parseClockToMinutes, parseNonNegativeNumber } from './format';
 
 describe('parseClockToMinutes', () => {
   it('parses valid 24h times', () => {
@@ -56,5 +56,23 @@ describe('capillaryReminderTimes', () => {
 
   it('rejects malformed clock strings', () => {
     expect(capillaryReminderTimes('8am', '10pm', 3)).toBeNull();
+  });
+});
+
+describe('parseNonNegativeNumber — la trampa de la cadena vacía', () => {
+  it('devuelve 0 (no null) para una cadena vacía', () => {
+    // Documentado a propósito: es el comportamiento real, y confundirlo con
+    // "no hay dato" ya causó que cada comida se guardara con 0 g de macros.
+    expect(parseNonNegativeNumber('')).toBe(0);
+    expect(parseNonNegativeNumber('   ')).toBe(0);
+  });
+
+  it('devuelve null para algo que no es un número', () => {
+    expect(parseNonNegativeNumber('abc')).toBeNull();
+  });
+
+  it('acepta 0 y decimales con coma', () => {
+    expect(parseNonNegativeNumber('0')).toBe(0);
+    expect(parseNonNegativeNumber('12,5')).toBe(12.5);
   });
 });

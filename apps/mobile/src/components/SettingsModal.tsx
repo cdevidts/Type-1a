@@ -15,6 +15,7 @@ import { reportHtml, reportWorkbookBytes } from '../reportExport';
 import {
   clearSensorCredentials,
   getSensorCredentials,
+  resetSensorProviderCache,
   saveSensorCredentials,
   testSensorCredentials,
 } from '../sensorConnection';
@@ -372,6 +373,7 @@ export function SettingsModal({
         setSensorMessage(result.detail);
         return;
       }
+      resetSensorProviderCache();
       await saveSensorCredentials(credentials);
       setSensorConnected(true);
       setSensorPassword('');
@@ -389,10 +391,15 @@ export function SettingsModal({
     setSensorBusy(true);
     setSensorMessage(null);
     try {
+      resetSensorProviderCache();
       await clearSensorCredentials();
       setSensorConnected(false);
       setSensorPassword('');
-      setSensorMessage('Sensor desconectado. Tu historial guardado no se borró; solo dejamos de leer lecturas nuevas.');
+      // El mensaje anterior decía "solo dejamos de leer lecturas nuevas", que
+      // era falso: sin credenciales la app caía a la cuenta global del
+      // backend y seguía leyendo, de otra persona. Eso ya no pasa, y el texto
+      // ahora describe lo que ocurre de verdad.
+      setSensorMessage('Sensor desconectado. Dejamos de leer lecturas nuevas y se borraron las del sensor; tus registros manuales e importados siguen ahí.');
       await onSensorConnectionChange();
     } catch (error) {
       logSaveError('SettingsModal.disconnectSensor', error);

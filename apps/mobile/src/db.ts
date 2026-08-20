@@ -1576,6 +1576,51 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
     .slice(0, limit);
 }
 
+/**
+ * Resuelve **una sola vez** si esta instalación puede seguir usando la cuenta
+ * global de LibreLinkUp del backend.
+ *
+ * Es `true` solo cuando, al momento de migrar, ya había lecturas reales
+ * guardadas: eso significa que la instalación venía sincronizando contra el
+ * backend desde antes de que existiera la conexión por usuaria, y quitarle el
+ * sensor de golpe en una actualización sería romperle la app a quien ya la
+ * usaba. Una instalación nueva tiene la tabla vacía y arranca en `false`, así
+ * que **nunca ve el sensor de otra persona**.
+ *
+ * Se persiste para que la respuesta no cambie después: si se recalculara en
+ * cada arranque, una instalación nueva que sincroniza una vez pasaría a
+ * "heredada" para siempre.
+ */
+export async function resolveLegacyBackendSensor(db: SQLiteDatabase, key: string): Promise<boolean> {
+  const stored = await getSetting(db, key);
+  if (stored !== null) return stored === 'true';
+  const row = await db.getFirstAsync<{ count: number }>(
+    "SELECT COUNT(*) AS count FROM cgm_readings WHERE json_extract(payload, '$.origin') = 'real'",
+  );
+  const isLegacy = (row?.count ?? 0) > 0;
+  await setSetting(db, key, String(isLegacy));
+  return isLegacy;
+}
+
+/**
+ * Borra las lecturas que vinieron de un sensor (`origin:'real'`), dejando
+ * intactas las manuales y las importadas, que son datos que cargó la propia
+ * usuaria.
+ *
+ * Se usa al cambiar de cuenta de sensor: sin esto, las lecturas de la cuenta
+ * anterior siguen en SQLite y `loadLocalState()` las vuelve a leer justo
+ * después de "limpiar" el estado en memoria, así que el timeline, el gráfico,
+ * las métricas del Resumen y el reporte quedarían mezclando la glucosa de dos
+ * personas — y `latestLiveReading` podría devolver la de la cuenta anterior
+ * como "actual".
+ */
+export async function deleteSensorReadings(db: SQLiteDatabase): Promise<number> {
+  const result = await db.runAsync(
+    "DELETE FROM cgm_readings WHERE json_extract(payload, '$.origin') = 'real'",
+  );
+  return result.changes;
+}
+
 export async function getSetting(db: SQLiteDatabase, key: string): Promise<string | null> {
   const row = await db.getFirstAsync<{ value: string }>('SELECT value FROM app_settings WHERE key = ?', key);
   return row?.value ?? null;

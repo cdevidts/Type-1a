@@ -97,8 +97,9 @@ Tu contraseña de LibreLinkUp se guarda **cifrada en tu propio teléfono**
 teléfono y los servidores de Abbott. **No pasa por los servidores de
 Type 1A** y no la guardamos en ningún lado.
 
-Puedes borrarla cuando quieras con **Desconectar este sensor**. Eso no borra
-tu historial: solo deja de leer lecturas nuevas.
+Puedes borrarla cuando quieras con **Desconectar este sensor**. Eso borra las
+lecturas que vinieron del sensor, para no mezclarlas si después conectas otra
+cuenta; **tus registros manuales y lo que importaste se conservan**.
 
 ---
 
@@ -109,11 +110,20 @@ tu historial: solo deja de leer lecturas nuevas.
   backend, para no mantener dos implementaciones de una API de ingeniería
   inversa. La única diferencia es `sha256Hex`, inyectado
   (`node:crypto` en el servidor, `expo-crypto` en el teléfono).
-- **Si no hay credenciales guardadas, la app usa el backend exactamente como
-  antes.** Esa es la ruta que sigue usando la instalación original de
-  Verónica, con las variables `LIBRELINKUP_EMAIL`/`LIBRELINKUP_PASSWORD` del
-  entorno de Abacus. Por eso este cambio **no requiere redeploy** y no puede
-  romper su conexión.
+- **La ruta del backend sobrevive solo para instalaciones heredadas.** Se
+  decide una vez con `resolveLegacyBackendSensor`: es `true` únicamente si al
+  migrar ya había lecturas `origin:'real'` guardadas, o sea si esa instalación
+  venía sincronizando contra el backend desde antes. Una instalación nueva
+  arranca en `none` y **no lee ningún sensor** hasta que su dueña conecte el
+  suyo. Sin ese flag, "no hay credenciales" significaba "usa el backend", y
+  una instalación recién bajada mostraba la glucosa de otra persona antes
+  siquiera de abrir Ajustes.
+- Por eso este cambio **no requiere redeploy** y no rompe la conexión
+  existente de Verónica.
+- `backgroundSync.ts` resuelve la fuente igual que `App.tsx`. Es fácil
+  olvidarlo: corre cada ~15 min con la app cerrada, así que si se queda
+  llamando al backend directo, sigue escribiendo lecturas ajenas en la base y
+  poniéndolas en la pantalla bloqueada.
 - Si la ruta del dispositivo falla, **no** se cae de vuelta al backend, a
   propósito: eso mostraría el sensor de otra persona (el de la credencial
   global del servidor) presentado como propio.

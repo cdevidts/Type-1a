@@ -55,6 +55,22 @@ import { logSaveError } from './log';
  * teléfono antes de que esto pueda funcionar.
  */
 
+/**
+ * Marca que ESTA instalación puede usar la cuenta global del backend.
+ *
+ * Vive en la tabla `settings` (no en SecureStore) porque es una propiedad de
+ * la instalación, no un secreto. Se resuelve **una sola vez**, en
+ * `resolveLegacyBackendSensor`: `true` solo si al migrar ya había lecturas
+ * reales guardadas, es decir si esta instalación venía sincronizando contra
+ * el backend desde antes de que existiera la conexión por usuaria.
+ *
+ * Sin esto, "no hay credenciales guardadas" significaba "usa el backend", y
+ * eso hacía que **una instalación nueva mostrara el sensor de otra persona**
+ * antes siquiera de abrir Ajustes — exactamente la fuga que este módulo
+ * existe para cerrar.
+ */
+export const LEGACY_BACKEND_SENSOR_KEY = 'legacyBackendSensor';
+
 const EMAIL_KEY = 'type1a.llu.email.v1';
 const PASSWORD_KEY = 'type1a.llu.password.v1';
 const REGION_KEY = 'type1a.llu.region.v1';
@@ -106,13 +122,35 @@ export async function clearSensorCredentials(): Promise<void> {
   ]);
 }
 
+/**
+ * Una instancia por juego de credenciales, reusada entre llamadas.
+ *
+ * `LibreLinkUpCGMProvider` cachea el ticket de autenticación **en la
+ * instancia**, así que construir una nueva por llamada hacía un
+ * `POST /llu/auth/login` completo cada vez — y `refresh()` pide estado y
+ * lecturas, o sea dos logins por refresco, en cada arranque, cada vuelta a
+ * primer plano y cada pull-to-refresh. LibreLinkUp es una API no oficial que
+ * limita y bloquea cuentas por logins repetidos: eso dejaría a la usuaria sin
+ * su propio sensor.
+ */
+let cachedProvider: { key: string; provider: LibreLinkUpCGMProvider } | null = null;
+
 function providerFor(credentials: SensorCredentials): LibreLinkUpCGMProvider {
-  return new LibreLinkUpCGMProvider({
+  const key = `${credentials.email}\u0000${credentials.region}\u0000${credentials.password}`;
+  if (cachedProvider !== null && cachedProvider.key === key) return cachedProvider.provider;
+  const provider = new LibreLinkUpCGMProvider({
     email: credentials.email,
     password: credentials.password,
     region: credentials.region,
     sha256Hex,
   });
+  cachedProvider = { key, provider };
+  return provider;
+}
+
+/** Suelta la sesión cacheada. Obligatorio al cambiar o borrar credenciales. */
+export function resetSensorProviderCache(): void {
+  cachedProvider = null;
 }
 
 /**
@@ -137,6 +175,16 @@ export async function testSensorCredentials(
         detail: 'La cuenta existe, pero no está siguiendo ningún sensor todavía. Acepta la invitación en la app LibreLinkUp y vuelve a intentar.',
       };
     }
+    // Solo `connected`/`stale` cuentan como éxito. Un `provider_error` (5xx,
+    // respuesta inválida, bucle de redirección) u `offline` NO prueban nada
+    // sobre las credenciales, y guardarlas ahí dejaría a la usuaria creyendo
+    // que está en su propia cuenta cuando puede no estarlo.
+    if (status.state !== 'connected' && status.state !== 'stale') {
+      return {
+        ok: false,
+        detail: `No se pudo verificar la conexión con LibreLinkUp (${status.state}). No guardamos nada: vuelve a intentar en un momento.`,
+      };
+    }
     return { ok: true, detail: status.detail ?? 'Conectado.' };
   } catch (error) {
     logSaveError('sensorConnection.test', error);
@@ -148,21 +196,67 @@ export async function testSensorCredentials(
 }
 
 /**
- * Estado del sensor: cuenta propia si la hay, backend si no.
+ * De dónde salen las lecturas de esta instalación.
  *
- * Nota deliberada: si la ruta del dispositivo falla, **no** se cae de vuelta
- * al backend. Hacerlo mostraría el sensor de otra persona (el de la
- * credencial global del servidor) presentado como propio, que es exactamente
- * el problema que este módulo existe para resolver.
+ * - `own`: la usuaria conectó su cuenta de LibreLinkUp. El teléfono habla
+ *   directo con Abbott.
+ * - `legacyBackend`: instalación anterior a la conexión por usuaria, que
+ *   venía leyendo la cuenta global del backend. Se conserva **solo** para no
+ *   romperla; ver `LEGACY_BACKEND_SENSOR_KEY`.
+ * - `none`: no hay sensor. La app funciona igual para registrar a mano, que
+ *   es la degradación que exige `AGENTS.md`.
  */
-export async function fetchSensorStatus(): Promise<CGMProviderStatus> {
+export type SensorSource = 'own' | 'legacyBackend' | 'none';
+
+// OJO: la regla de abajo está duplicada en `src/sensorSource.test.ts`, que no
+// puede importar este módulo (arrastra `expo-crypto`/`expo-secure-store`, que
+// no cargan bajo vitest). Si cambias esta función, cambia también ese test.
+export async function resolveSensorSource(
+  isLegacyBackendInstall: boolean,
+): Promise<SensorSource> {
+  if ((await getSensorCredentials()) !== null) return 'own';
+  return isLegacyBackendInstall ? 'legacyBackend' : 'none';
+}
+
+/**
+ * `CGMProviderStatus` para el caso "no hay sensor conectado".
+ *
+ * Es un estado explícito, no un error: la app es perfectamente usable sin
+ * sensor. Lo que **no** puede hacer es caer al backend, porque eso mostraría
+ * el sensor de otra persona como propio.
+ */
+export const NO_SENSOR_STATUS: CGMProviderStatus = {
+  provider: 'sin-sensor',
+  state: 'not_connected',
+  detail: 'No has conectado tu sensor. Ve a Ajustes → Dispositivos para conectarlo, o sigue registrando a mano.',
+  isSynthetic: false,
+  checkedAt: new Date(0).toISOString(),
+};
+
+/**
+ * Estado del sensor según la fuente resuelta.
+ *
+ * Nota deliberada: si la ruta del dispositivo falla, **no** se cae al
+ * backend. Y si no hay ninguna fuente, se devuelve `NO_SENSOR_STATUS` en vez
+ * del backend. Las dos cosas por el mismo motivo: cualquier caída hacia la
+ * credencial global mostraría la glucosa de otra persona como propia.
+ */
+export async function fetchSensorStatus(source: SensorSource): Promise<CGMProviderStatus> {
+  if (source === 'none') return { ...NO_SENSOR_STATUS, checkedAt: new Date().toISOString() };
+  if (source === 'legacyBackend') return fetchCGMStatus();
   const credentials = await getSensorCredentials();
-  if (credentials === null) return fetchCGMStatus();
+  if (credentials === null) return { ...NO_SENSOR_STATUS, checkedAt: new Date().toISOString() };
   return providerFor(credentials).getStatus();
 }
 
-export async function fetchSensorReadings(from: Date, to: Date): Promise<CGMReading[]> {
+export async function fetchSensorReadings(
+  source: SensorSource,
+  from: Date,
+  to: Date,
+): Promise<CGMReading[]> {
+  if (source === 'none') return [];
+  if (source === 'legacyBackend') return fetchCGMReadings(from, to);
   const credentials = await getSensorCredentials();
-  if (credentials === null) return fetchCGMReadings(from, to);
+  if (credentials === null) return [];
   return providerFor(credentials).getReadings({ from, to });
 }

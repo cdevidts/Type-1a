@@ -1295,6 +1295,56 @@ Detalles de implementación que conviene no re-derivar:
 Guía de usuaria: [`CONECTAR_SENSOR.md`](CONECTAR_SENSOR.md), enlazada desde el
 onboarding y desde Ajustes → Dispositivos.
 
+### Fugas entre pacientes encontradas por `domain-safety-reviewer`
+
+La primera versión de este trabajo dejaba **tres caminos** por los que la
+glucosa de otra persona llegaba a la pantalla como propia. Vale anotarlos
+porque comparten una misma causa de diseño: **"no hay credenciales" se estaba
+tratando como "usa el backend"**, cuando lo correcto es "no hay sensor".
+
+1. **`backgroundSync.ts` seguía llamando al backend directo.** `App.tsx` se
+   migró, ese archivo no. Corre cada ~15 min vía WorkManager y en cada toque
+   de "Actualizar" de la notificación, **con la app cerrada**, así que
+   escribía lecturas ajenas en el mismo SQLite y las ponía en la pantalla
+   bloqueada rotuladas como sensor en vivo. Una vez mezcladas son
+   indistinguibles: quedan con `origin:'real'` y el mismo `source`.
+2. **"Desconectar este sensor" reconectaba en silencio a la cuenta global.**
+   Sin credenciales se caía al backend, y el mensaje decía "solo dejamos de
+   leer lecturas nuevas", que era literalmente falso.
+3. **Una instalación nueva mostraba el sensor compartido antes de abrir
+   Ajustes.** El onboarding "Conecta tu sensor" se mostraba encima de una
+   pantalla que ya estaba mostrando la glucosa de otra persona.
+
+Solución: un flag `legacyBackendSensor` resuelto **una sola vez**
+(`resolveLegacyBackendSensor` en `db.ts`), `true` únicamente si al migrar ya
+había lecturas `origin:'real'` guardadas — o sea, si esa instalación venía
+sincronizando con el backend desde antes. Instalación nueva → `none`, sin
+sensor, degradando a registro manual como exige `AGENTS.md`. La fuente pasó a
+ser un tipo explícito (`SensorSource`) que se resuelve en un solo lugar y se
+pasa a `fetchSensorStatus`/`fetchSensorReadings`, en vez de que cada función
+la adivine.
+
+Además:
+
+- **Cambiar de cuenta no purgaba las lecturas anteriores.** Limpiar el estado
+  en memoria no servía de nada: `refresh()` arranca con `loadLocalState()`,
+  que las vuelve a leer de SQLite antes de la primera respuesta de red. Ahora
+  `deleteSensorReadings()` borra las de `origin:'real'` (lo manual e
+  importado se conserva) y se avisa cuántas.
+- **`testSensorCredentials` daba por buena la conexión con `provider_error` u
+  `offline`**, que no prueban nada sobre las credenciales. Ahora exige
+  `connected` o `stale`.
+- **Dos logins a LibreLinkUp por refresco.** El proveedor cachea el ticket en
+  la instancia y se construía una nueva por llamada. Es una API no oficial que
+  bloquea cuentas por logins repetidos: habría dejado a la usuaria sin su
+  propio sensor. Ahora hay una instancia cacheada por credencial.
+- **`parseNonNegativeNumber('')` devuelve `0`, no `null`** (`Number('')` es 0).
+  Por eso el ítem 7 guardaba `proteinG: 0, fatG: 0, fiberG: 0` en **cada**
+  comida aunque la usuaria nunca abriera la sección, y el reporte al médico
+  mostraba "0 g de proteína, promedio de N" como dato medido — destruyendo
+  justamente la distinción "no anotado" vs "0 g" sobre la que está construido
+  el ítem. El helper quedó documentado y con test.
+
 ### Pendiente
 
 - **Nadie ha probado esto contra la API real de LibreLinkUp desde el

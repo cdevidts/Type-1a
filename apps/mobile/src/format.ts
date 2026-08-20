@@ -56,6 +56,14 @@ export function parsePositiveNumber(value: string): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+/**
+ * **Cuidado: una cadena vacía devuelve `0`, no `null`** — `Number('')` es 0 y
+ * 0 es un valor no negativo válido. Si para tu campo "en blanco" significa
+ * "no lo anotó" y no "cero", tienes que chequear `value.trim() === ''` antes
+ * de llamar acá. Esto ya causó un bug: los macros de `MealModal` se guardaban
+ * como `0 g` en cada comida y el reporte al médico los mostraba como dato
+ * medido (Fase 13, ítem 7).
+ */
 export function parseNonNegativeNumber(value: string): number | null {
   const parsed = Number(value.replace(',', '.').trim());
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;

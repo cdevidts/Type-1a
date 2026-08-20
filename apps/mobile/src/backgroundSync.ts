@@ -6,8 +6,13 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { latestLiveReading } from '@type1a/domain';
 
-import { fetchCGMReadings, fetchCGMStatus } from './api';
 import { getSetting, initializeDatabase, upsertCGMReadings } from './db';
+import {
+  fetchSensorReadings,
+  fetchSensorStatus,
+  LEGACY_BACKEND_SENSOR_KEY,
+  resolveSensorSource,
+} from './sensorConnection';
 import { ACTION_REFRESH, postQuickEntryNotification, QUICK_ENTRY_ENABLED_KEY } from './notifications';
 
 const PERIODIC_TASK_ID = 'type1a-background-cgm-sync';
@@ -76,11 +81,24 @@ async function runSyncSerialized(): Promise<void> {
  * same sync a scheduled run does, not a separate, thinner version of it.
  */
 async function runCgmSync(db: SQLiteDatabase): Promise<void> {
+  // Tiene que resolver la fuente igual que `App.tsx`. Cuando esto llamaba
+  // directo a `fetchCGMStatus`/`fetchCGMReadings`, seguía leyendo la cuenta
+  // global del backend cada ~15 minutos —y en cada toque de "Actualizar" de
+  // la notificación, incluso con la app cerrada— aunque la usuaria hubiera
+  // conectado la suya. Escribía esas lecturas en el mismo SQLite y ponía la
+  // glucosa de otra persona en la pantalla bloqueada rotulada como sensor en
+  // vivo. Una vez mezcladas son indistinguibles: quedan con `origin:'real'` y
+  // el mismo `source`.
+  const source = await resolveSensorSource(
+    (await getSetting(db, LEGACY_BACKEND_SENSOR_KEY)) === 'true',
+  );
+  if (source === 'none') return;
+
   const to = new Date();
   const from = new Date(to.getTime() - SYNC_WINDOW_MS);
   const [status, readings] = await Promise.all([
-    fetchCGMStatus(),
-    fetchCGMReadings(from, to),
+    fetchSensorStatus(source),
+    fetchSensorReadings(source, from, to),
   ]);
   await upsertCGMReadings(db, readings);
 
