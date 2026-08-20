@@ -16,10 +16,16 @@ abajo. Invoca /app-shell y /iconography (son del repo, disparo automático).
 
 TRABAJO, en este orden:
 
-1. ICONOS. Crea apps/mobile/src/components/icons/ con componentes SVG usando
-   react-native-svg (YA es dependencia, no instales nada). Necesitas:
-   nutrition, plate, plus, summary, settings. Props: size=24, color desde
-   theme.ts, trazo 2px, strokeLinecap round.
+1. ICONOS. Usa lucide-react-native, que YA está instalado (v1.33, ISC,
+   construido sobre react-native-svg). NO dibujes SVG a mano. Importa por
+   nombre, nunca `import *` (mata el tree-shaking).
+   CRÍTICO: importa por subpath, no por nombre desde el barrel. Metro no hace
+   tree-shaking y el barrel mete los ~1.500 iconos (medido: 1.263 → 3.088
+   módulos; por subpath quedan 1.316).
+     import Plus from 'lucide-react-native/icons/plus';   // ✅
+     import { Plus } from 'lucide-react-native';          // ❌
+   El archivo va en kebab-case: UtensilsCrossed → icons/utensils-crossed.
+   size=24, color desde theme.ts, strokeWidth por defecto.
    Crea apps/mobile/src/branding.ts con `export const APP_LOGO = require(...)`
    apuntando a apps/mobile/assets/icon.png. Ningún componente puede escribir
    el nombre del archivo — solo la variable.

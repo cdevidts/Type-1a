@@ -318,7 +318,7 @@ persistencia de datos de salud, o `packages/cgm`.
 
 | **14** | ✅ **Completada (2026-08-20).** Pantalla de Nutrición: metas de calorías/macros y patrones de grasa/proteína vs. glucosa tardía. Ver detalle abajo. | 1, 7 |
 | **15** | ✅ **Completada (2026-08-20).** La IA estima todos los macros (foto y texto) y arma el catálogo propio de alimentos. Ver detalle abajo. | 14 |
-| **16** | **Barra inferior, swipe y sistema de iconos.** Reorganiza la navegación entera y reemplaza los glifos Unicode por iconos SVG reales. **Todo JS: no necesita build nativo.** Ver detalle abajo. | 14, 15 |
+| **16** | ✅ **Completada (2026-08-20).** Barra inferior, swipe y sistema de iconos. Reorganiza la navegación entera y reemplaza los glifos Unicode por iconos SVG reales. **Todo JS: no necesita build nativo.** Ver detalle abajo. | 14, 15 |
 | **17** | **Editar entradas con la misma potencia que crearlas**, incluida la IA en modo edición (foto, texto, y "explícale el cambio"). Ver detalle abajo. | 15 |
 | **18** | **Catálogo de comidas editable** (pantalla propia), porciones, y la pregunta de "¿editar la del catálogo o crear una nueva?". Ver detalle abajo. | 15, 17 |
 | **19** | **Notificaciones distinguibles**: un icono, un color y un título propios por tipo de alarma. **Necesita build nativo** (los iconos de notificación de Android son recursos drawable). Ver detalle abajo. | 16 (usa el sistema de iconos) |
@@ -1615,7 +1615,30 @@ escribirlo no impide guardar la comida.
 - `macrosSource` se guarda pero **no se muestra** todavía en el reporte
   PDF/Excel que va al médico.
 
-## Fase 16 — Barra inferior, swipe y sistema de iconos (planificada 2026-08-20)
+## Fase 16 — Barra inferior, swipe y sistema de iconos ✅ (2026-08-20)
+
+**Completada.** Lo construido: `BottomNav.tsx` (cinco destinos, el `+` central
+más grande, `insets.bottom` sumado), `useSwipeNavigation.ts` (gesto lateral con
+umbral direccional para no robarle el scroll al gráfico), `branding.ts`
+(`APP_LOGO` por variable), iconos de **Lucide** reemplazando los glifos
+Unicode de la barra superior, y marcas de hora cada 1 h en `GlucoseChart`.
+
+Los tres botones se **movieron sin duplicarse**: "Nueva entrada" salió del
+cuerpo del scroll, y Resumen y Nutrición salieron de la esquina superior.
+Ajustes se quedó arriba. Catálogo y Chat quedan visibles pero inertes (Fases
+18 y 8), con aviso al tocarlos, para fijar el layout y no rehacer la barra.
+
+**Hallazgo medido que conviene no repetir:** importar iconos por nombre desde
+el barrel de Lucide mete los ~1.500 al bundle (1.263 → **3.088** módulos).
+Con el subpath oficial `lucide-react-native/icons/*` quedan **1.316**. Está en
+la skill `/iconography`.
+
+**Las marcas de hora**: se dibuja una línea cada hora, pero se **etiqueta cada
+3** (`HOUR_LABEL_STEP`). A `PIXELS_PER_HOUR = 30` una etiqueta por hora se
+solapa; la línea muda alcanza para contar y ubicarse, y las etiquetadas van un
+punto más marcadas.
+
+### Detalle original de la planificación
 
 Pedido de Verónica. Hoy Ajustes está bien arriba a la derecha, pero Resumen y
 Nutrición no: son navegación, no configuración, y están escondidos en la misma
@@ -1808,10 +1831,36 @@ app, fijado en tiempo de compilación. Cambiar eso exige un config plugin
 propio que agregue varios drawables y llame a `setSmallIcon` por
 notificación — es trabajo nativo de verdad, no una prop.
 
-**Conclusión de diseño**: la diferenciación se apoya en **emoji + color +
-título + canal por tipo**, no en el icono de la barra de estado. Con eso
-alcanza para que las tres alarmas se distingan de un vistazo. El icono
-distinto por tipo se evalúa aparte, y solo si con lo anterior no basta.
+### Decisión: las cuatro combinadas, no una sola
+
+Se combinan **porque cada una opera en una capa distinta** y ninguna sola
+resuelve el problema:
+
+| Capa | Recurso | Qué resuelve |
+|---|---|---|
+| Lo que ve en la bandeja | **Emoji al inicio del título** | Distinguir de un vistazo, sin leer |
+| El tinte | **`content.color` por tipo** | Refuerza el emoji; Android tiñe icono y nombre de la app |
+| Lo que dice | **Título explícito por tipo** | Saber qué es sin abrir |
+| Lo que suena | **Un canal por tipo** | Distinguir **sin mirar**, y —clave— poder silenciar un tipo sin perder los otros desde los ajustes de Android |
+
+Mapa concreto propuesto:
+
+| Alarma | Emoji | Color | Título |
+|---|---|---|---|
+| Post-comida | 🍽️ | `colors.orange` | "Revisa tu glucosa post-comida" |
+| Corrección | 💧 | `colors.teal` | "Revisa tu glucosa tras la corrección" |
+| Capilar | 🩸 | `colors.red` | "Toca medirte capilar" |
+
+El **canal por tipo** es el de mayor valor real y el menos obvio: hoy los tres
+tipos comparten canal, así que Android los trata como una sola cosa. Separarlos
+le da a la usuaria un interruptor por tipo en los ajustes del sistema, que es
+justo lo que necesita alguien que quiere silenciar los recordatorios de
+corrección pero no los de capilar.
+
+**El icono pequeño por tipo queda descartado para esta fase**, no por pereza
+sino por costo/beneficio: exige un config plugin propio y aporta el
+diferenciador más débil de los cinco (un símbolo monocromo de ~16 px). Se
+reevalúa solo si con emoji + color + título + canal la confusión persiste.
 
 **Sigue necesitando build** aunque el icono sea uno solo: los canales nuevos
 y el drawable se fijan en configuración nativa. Y ojo con lo de siempre —

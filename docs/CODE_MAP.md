@@ -363,6 +363,19 @@ docs/
   al sensor" y la guía de usuaria `docs/CONECTAR_SENSOR.md`. Nota: si la ruta
   del dispositivo falla **no** se cae al backend, a propósito — sería mostrar
   el sensor de otra persona como propio.
+- `src/branding.ts` (2026-08-20) — `APP_LOGO`, la **única** referencia al
+  archivo del logo. Ningún componente escribe la ruta: cambiar el logo es
+  cambiar esta línea.
+- `src/components/BottomNav.tsx` (2026-08-20, Fase 16) — barra de navegación
+  inferior de cinco destinos (Nutrición / Catálogo / **+** / Chat / Resumen),
+  fija y con `insets.bottom` sumado, porque con edge-to-edge la barra de
+  Android tapa lo que esté a `bottom: 0`. Exporta `NAV_ORDER`, que es también
+  el orden del swipe. Ajustes NO está acá: es configuración, se queda arriba.
+- `src/useSwipeNavigation.ts` (2026-08-20, Fase 16) — gesto lateral entre los
+  cinco destinos. **Lee su cabecera antes de tocarlo**: `GlucoseChart` es un
+  `ScrollView` horizontal y un reconocedor ingenuo le roba el gesto; por eso
+  usa umbral direccional y `onMoveShouldSetPanResponder`, y se aplica al
+  contenedor de la pantalla, nunca envolviendo al gráfico.
 - `src/components/NutritionModal.tsx` (2026-08-20, Fase 14) — la pantalla de
   Nutrición: metas de calorías/macros y, por fin, los datos de comida que se
   guardaban sin mostrarse (proteína, grasa, fibra, energía). Tres pestañas:

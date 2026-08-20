@@ -4,6 +4,7 @@ import * as Linking from 'expo-linking';
 import * as Notifications from 'expo-notifications';
 import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
+import Settings from 'lucide-react-native/icons/settings';
 import {
   AppState,
   Pressable,
@@ -36,11 +37,13 @@ import { InsulinAssociationModal } from './src/components/InsulinAssociationModa
 import { MealModal, type ConfirmedMealDraft } from './src/components/MealModal';
 import { NumericEntryModal } from './src/components/NumericEntryModal';
 import { SettingsModal } from './src/components/SettingsModal';
+import { BottomNav, type NavDestination } from './src/components/BottomNav';
 import { KetonesModal } from './src/components/KetonesModal';
 import { NutritionModal } from './src/components/NutritionModal';
 import { OnboardingModal } from './src/components/OnboardingModal';
 import { SummaryModal } from './src/components/SummaryModal';
 import { Timeline } from './src/components/Timeline';
+import { useSwipeNavigation } from './src/useSwipeNavigation';
 import { logSaveError } from './src/log';
 import {
   fetchSensorReadings,
@@ -165,6 +168,7 @@ function Type1AApp() {
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [ketonesOpen, setKetonesOpen] = useState(false);
   const [nutritionOpen, setNutritionOpen] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
   const [nutritionProfile, setNutritionProfile] = useState<NutritionProfile | null>(null);
   const [catalogFoods, setCatalogFoods] = useState<CatalogFood[]>([]);
   const [showGlucoseOnLockScreen, setShowGlucoseOnLockScreen] = useState(false);
@@ -728,10 +732,47 @@ function Type1AApp() {
     return 'LOCAL-FIRST';
   }, [status]);
 
+  /**
+   * Un solo punto de entrada para la navegación: lo usan tanto los botones de
+   * la barra como el gesto de swipe, así que no pueden divergir.
+   */
+  const activeDestination: NavDestination | null =
+    nutritionOpen ? 'nutrition'
+      : catalogOpen ? 'catalog'
+        : summaryOpen ? 'summary'
+          : null;
+
+  function navigateTo(destination: NavDestination): void {
+    // Se cierra todo antes de abrir: dos modales encimados dejan uno
+    // inalcanzable detrás del otro.
+    setNutritionOpen(false);
+    setCatalogOpen(false);
+    setSummaryOpen(false);
+    setEntryOpen(false);
+    if (destination === 'nutrition') setNutritionOpen(true);
+    else if (destination === 'summary') setSummaryOpen(true);
+    else if (destination === 'entry') setEntryOpen(true);
+    else if (destination === 'catalog') {
+      // Fase 18. El botón existe desde ya para fijar el layout y no rehacer
+      // la barra después.
+      setNotice('El catálogo de comidas llega en la próxima versión.');
+    } else if (destination === 'chat') {
+      setNotice('El chat de IA todavía no está disponible.');
+    }
+  }
+
+  const swipe = useSwipeNavigation({ active: activeDestination, onNavigate: navigateTo });
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="dark" />
+      {/*
+        El PanResponder va en el ScrollView de la pantalla, NO envolviendo al
+        gráfico: `GlucoseChart` es un ScrollView horizontal y hay que dejarle
+        su gesto. Ver `useSwipeNavigation`.
+      */}
       <ScrollView
+        {...swipe.panHandlers}
         contentContainerStyle={styles.screen}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { void refresh(true); }} tintColor={colors.teal} />}
       >
@@ -740,15 +781,14 @@ function Type1AApp() {
             <Text style={styles.brand}>Type 1A</Text>
             <Text style={styles.mode}>{sourceLabel}</Text>
           </View>
+          {/*
+            Resumen y Nutrición se MOVIERON a la barra inferior (Fase 16):
+            arriba a la derecha va la configuración, no la navegación. Ajustes
+            se queda porque es exactamente eso.
+          */}
           <View style={styles.topBarActions}>
-            <Pressable style={styles.settingsButton} onPress={() => { setSummaryOpen(true); }} accessibilityRole="button" accessibilityLabel="Resumen: métricas y patrones">
-              <Text style={styles.settingsGlyph}>◔</Text>
-            </Pressable>
-            <Pressable style={styles.settingsButton} onPress={() => { setNutritionOpen(true); }} accessibilityRole="button" accessibilityLabel="Nutrición: metas y macronutrientes">
-              <Text style={styles.settingsGlyph}>◍</Text>
-            </Pressable>
-            <Pressable style={styles.settingsButton} onPress={() => { setSettingsOpen(true); }} accessibilityLabel="Ajustes">
-              <Text style={styles.settingsGlyph}>•••</Text>
+            <Pressable style={styles.settingsButton} onPress={() => { setSettingsOpen(true); }} accessibilityRole="button" accessibilityLabel="Ajustes">
+              <Settings size={22} color={colors.navy} />
             </Pressable>
           </View>
         </View>
@@ -784,13 +824,6 @@ function Type1AApp() {
 
         <GlucoseCard readings={readings} status={status} />
 
-        <Pressable style={({ pressed }) => [styles.entryButton, pressed && styles.pressed]} onPress={() => { setEntryOpen(true); }} accessibilityRole="button">
-          <Text style={styles.entryPlus}>+</Text>
-          <View style={styles.entryCopy}>
-            <Text style={styles.entryTitle}>Nueva entrada</Text>
-            <Text style={styles.entrySubtitle}>Glucosa, comida, carbohidratos e insulina en un solo registro</Text>
-          </View>
-        </Pressable>
 
         <View style={styles.quickHeader}>
           <View>
@@ -940,6 +973,7 @@ function Type1AApp() {
         sin esa espera, la bienvenida parpadearía en cada arranque antes de
         que la base de datos conteste que ya se vio.
       */}
+      <BottomNav active={activeDestination} onSelect={navigateTo} />
       <OnboardingModal
         visible={onboardingDone === false}
         onFinish={() => {
@@ -988,18 +1022,19 @@ export default function App() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.background },
-  screen: { padding: spacing.lg, paddingBottom: 60 },
+  // paddingBottom generoso: la barra inferior es `position: absolute` y sin
+  // esto tapa la última tarjeta. 96 = alto de la barra + holgura; el inset
+  // del sistema lo suma la barra por dentro.
+  screen: { padding: spacing.lg, paddingBottom: 96 },
   topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.lg },
   brand: { color: colors.ink, fontSize: 30, fontWeight: '900', letterSpacing: -1 },
   mode: { color: colors.teal, fontSize: 10, fontWeight: '900', letterSpacing: 1.2, marginTop: 2 },
   topBarActions: { flexDirection: 'row', gap: spacing.sm },
   settingsButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' },
-  settingsGlyph: { color: colors.navy, fontSize: 20, fontWeight: '900', letterSpacing: 2, marginTop: -8 },
   notice: { borderRadius: radius.sm, padding: spacing.md, marginBottom: spacing.md },
   noticeWarning: { backgroundColor: colors.warningSoft },
   noticeInfo: { backgroundColor: colors.tealSoft },
   noticeText: { color: colors.navy, fontSize: 12, lineHeight: 17, fontWeight: '600' },
-  entryButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.teal, borderRadius: radius.md, padding: spacing.lg, marginTop: spacing.xl },
   entryPlus: { color: '#FFFFFF', fontSize: 38, fontWeight: '300', lineHeight: 42, marginRight: spacing.md },
   entryCopy: { flex: 1 },
   entryTitle: { color: '#FFFFFF', fontSize: 19, fontWeight: '800' },

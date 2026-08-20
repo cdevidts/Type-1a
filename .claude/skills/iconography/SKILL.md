@@ -14,24 +14,54 @@ La app arrastra iconos hechos con caracteres (`◔`, `◍`, `•••`, `ƒ(x)`
 - se lee mal a tamaño chico, que es justo el de una barra de navegación;
 - no comunica significado a alguien que no lo reconozca.
 
-## Regla 2: los iconos son SVG en el repo, sin dependencia nueva
+## Regla 2: los iconos vienen de Lucide, no se dibujan a mano
 
-`react-native-svg` **ya es dependencia** de `apps/mobile` (la usan
-`GlucoseChart` y `SummaryCharts`). Los iconos se escriben como componentes
-SVG propios en `apps/mobile/src/components/icons/`, no se instala una
-librería de iconos.
+**`lucide-react-native` es la fuente de iconos del proyecto** (2026-08-20).
+Está construida sobre `react-native-svg`, que ya era dependencia, así que no
+agrega motor nuevo: cada icono es un componente SVG nativo.
 
-Por qué no una librería: pesa cientos de iconos para usar ocho, y no tenemos
-control sobre el trazo. Con `react-native-svg` un icono son ~10 líneas y queda
-exactamente con el grosor del resto del sistema.
+- Licencia **ISC** (permisiva, sin atribución obligatoria en la app).
+- ~1.500 iconos con trazo consistente entre sí.
+- **Tree-shakeable**: solo entra al bundle lo que importas por nombre.
+- Peer deps verificadas contra este repo: react 19 ✓, react-native-svg 15 ✓.
+
+Por qué Lucide y no dibujar los SVG a mano: dibujarlos gasta tokens, sale
+inconsistente entre iconos y no aguanta cuando la app necesita el vigésimo.
+Catálogo para buscar el nombre exacto: <https://lucide.dev/icons/>.
+
+### Importa por subpath, NO por nombre desde el barrel
+
+Esto está **medido en este repo**, no supuesto:
+
+```tsx
+// ❌ mete los ~1.500 iconos al bundle: 1.263 → 3.088 módulos
+import { Plus, UtensilsCrossed } from 'lucide-react-native';
+
+// ✅ solo lo que usas: 1.263 → 1.316 módulos con cinco iconos
+import Plus from 'lucide-react-native/icons/plus';
+import UtensilsCrossed from 'lucide-react-native/icons/utensils-crossed';
+```
+
+**Metro no hace tree-shaking de un barrel export.** Aunque el paquete declare
+`sideEffects: false`, importar por nombre desde la raíz arrastra el índice
+completo. El subpath `lucide-react-native/icons/*` es oficial (está en el
+`exports` del paquete) y trae los tipos, así que TypeScript lo resuelve sin
+configuración extra.
+
+El nombre del archivo es el del icono en **kebab-case**:
+`UtensilsCrossed` → `icons/utensils-crossed`.
 
 Convenciones:
 
 - **Tamaño por prop `size`**, con 24 por defecto; el área tocable la pone el
   contenedor (44×44 mínimo), nunca el icono.
 - **Color por prop `color`**, siempre desde `theme.ts`. Nunca un hex suelto.
-- **Trazo de 2 px** a tamaño 24, `strokeLinecap="round"`, sin relleno salvo
-  que el icono lo pida. Consistente con las marcas de los gráficos.
+- **`strokeWidth` 2** (el de Lucide por defecto). No lo cambies icono por
+  icono: la consistencia del trazo es el motivo de usar una sola familia.
+- Si un icono que necesitas no existe en Lucide, **primero busca un sinónimo**
+  en el catálogo. Dibujar uno a mano es el último recurso, y entonces sí va
+  como componente propio en `apps/mobile/src/components/icons/` imitando el
+  trazo de Lucide.
 - **Un icono nunca comunica solo**: en la barra de navegación va con su
   etiqueta; en un estado (sintético, atrasado, error) va con texto.
 

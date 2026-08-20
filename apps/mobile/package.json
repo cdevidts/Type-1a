@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "main": "index.ts",
   "dependencies": {
+    "@type1a/cgm": "workspace:*",
     "@type1a/domain": "workspace:*",
     "@type1a/schemas": "workspace:*",
     "expo": "~57.0.12",
@@ -19,13 +20,13 @@
     "expo-sqlite": "~57.0.1",
     "expo-status-bar": "~57.0.1",
     "expo-task-manager": "~57.0.11",
+    "lucide-react-native": "^1.33.0",
     "react": "19.2.3",
     "react-native": "0.86.2",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-svg": "15.15.4",
     "xlsx": "^0.18.5",
-    "zod": "^4.4.3",
-    "@type1a/cgm": "workspace:*"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",

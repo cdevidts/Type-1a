@@ -23,7 +23,17 @@ const HIGH_THRESHOLD = 180;
 // circles at once.
 const MAX_MARKERS = 300;
 /** Horas entre marcas intradía (pedido de Verónica, 18/8: "mostrar horas en el gráfico"). */
-const HOUR_TICK_STEP = 6;
+/**
+ * Se dibuja una línea **cada hora** (Fase 16: con marcas cada 6 h era
+ * imposible ubicar a qué hora fue una medición).
+ *
+ * Pero la etiqueta NO va en cada línea: a `PIXELS_PER_HOUR = 30`, un "14:00"
+ * ocupa más de 30 px y se solaparía con el siguiente. Se etiqueta cada
+ * `HOUR_LABEL_STEP` horas y las intermedias quedan como línea muda, que es
+ * suficiente para contar y ubicarse.
+ */
+const HOUR_TICK_STEP = 1;
+const HOUR_LABEL_STEP = 3;
 
 function yForGlucose(glucose: number): number {
   const clamped = Math.max(MIN_GLUCOSE, Math.min(MAX_GLUCOSE, glucose));
@@ -114,13 +124,17 @@ export function GlucoseChart({ readings }: { readings: readonly CGMReading[] }) 
     const markers = coordinates.filter((_, index) => index % markerStep === 0);
 
     const dayBoundaries: { x: number; label: string }[] = [];
-    const hourTicks: { x: number; label: string }[] = [];
+    const hourTicks: { x: number; label: string | null }[] = [];
     for (let dayStart = startOfDay(firstMs); dayStart <= lastMs; dayStart += 24 * 60 * 60_000) {
       if (dayStart >= firstMs) dayBoundaries.push({ x: xFor(dayStart), label: formatDayLabel(dayStart) });
       for (let hour = HOUR_TICK_STEP; hour < 24; hour += HOUR_TICK_STEP) {
         const tickMs = dayStart + hour * 60 * 60_000;
         if (tickMs < firstMs || tickMs > lastMs) continue;
-        hourTicks.push({ x: xFor(tickMs), label: formatHourLabel(tickMs) });
+        const hour24 = new Date(tickMs).getHours();
+        hourTicks.push({
+          x: xFor(tickMs),
+          label: hour24 % HOUR_LABEL_STEP === 0 ? formatHourLabel(tickMs) : null,
+        });
       }
     }
 
@@ -167,11 +181,23 @@ export function GlucoseChart({ readings }: { readings: readonly CGMReading[] }) 
           <Svg width={plotWidth} height={HEIGHT}>
             <Line x1={0} y1={yForGlucose(HIGH_THRESHOLD)} x2={plotWidth} y2={yForGlucose(HIGH_THRESHOLD)} stroke={colors.orange} strokeDasharray="4 4" opacity={0.55} />
             <Line x1={0} y1={yForGlucose(LOW_THRESHOLD)} x2={plotWidth} y2={yForGlucose(LOW_THRESHOLD)} stroke={colors.red} strokeDasharray="4 4" opacity={0.55} />
+            {/* Línea en cada hora; la etiquetada va un punto más marcada. */}
             {hourTicks.map((tick) => (
-              <Line key={`hour-${tick.x}`} x1={tick.x} y1={PADDING_TOP} x2={tick.x} y2={HEIGHT - PADDING_BOTTOM} stroke={colors.line} strokeWidth={1} opacity={0.6} />
+              <Line
+                key={`hour-${tick.x}`}
+                x1={tick.x}
+                y1={PADDING_TOP}
+                x2={tick.x}
+                y2={HEIGHT - PADDING_BOTTOM}
+                stroke={colors.line}
+                strokeWidth={1}
+                opacity={tick.label === null ? 0.35 : 0.7}
+              />
             ))}
             {hourTicks.map((tick) => (
-              <SvgText key={`hour-label-${tick.x}`} x={tick.x} y={PADDING_TOP + 9} fontSize={9} fill={colors.muted} textAnchor="middle">{tick.label}</SvgText>
+              tick.label === null ? null : (
+                <SvgText key={`hour-label-${tick.x}`} x={tick.x} y={PADDING_TOP + 9} fontSize={9} fill={colors.muted} textAnchor="middle">{tick.label}</SvgText>
+              )
             ))}
             {dayBoundaries.map((boundary) => (
               <Line key={boundary.x} x1={boundary.x} y1={PADDING_TOP} x2={boundary.x} y2={HEIGHT - PADDING_BOTTOM} stroke={colors.line} strokeWidth={1.5} />
