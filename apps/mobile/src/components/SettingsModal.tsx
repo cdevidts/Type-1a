@@ -4,13 +4,20 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
+import type { LibreLinkUpRegion } from '@type1a/cgm';
 import type { CGMProviderStatus, TherapyProfile } from '@type1a/schemas';
 
-import { API_BASE_URL, connectFreestyleLibre } from '../api';
+import { API_BASE_URL } from '../api';
 import type { CapillaryReminderSettings, CorrectionReminderSettings, MySugrImportOutcome } from '../db';
 import { capillaryReminderTimes, formatMinutesAsClock, parseMinuteOffsets, parsePositiveNumber } from '../format';
 import { logSaveError } from '../log';
 import { reportHtml, reportWorkbookBytes } from '../reportExport';
+import {
+  clearSensorCredentials,
+  getSensorCredentials,
+  saveSensorCredentials,
+  testSensorCredentials,
+} from '../sensorConnection';
 import { colors, radius, spacing } from '../theme';
 import type { ReminderAlertStyle, ReportExport } from '../types';
 import { ModalShell } from './ModalShell';
@@ -91,6 +98,24 @@ function importSummaryText(outcome: MySugrImportOutcome): string {
 type SettingsGroup = 'devices' | 'alarms' | 'therapy' | 'reports';
 
 /**
+ * Regiones de LibreLinkUp. La lista completa de `LLU_REGIONS` tiene 13 y
+ * mostrarlas todas es ruido: acá van las que un usuario de esta app va a
+ * necesitar de verdad, con "la" (Latinoamérica) primero porque es la de
+ * Chile. Si alguien necesita otra, el proveedor igual sigue el redirect que
+ * devuelve la API cuando la región elegida es la equivocada.
+ */
+const SENSOR_REGION_OPTIONS: { value: LibreLinkUpRegion; label: string }[] = [
+  { value: 'la', label: 'Latinoamérica' },
+  { value: 'us', label: 'EE. UU.' },
+  { value: 'eu', label: 'Europa' },
+  { value: 'de', label: 'Alemania' },
+  { value: 'fr', label: 'Francia' },
+  { value: 'ca', label: 'Canadá' },
+  { value: 'au', label: 'Australia' },
+  { value: 'jp', label: 'Japón' },
+];
+
+/**
  * El orden importa: "Dispositivos" primero porque es donde se llega cuando
  * algo no está sincronizando (el motivo más frecuente para abrir Ajustes), y
  * "Terapia" separado en su propia pestaña porque es la única cuyos valores
@@ -124,6 +149,7 @@ export function SettingsModal({
   capillaryReminder,
   onSaveCapillaryReminder,
   onExportReport,
+  onSensorConnectionChange,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -147,9 +173,16 @@ export function SettingsModal({
   onSaveCapillaryReminder: (settings: CapillaryReminderSettings) => Promise<void>;
   /** Fase 9: reads the local history for a range and normalizes it to report rows — never generates the file itself, that stays here (UI-only concern). */
   onExportReport: (range: { from: Date; to: Date }) => Promise<ReportExport>;
+  /** Refresca tras conectar/desconectar, para que la pantalla principal deje de mostrar el sensor anterior. */
+  onSensorConnectionChange: () => Promise<void>;
 }) {
   const [group, setGroup] = useState<SettingsGroup>('devices');
-  const [email, setEmail] = useState('');
+  const [sensorEmail, setSensorEmail] = useState('');
+  const [sensorPassword, setSensorPassword] = useState('');
+  const [sensorRegion, setSensorRegion] = useState<LibreLinkUpRegion>('la');
+  const [sensorConnected, setSensorConnected] = useState(false);
+  const [sensorBusy, setSensorBusy] = useState(false);
+  const [sensorMessage, setSensorMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -294,20 +327,78 @@ export function SettingsModal({
     }
   }
 
-  async function link(): Promise<void> {
-    if (!/^\S+@\S+\.\S+$/u.test(email.trim())) {
-      setMessage('Escribe el email asociado a LibreView.');
+  // Carga el estado guardado al abrir Ajustes, para que la sección diga si ya
+  // hay una cuenta conectada y con cuál correo.
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    void getSensorCredentials()
+      .then((credentials) => {
+        if (cancelled || credentials === null) return;
+        setSensorConnected(true);
+        setSensorEmail(credentials.email);
+        setSensorRegion(credentials.region);
+      })
+      .catch((error: unknown) => { logSaveError('SettingsModal.loadSensorCredentials', error); });
+    return () => { cancelled = true; };
+  }, [visible]);
+
+  async function connectSensor(): Promise<void> {
+    const email_ = sensorEmail.trim();
+    if (!/^\S+@\S+\.\S+$/u.test(email_)) {
+      setSensorMessage('Escribe el correo de tu cuenta de LibreLinkUp.');
       return;
     }
-    setBusy(true);
-    setMessage(null);
+    // Al reconectar se puede dejar la contraseña vacía para conservar la
+    // guardada; en una conexión nueva es obligatoria.
+    if (sensorPassword.length === 0 && !sensorConnected) {
+      setSensorMessage('Escribe la contraseña de tu cuenta de LibreLinkUp.');
+      return;
+    }
+    setSensorBusy(true);
+    setSensorMessage(null);
     try {
-      const state = await connectFreestyleLibre(email.trim());
-      setMessage(`Junction respondió: ${state}. Revisa LibreView → Aplicaciones conectadas → LibreView para compartir con la práctica indicada.`);
+      const existing = await getSensorCredentials();
+      const password = sensorPassword.length > 0 ? sensorPassword : existing?.password ?? '';
+      if (password.length === 0) {
+        setSensorMessage('Escribe la contraseña de tu cuenta de LibreLinkUp.');
+        return;
+      }
+      const credentials = { email: email_, password, region: sensorRegion };
+      // Se prueba ANTES de guardar: guardar una credencial que no funciona
+      // dejaría la app leyendo nada y sin decir por qué.
+      const result = await testSensorCredentials(credentials);
+      if (!result.ok) {
+        setSensorMessage(result.detail);
+        return;
+      }
+      await saveSensorCredentials(credentials);
+      setSensorConnected(true);
+      setSensorPassword('');
+      setSensorMessage(`Sensor conectado. ${result.detail}`);
+      await onSensorConnectionChange();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'No se pudo iniciar la conexión.');
+      logSaveError('SettingsModal.connectSensor', error);
+      setSensorMessage('No se pudo guardar la conexión. Vuelve a intentar.');
     } finally {
-      setBusy(false);
+      setSensorBusy(false);
+    }
+  }
+
+  async function disconnectSensor(): Promise<void> {
+    setSensorBusy(true);
+    setSensorMessage(null);
+    try {
+      await clearSensorCredentials();
+      setSensorConnected(false);
+      setSensorPassword('');
+      setSensorMessage('Sensor desconectado. Tu historial guardado no se borró; solo dejamos de leer lecturas nuevas.');
+      await onSensorConnectionChange();
+    } catch (error) {
+      logSaveError('SettingsModal.disconnectSensor', error);
+      setSensorMessage('No se pudo desconectar. Vuelve a intentar.');
+    } finally {
+      setSensorBusy(false);
     }
   }
 
@@ -436,26 +527,93 @@ export function SettingsModal({
             {status?.isSynthetic === true ? <Text style={styles.synthetic}>Los datos actuales son sintéticos y están marcados en toda la app.</Text> : null}
           </View>
 
-          <Text style={styles.sectionTitle}>Conectar FreeStyle</Text>
-          <Text style={styles.copy}>Ruta elegida para el MVP: LibreView mediante una práctica autorizada en Junction EU. Chile usa la región EU.</Text>
+          <Text style={styles.sectionTitle}>Conectar tu sensor</Text>
+          <Text style={styles.copy}>
+            Type 1A lee tu FreeStyle Libre a través de LibreLinkUp, la app de seguimiento de Abbott. Necesitas una
+            cuenta de LibreLinkUp que siga a tu sensor — no es la misma cuenta con la que escaneas en LibreLink.
+          </Text>
+          {sensorConnected ? (
+            <View style={styles.sensorConnectedBox}>
+              <Text style={styles.sensorConnectedText}>
+                Conectado con {sensorEmail}. Tu glucosa se lee directo desde tu cuenta; la contraseña queda guardada
+                cifrada en este teléfono y no se envía a los servidores de Type 1A.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.optionsBox}>
+              <Text style={styles.option}>
+                <Text style={styles.optionStrong}>1.</Text> En la app <Text style={styles.optionStrong}>LibreLink</Text>{' '}
+                (con la que escaneas): menú → Compartir → activa LibreLinkUp e invita a tu propio correo.
+              </Text>
+              <Text style={styles.option}>
+                <Text style={styles.optionStrong}>2.</Text> Instala la app{' '}
+                <Text style={styles.optionStrong}>LibreLinkUp</Text> y regístrate con ese mismo correo.
+              </Text>
+              <Text style={styles.option}>
+                <Text style={styles.optionStrong}>3.</Text> Acepta la invitación en LibreLinkUp y comprueba que ahí
+                veas tu glucosa. Si no aparece ahí, tampoco va a aparecer acá.
+              </Text>
+              <Text style={styles.option}>
+                <Text style={styles.optionStrong}>4.</Text> Vuelve acá y escribe el correo y la contraseña de{' '}
+                <Text style={styles.optionStrong}>LibreLinkUp</Text> — no los de LibreLink.
+              </Text>
+            </View>
+          )}
           <TextInput
             style={styles.input}
-            value={email}
-            onChangeText={setEmail}
+            value={sensorEmail}
+            onChangeText={setSensorEmail}
             keyboardType="email-address"
             autoCapitalize="none"
             autoCorrect={false}
-            placeholder="Email de LibreView"
+            placeholder="Correo de tu cuenta LibreLinkUp"
             placeholderTextColor={colors.muted}
           />
-          <Pressable style={[styles.connectButton, busy && styles.disabled]} disabled={busy} onPress={() => { void link(); }}>
-            <Text style={styles.connectText}>Iniciar conexión LibreView</Text>
-          </Pressable>
-          <View style={styles.optionsBox}>
-            <Text style={styles.option}><Text style={styles.optionStrong}>LibreView:</Text> ruta principal; permite compartir con la práctica.</Text>
-            <Text style={styles.option}><Text style={styles.optionStrong}>LibreLinkUp:</Text> útil para familiares, pero sin API pública general; no se usa ocultamente.</Text>
-            <Text style={styles.option}><Text style={styles.optionStrong}>Libre Data Share:</Text> acceso temporal clínico; no sirve como sincronización continua.</Text>
+          <TextInput
+            style={styles.input}
+            value={sensorPassword}
+            onChangeText={setSensorPassword}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            placeholder={sensorConnected ? 'Contraseña (escríbela para cambiarla)' : 'Contraseña de LibreLinkUp'}
+            placeholderTextColor={colors.muted}
+          />
+          <Text style={styles.hint}>Región de tu cuenta. Chile y el resto de Latinoamérica usan “la”.</Text>
+          <View style={styles.styleGrid}>
+            {SENSOR_REGION_OPTIONS.map((option) => (
+              <Pressable
+                key={option.value}
+                style={[styles.styleChip, sensorRegion === option.value && styles.styleChipActive]}
+                onPress={() => { setSensorRegion(option.value); }}
+                accessibilityRole="button"
+                accessibilityState={{ selected: sensorRegion === option.value }}
+              >
+                <Text style={[styles.styleChipText, sensorRegion === option.value && styles.styleChipTextActive]}>
+                  {option.label}
+                </Text>
+              </Pressable>
+            ))}
           </View>
+          <Pressable
+            style={[styles.connectButton, sensorBusy && styles.disabled]}
+            disabled={sensorBusy}
+            onPress={() => { void connectSensor(); }}
+          >
+            <Text style={styles.connectText}>
+              {sensorBusy ? 'Probando conexión…' : sensorConnected ? 'Actualizar conexión' : 'Conectar mi sensor'}
+            </Text>
+          </Pressable>
+          {sensorConnected ? (
+            <Pressable
+              style={[styles.notificationButton, sensorBusy && styles.disabled]}
+              disabled={sensorBusy}
+              onPress={() => { void disconnectSensor(); }}
+            >
+              <Text style={styles.notificationText}>Desconectar este sensor</Text>
+            </Pressable>
+          ) : null}
+          {sensorMessage === null ? null : <Text style={styles.message}>{sensorMessage}</Text>}
 
           <Text style={styles.sectionTitle}>Importar historial</Text>
           <Text style={styles.copy}>Carga un CSV exportado desde MySugr (glucosa, insulina, carbohidratos, comidas, actividad, vitales, HbA1c). Se guarda como historial local; importar el mismo archivo dos veces no duplica datos.</Text>
@@ -697,6 +855,8 @@ const styles = StyleSheet.create({
   tabLabel: { color: colors.muted, fontSize: 13, fontWeight: '700' },
   tabLabelActive: { color: colors.ink },
   groupBody: { padding: spacing.lg, paddingBottom: 44 },
+  sensorConnectedBox: { backgroundColor: colors.tealSoft, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.sm },
+  sensorConnectedText: { color: colors.navy, fontSize: 12, lineHeight: 18 },
   sectionTitle: { color: colors.ink, fontSize: 18, fontWeight: '800', marginTop: spacing.xl },
   subheading: { color: colors.ink, fontSize: 14, fontWeight: '800', marginTop: spacing.lg },
   styleGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },

@@ -5,6 +5,7 @@ export * from './correction';
 export * from './freshness';
 export * from './glucose-metrics';
 export * from './glucose-thresholds';
+export * from './ketones';
 export * from './meal';
 export * from './mysugr-import';
 export * from './nutrition-insights';

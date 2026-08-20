@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { MockCGMProvider } from '../src/index.js';
+import { MockCGMProvider } from '../src/index';
 
 describe('MockCGMProvider', () => {
   it('is unmistakably synthetic', async () => {

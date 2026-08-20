@@ -15,6 +15,15 @@ export interface ConfirmedMealDraft {
   imageUri?: string;
   analysis?: MealAnalysisResult;
   confirmedCarbsG: number;
+  /**
+   * Macros opcionales (Fase 13, ítem 7). Se omiten si la usuaria los deja en
+   * blanco — un campo vacío significa "no lo anoté", no "cero gramos", y esa
+   * diferencia es la que impide inventar promedios en
+   * `buildNutritionInsights`.
+   */
+  proteinG?: number;
+  fatG?: number;
+  fiberG?: number;
 }
 
 export function MealModal({
@@ -31,6 +40,10 @@ export function MealModal({
   const [description, setDescription] = useState('');
   const [confirmedCarbs, setConfirmedCarbs] = useState('');
   const [busy, setBusy] = useState(false);
+  const [macrosOpen, setMacrosOpen] = useState(false);
+  const [proteinInput, setProteinInput] = useState('');
+  const [fatInput, setFatInput] = useState('');
+  const [fiberInput, setFiberInput] = useState('');
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -119,10 +132,22 @@ export function MealModal({
     setBusy(true);
     setMessage(null);
     try {
+      const protein = parseNonNegativeNumber(proteinInput);
+      const fat = parseNonNegativeNumber(fatInput);
+      const fiber = parseNonNegativeNumber(fiberInput);
+      if ((proteinInput.trim() !== '' && protein === null)
+        || (fatInput.trim() !== '' && fat === null)
+        || (fiberInput.trim() !== '' && fiber === null)) {
+        setMessage('Revisa proteína, grasa y fibra: deben ser números, o quedar en blanco.');
+        return;
+      }
       await onConfirm({
         confirmedCarbsG: parsed,
         ...(imageUri === null ? {} : { imageUri }),
         ...(analysis === null ? {} : { analysis }),
+        ...(protein === null ? {} : { proteinG: protein }),
+        ...(fat === null ? {} : { fatG: fat }),
+        ...(fiber === null ? {} : { fiberG: fiber }),
       });
       onClose();
     } catch (error) {
@@ -202,6 +227,34 @@ export function MealModal({
       </View>
       <Text style={styles.confirmFoot}>No se completa automáticamente con la estimación.</Text>
 
+      {/*
+        Opcionales y colapsados por defecto: el registro frecuente es
+        "carbohidratos y listo", y pedir cuatro campos más en cada comida
+        haría más lento justo el flujo que tiene que ser rápido.
+      */}
+      <Pressable
+        style={styles.macroToggle}
+        onPress={() => { setMacrosOpen((open) => !open); }}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: macrosOpen }}
+      >
+        <Text style={styles.macroToggleText}>
+          {macrosOpen ? 'Ocultar' : 'Agregar'} proteína, grasa y fibra (opcional)
+        </Text>
+      </Pressable>
+      {macrosOpen ? (
+        <View>
+          <Text style={styles.macroHint}>
+            Déjalos en blanco si no los sabes. En blanco significa “no lo anoté”, que no es lo mismo que 0 g.
+          </Text>
+          <View style={styles.macroRow}>
+            <MacroField label="Proteína" value={proteinInput} onChange={setProteinInput} />
+            <MacroField label="Grasa" value={fatInput} onChange={setFatInput} />
+            <MacroField label="Fibra" value={fiberInput} onChange={setFiberInput} />
+          </View>
+        </View>
+      ) : null}
+
       {message === null ? null : <Text style={styles.message}>{message}</Text>}
       <Pressable style={[styles.confirmButton, busy && styles.disabled]} disabled={busy} onPress={() => { void confirm(); }}>
         <Text style={styles.confirmButtonText}>{busy ? 'Guardando…' : 'Confirmar y crear episodio'}</Text>
@@ -210,7 +263,52 @@ export function MealModal({
   );
 }
 
+function MacroField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <View style={styles.macroField}>
+      <Text style={styles.macroLabel}>{label}</Text>
+      <View style={styles.macroInputWrap}>
+        <TextInput
+          value={value}
+          onChangeText={onChange}
+          keyboardType="decimal-pad"
+          style={styles.macroInput}
+          placeholder="—"
+          placeholderTextColor={colors.muted}
+          accessibilityLabel={`${label} en gramos`}
+        />
+        <Text style={styles.macroUnit}>g</Text>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  macroToggle: { minHeight: 44, justifyContent: 'center', marginTop: spacing.md },
+  macroToggleText: { color: colors.teal, fontSize: 14, fontWeight: '700' },
+  macroHint: { color: colors.muted, fontSize: 11, lineHeight: 17, marginBottom: spacing.sm },
+  macroRow: { flexDirection: 'row', gap: spacing.sm },
+  macroField: { flex: 1 },
+  macroLabel: { color: colors.muted, fontSize: 11, fontWeight: '700', marginBottom: 4 },
+  macroInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: radius.sm,
+    borderColor: colors.line,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm,
+  },
+  macroInput: { flex: 1, color: colors.ink, fontSize: 15, paddingVertical: spacing.md },
+  macroUnit: { color: colors.muted, fontSize: 12 },
   aiBoundary: { backgroundColor: colors.tealSoft, borderRadius: radius.md, padding: spacing.md },
   aiTitle: { color: colors.navy, fontSize: 14, fontWeight: '800' },
   aiText: { color: colors.navy, fontSize: 13, lineHeight: 19, marginTop: 4 },

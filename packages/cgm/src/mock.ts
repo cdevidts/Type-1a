@@ -1,8 +1,8 @@
 import { assessFreshness } from '@type1a/domain';
 import type { CGMProviderStatus, CGMReading } from '@type1a/schemas';
 
-import type { CGMProvider } from './provider.js';
-import { addDerivedTrends } from './trend.js';
+import type { CGMProvider } from './provider';
+import { addDerivedTrends } from './trend';
 
 export interface MockCGMProviderOptions {
   now?: () => Date;

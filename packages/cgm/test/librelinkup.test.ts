@@ -1,6 +1,11 @@
+import { createHash } from 'node:crypto';
+
 import { describe, expect, it } from 'vitest';
 
-import { LibreLinkUpCGMProvider, parseLibreFactoryTimestamp } from '../src/index.js';
+import { LibreLinkUpCGMProvider, parseLibreFactoryTimestamp } from '../src/index';
+
+const testSha256Hex = (input: string): Promise<string> =>
+  Promise.resolve(createHash('sha256').update(input).digest('hex'));
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status });
@@ -54,6 +59,7 @@ describe('LibreLinkUp normalization', () => {
       password: 'secret',
       region: 'eu',
       fetcher,
+      sha256Hex: testSha256Hex,
       now: () => new Date('2026-08-17T16:05:00.000Z'),
     });
 
@@ -75,6 +81,7 @@ describe('LibreLinkUp normalization', () => {
       password: 'secret',
       region: 'eu',
       fetcher,
+      sha256Hex: testSha256Hex,
       now: () => new Date('2026-08-17T16:05:00.000Z'),
     });
 
@@ -88,6 +95,7 @@ describe('LibreLinkUp normalization', () => {
       password: 'wrong',
       region: 'la',
       fetcher,
+      sha256Hex: testSha256Hex,
       now: () => new Date('2026-08-17T16:05:00.000Z'),
     });
 
@@ -101,6 +109,7 @@ describe('LibreLinkUp normalization', () => {
       password: 'wrong',
       region: 'la',
       fetcher,
+      sha256Hex: testSha256Hex,
       now: () => new Date('2026-08-17T16:05:00.000Z'),
     });
 

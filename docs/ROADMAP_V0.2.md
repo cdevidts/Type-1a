@@ -314,7 +314,7 @@ persistencia de datos de salud, o `packages/cgm`.
 | **10** | Alertas de glucosa alta/baja por umbral. | 7 (necesita datos frescos aunque la app esté cerrada) |
 | **11** | ✅ **Completada (2026-08-19).** Pantalla "Resumen" con tres sub-páginas (Días / Métricas / Comidas), abierta desde el botón ◔ de la barra superior. Time in Range real por las cinco bandas de consenso, HbA1c estimada (GMI, rotulada como *estimada* y separada de la `HbA1cLabResultSchema` de laboratorio), variabilidad (CV%), promedio, gráficos diarios y día promedio ponderado en formato AGP con selector de 7/14/30/90 días. Motor en `glucose-metrics.ts` + `agp.ts`; todo también incorporado al reporte PDF/Excel. Ver detalle abajo. | 1, 2, 7 |
 | **12** | 🟡 **Parte descriptiva completada (2026-08-19)**, en la sub-página "Comidas" del Resumen: patrones por franja horaria (`nutrition-insights.ts`) — promedio de carbohidratos confirmados e insulina por franja, y % de dosis rápidas seguidas de una lectura en rango a 1/2/3 h, con mínimo de muestra y advertencia de que es observacional. Pendiente el resto de la fase: insights conversacionales//adaptativos vía el chat (depende de la Fase 8). Nunca ajusta dosis. | 8, 11 |
-| **13** | 🟡 **Grupos A y B completados (2026-08-19)**. Grupo A: ítems 1, 2, 4, 9 y 11. Grupo B: ítems 3, 5, 10a y 12. Queda **Grupo C**: ítem 7 (nutrición más allá de carbos), ítem 8 (cetonas) y ítem **10b** (elegir mmol/L, que resultó ser un cambio de modelo de datos y no de presentación — ver su detalle). El ítem 6 no es construible hasta la Fase 8 (chat). Ver detalle abajo. | 11 |
+| **13** | 🟡 **Grupos A, B y C completados (2026-08-19)**. Grupo A: ítems 1, 2, 4, 9 y 11. Grupo B: ítems 3, 5, 10a y 12. Grupo C: ítems 7, 8 y **la conexión al sensor por usuaria** (ver § "Conexión al sensor" más abajo — se descubrió que la app era de un solo usuario). Queda pendiente el ítem **10b** (elegir mmol/L, que resultó ser un cambio de modelo de datos y no de presentación). El ítem 6 no es construible hasta la Fase 8 (chat). Ver detalle abajo. | 11 |
 
 No se numeró por prioridad de negocio sino por dependencia técnica — el
 orden de ejecución real se acuerda con Verónica fase por fase, no se asume.
@@ -1059,13 +1059,45 @@ Se interpretaron una por una y ella confirmó cada una antes de agregarlas acá
    ("Programar/ajustar alarmas y recordatorios") — este ítem es el
    recordatorio de que ese catálogo tiene que cubrir alarmas *a medida*, no
    solo las 3 fijas, cuando se implemente el chat.
-7. **(Grupo C)** **Seguimiento nutricional más allá de carbohidratos.** `MealEventSchema`
+7. ✅ **Resuelto (2026-08-19, Grupo C).** Seguimiento nutricional más allá de
+   carbohidratos. Proteína, grasa y fibra se registran en `MealModal` (campos
+   opcionales, colapsados por defecto: el registro frecuente es "carbos y
+   listo" y pedir cuatro campos más haría lento justo el flujo que tiene que
+   ser rápido), se promedian por franja horaria en `buildNutritionInsights`,
+   y aparecen en la pestaña Comidas del Resumen y en el reporte PDF/Excel.
+
+   **La decisión de diseño que importa:** un macro en blanco se **omite**, no
+   cuenta como 0 g. Por eso cada macro lleva su propio `sampleSize` en vez de
+   compartir `mealCount`: "no lo anoté" y "comí 0 g de proteína" son cosas
+   distintas, y promediarlas juntas inventaría un número. Las columnas de
+   macros del reporte solo aparecen si se anotó alguno, para no llenar de
+   guiones el documento que lee el médico. `caloriesKcal` sigue en el esquema
+   pero sin campo de entrada: es derivable de los otros tres y pedirla
+   aparte invita a que no cuadren entre sí.
+
+   Detalle original del ítem: **Seguimiento nutricional más allá de carbohidratos.** `MealEventSchema`
    ya tiene `proteinG`/`fatG`/`fiberG`/`caloriesKcal`, pero ningún flujo de
    registro los pide ni ninguna pantalla los muestra. Construir: campos en
    el registro de comida (`EntryModal`/`MealModal`) y sumarlos como
    dimensión de los insights alimentarios de la pestaña Comidas del Resumen
    (hoy solo mira carbohidratos e insulina).
-8. **(Grupo C)** **Registro de mediciones de cetonas.** `VitalsEventSchema` ya tiene
+8. ✅ **Resuelto (2026-08-19, Grupo C).** Registro de mediciones de cetonas.
+   Quinto atajo en la grilla de la pantalla principal (cae en su propia fila
+   por el `flexWrap`, lo que además lo separa visualmente de los cuatro
+   rutinarios) → `KetonesModal`, que guarda un `VitalsEvent` con
+   `ketonesMmolL`. Las bandas clínicas (0,6 / 1,5 / 3,0 mmol/L en **sangre**)
+   viven en `packages/domain/src/ketones.ts` con test, no en el componente.
+
+   **Frontera de seguridad, la más delicada de este grupo:** la literatura de
+   cetonas viene casi siempre acompañada de protocolos de corrección con
+   insulina, y una banda alta es justo el momento de máximo riesgo de cruzar
+   la línea de `AGENTS.md`. La app dice en qué banda cayó la medición y, si
+   es urgente, que contacte a su equipo clínico **ahora** — nada más. Hay un
+   test que falla si alguna etiqueta llega a mencionar insulina, unidades o
+   dosis. El reporte también muestra la banda junto al número, para que un
+   equipo clínico la ubique de un vistazo en una tabla larga.
+
+   Detalle original del ítem: **Registro de mediciones de cetonas.** `VitalsEventSchema` ya tiene
    `ketonesMmolL` y aparece en el reporte PDF/Excel, pero no hay ningún
    punto de entrada en la app para cargarlas — hoy solo llegan si vienen de
    una importación de MySugr. Construir un flujo de registro real (atajo
@@ -1195,6 +1227,83 @@ Se interpretaron una por una y ella confirmó cada una antes de agregarlas acá
     rato no describía la mitad de lo que contenía; ahora es "Ajustes"
     (y se corrigió el `accessibilityLabel` del botón que lo abre). El
     contenido de cada sección se movió tal cual, sin reescribir textos.
+
+## Conexión al sensor: la app era de un solo usuario (2026-08-19, Grupo C)
+
+Verónica preguntó cuál era el método real de conexión al sensor, porque
+sospechaba que era LibreLinkUp y no Junction. Tenía razón, y al verificarlo
+apareció algo más grave.
+
+### Lo que se encontró
+
+1. **El proveedor real es LibreLinkUp**, no Junction. Confirmado por dos vías
+   independientes: `CGM_PROVIDER=librelinkup` selecciona
+   `LibreLinkUpCGMProvider` en `apps/api/src/app.ts`, y el backend en
+   producción responde `"provider": "librelinkup-freestyle-libre"` a
+   `GET /v1/cgm/status`. `docs/CGM_INTEGRATION_DECISION.md` decía Junction y
+   quedó desactualizado sin que nadie lo anotara — ya lleva una advertencia
+   al principio.
+
+2. **El botón "Iniciar conexión LibreView" de Ajustes no hacía nada útil.**
+   Llamaba a `/v1/provider/junction/link`, que es la ruta de Junction: no
+   cambia de dónde salen las lecturas. Eliminado.
+
+3. **La app era de un solo usuario, y eso es una fuga de datos.**
+   `LIBRELINKUP_EMAIL`/`LIBRELINKUP_PASSWORD` son variables de entorno del
+   backend, leídas **una sola vez al arrancar el servidor** en
+   `buildProvider()`. Hay una credencial global única para todas las
+   instalaciones. Cualquier persona que instalara el APK habría visto la
+   glucosa de Verónica, no la suya.
+
+### Lo que se hizo
+
+Cada usuaria conecta **su propia** cuenta de LibreLinkUp desde el teléfono
+(`apps/mobile/src/sensorConnection.ts`), y el teléfono habla **directo con
+Abbott**, sin pasar por nuestro backend.
+
+Por qué en el dispositivo y no en el servidor, que era la alternativa obvia:
+
+- **No requiere redeploy.** Sin credenciales locales guardadas, el camino es
+  byte por byte el de antes, así que la instalación de Verónica no se toca y
+  su conexión no corre ningún riesgo — que era su condición explícita.
+- **Su contraseña de LibreLinkUp nunca llega a nuestro servidor.** Va solo del
+  teléfono a Abbott. No custodiamos credenciales de terceros, que además nos
+  ahorra una responsabilidad que no queremos.
+- Es coherente con `docs/adr/0001-local-first.md`.
+
+Detalles de implementación que conviene no re-derivar:
+
+- Se comparte **la misma** `LibreLinkUpCGMProvider` de `packages/cgm` entre
+  backend y teléfono, en vez de reescribirla: es una API de ingeniería
+  inversa y mantener dos copias garantiza que se desincronicen. Además la
+  del backend ya está probada en producción, que es la mejor razón para
+  reusarla. La única diferencia es `sha256Hex`, ahora inyectado
+  (`node:crypto` en el servidor, `expo-crypto` en el teléfono) — el import de
+  `node:crypto` a nivel de módulo rompía el bundle de Metro.
+- Al conectar/desconectar, `App.tsx` **limpia `readings` y `status` en memoria
+  antes de recargar**, para que no se muestre ni un instante la glucosa de la
+  cuenta anterior como si fuera de la nueva.
+- Si la ruta del dispositivo falla, **no** se cae de vuelta al backend, a
+  propósito: eso mostraría el sensor de otra persona presentado como propio,
+  que es exactamente el bug que este trabajo cierra.
+- Bundlear `packages/cgm` desde Metro por primera vez destapó el mismo bug de
+  extensiones `.js` en imports relativos que ya habíamos visto en
+  `packages/domain` (Fase 13, ítem 11). Corregido en los 5 archivos de
+  `packages/cgm/src` y en sus tests. La regla ya estaba en `CODE_MAP.md`;
+  ahora aplica a los dos paquetes.
+
+Guía de usuaria: [`CONECTAR_SENSOR.md`](CONECTAR_SENSOR.md), enlazada desde el
+onboarding y desde Ajustes → Dispositivos.
+
+### Pendiente
+
+- **Nadie ha probado esto contra la API real de LibreLinkUp desde el
+  teléfono.** El código es el mismo que funciona en el backend, pero la
+  ejecución en React Native (fetch nativo, `expo-crypto`) no está verificada.
+  Es lo primero a confirmar en el próximo build.
+- Las variables `LIBRELINKUP_*` del backend siguen sirviendo a la instalación
+  de Verónica. Cuando ella conecte su cuenta desde la app, conviene sacarlas
+  del entorno de Abacus para que no quede una credencial global viva.
 
 ## Verificación por fase
 

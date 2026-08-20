@@ -417,6 +417,31 @@ function FoodTab({ insights, rangeDays }: { insights: MealWindowInsight[]; range
             />
           </View>
 
+          {/*
+            Macros solo si hay alguno anotado: una fila de tres guiones en cada
+            franja sería ruido para quien no los registra. Un "—" acá significa
+            "no lo anotaste", nunca 0 g.
+          */}
+          {window.proteinSampleSize + window.fatSampleSize + window.fiberSampleSize > 0 ? (
+            <View style={styles.foodStatsRow}>
+              <FoodStat
+                value={window.avgProteinG === undefined ? '—' : `${window.avgProteinG.toFixed(0)} g`}
+                label="Proteína"
+                meta={window.proteinSampleSize > 0 ? `promedio de ${window.proteinSampleSize}` : 'sin anotar'}
+              />
+              <FoodStat
+                value={window.avgFatG === undefined ? '—' : `${window.avgFatG.toFixed(0)} g`}
+                label="Grasa"
+                meta={window.fatSampleSize > 0 ? `promedio de ${window.fatSampleSize}` : 'sin anotar'}
+              />
+              <FoodStat
+                value={window.avgFiberG === undefined ? '—' : `${window.avgFiberG.toFixed(0)} g`}
+                label="Fibra"
+                meta={window.fiberSampleSize > 0 ? `promedio de ${window.fiberSampleSize}` : 'sin anotar'}
+              />
+            </View>
+          ) : null}
+
           <Text style={styles.outcomeHeading}>Dónde estaba tu glucosa después de una rápida</Text>
           {window.outcomes.map((outcome) => (
             <View key={outcome.horizonHours}>

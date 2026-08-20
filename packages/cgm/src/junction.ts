@@ -3,8 +3,8 @@ import type { CGMProviderStatus, CGMReading, GlucoseUnit } from '@type1a/schemas
 import { fromZonedTime } from 'date-fns-tz';
 import { z } from 'zod';
 
-import { CGMProviderError, type CGMProvider } from './provider.js';
-import { addDerivedTrends } from './trend.js';
+import { CGMProviderError, type CGMProvider } from './provider';
+import { addDerivedTrends } from './trend';
 
 const JunctionSampleSchema = z.object({
   timestamp: z.string().min(1),

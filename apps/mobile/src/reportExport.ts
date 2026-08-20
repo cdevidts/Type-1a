@@ -297,6 +297,13 @@ function nutritionSectionHtml(insights: MealWindowInsight[]): string {
   if (withData.length === 0) {
     return '<p class="summary-empty">Sin comidas ni insulina registradas en este rango.</p>';
   }
+  // Las columnas de macros solo aparecen si se anotó alguno: si nadie los
+  // registra, tres columnas de guiones le restan legibilidad al reporte que
+  // lee el médico. Un "—" con las columnas presentes significa "no anotado en
+  // esa franja", nunca 0 g.
+  const anyMacros = withData.some(
+    (w) => w.proteinSampleSize > 0 || w.fatSampleSize > 0 || w.fiberSampleSize > 0,
+  );
   const rows = withData
     .map((w) => {
       const outcome = (hours: number): string => {
@@ -312,6 +319,9 @@ function nutritionSectionHtml(insights: MealWindowInsight[]): string {
       return `<tr>
         <td>${escapeHtml(w.label)} <span class="muted">${String(w.startHour).padStart(2, '0')}–${String(w.endHour % 24).padStart(2, '0')} h</span></td>
         <td class="num">${w.avgConfirmedCarbsG === undefined ? '—' : `${w.avgConfirmedCarbsG.toFixed(0)} g`}</td>
+        ${anyMacros ? `<td class="num">${w.avgProteinG === undefined ? '—' : `${w.avgProteinG.toFixed(0)} g`}</td>
+        <td class="num">${w.avgFatG === undefined ? '—' : `${w.avgFatG.toFixed(0)} g`}</td>
+        <td class="num">${w.avgFiberG === undefined ? '—' : `${w.avgFiberG.toFixed(0)} g`}</td>` : ''}
         <td class="num">${w.avgRapidUnits === undefined ? '—' : `${w.avgRapidUnits.toFixed(1)} U`}</td>
         <td class="num">${w.avgBasalUnits === undefined ? '—' : `${w.avgBasalUnits.toFixed(1)} U`}</td>
         ${outcome(1)}${outcome(2)}${outcome(3)}
@@ -320,12 +330,12 @@ function nutritionSectionHtml(insights: MealWindowInsight[]): string {
     .join('');
   return `<table>
     <thead><tr>
-      <th>Franja</th><th class="num">Carbos confirmados</th><th class="num">Rápida</th><th class="num">Basal</th>
+      <th>Franja</th><th class="num">Carbos confirmados</th>${anyMacros ? '<th class="num">Proteína</th><th class="num">Grasa</th><th class="num">Fibra</th>' : ''}<th class="num">Rápida</th><th class="num">Basal</th>
       <th class="num">Glucosa a 1 h</th><th class="num">a 2 h</th><th class="num">a 3 h</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>
-  <p class="summary-footnote">Promedios de lo registrado por franja horaria. "En rango" = porcentaje de dosis rápidas tras las cuales había una lectura entre 70 y 180 mg/dL a esa hora; ↓ y ↑ son el porcentaje que quedó por debajo de 70 y por encima de 180, y se muestran a propósito porque quedar fuera de rango por abajo y por arriba son cosas opuestas. Es una observación descriptiva, no una medida de si la dosis fue adecuada, y depende también de comida, actividad, estrés y basal. Solo se muestra un porcentaje con al menos ${MIN_SAMPLE_FOR_RATE} dosis. Type 1A nunca decide ni sugiere una dosis por su cuenta: su calculadora solo aplica los parámetros que cargó la propia usuaria.</p>`;
+  <p class="summary-footnote">Promedios de lo registrado por franja horaria. "En rango" = porcentaje de dosis rápidas tras las cuales había una lectura entre 70 y 180 mg/dL a esa hora; ↓ y ↑ son el porcentaje que quedó por debajo de 70 y por encima de 180, y se muestran a propósito porque quedar fuera de rango por abajo y por arriba son cosas opuestas. Es una observación descriptiva, no una medida de si la dosis fue adecuada, y depende también de comida, actividad, estrés y basal. Solo se muestra un porcentaje con al menos ${MIN_SAMPLE_FOR_RATE} dosis.${anyMacros ? ' Proteína, grasa y fibra son promedios de las comidas donde la usuaria los anotó: un guion significa que no los registró en esa franja, no que fueran cero.' : ''} Type 1A nunca decide ni sugiere una dosis por su cuenta: su calculadora solo aplica los parámetros que cargó la propia usuaria.</p>`;
 }
 
 function eventTableHtml(rows: ReportRow[]): string {
@@ -450,11 +460,14 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
     return `en rango ${found.inTargetPct.toFixed(0)}% / bajo ${found.belowTargetPct!.toFixed(0)}% / alto ${found.aboveTargetPct!.toFixed(0)}% (n=${found.sampleSize})`;
   };
   const patternsSheetData: (string | number)[][] = [
-    ['Franja', 'Horario', 'Carbos confirmados prom. (g)', 'Rápida prom. (U)', 'Basal prom. (U)', 'Glucosa a 1 h', 'Glucosa a 2 h', 'Glucosa a 3 h'],
+    ['Franja', 'Horario', 'Carbos confirmados prom. (g)', 'Proteína prom. (g)', 'Grasa prom. (g)', 'Fibra prom. (g)', 'Rápida prom. (U)', 'Basal prom. (U)', 'Glucosa a 1 h', 'Glucosa a 2 h', 'Glucosa a 3 h'],
     ...insights.map((w) => [
       w.label,
       `${String(w.startHour).padStart(2, '0')}:00-${String(w.endHour % 24).padStart(2, '0')}:00`,
       w.avgConfirmedCarbsG === undefined ? '—' : Number(w.avgConfirmedCarbsG.toFixed(0)),
+      w.avgProteinG === undefined ? '—' : Number(w.avgProteinG.toFixed(0)),
+      w.avgFatG === undefined ? '—' : Number(w.avgFatG.toFixed(0)),
+      w.avgFiberG === undefined ? '—' : Number(w.avgFiberG.toFixed(0)),
       w.avgRapidUnits === undefined ? '—' : Number(w.avgRapidUnits.toFixed(1)),
       w.avgBasalUnits === undefined ? '—' : Number(w.avgBasalUnits.toFixed(1)),
       outcomeCell(w, 1),
@@ -465,6 +478,7 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
     ['"En rango" = % de dosis rápidas tras las cuales había una lectura entre 70 y 180 mg/dL a esa hora.'],
     ['"Bajo" (<70) y "alto" (>180) se muestran por separado: quedar fuera de rango por abajo y por arriba son cosas opuestas.'],
     [`Observación descriptiva, no una medida de si la dosis fue adecuada. Solo se muestra con al menos ${MIN_SAMPLE_FOR_RATE} dosis.`],
+    ['Proteína, grasa y fibra: promedio de las comidas donde se anotaron. Un guion significa que no se registraron, no que fueran cero.'],
     ['Type 1A nunca decide ni sugiere una dosis por su cuenta: su calculadora solo aplica los parámetros que cargó la propia usuaria.'],
   ];
 

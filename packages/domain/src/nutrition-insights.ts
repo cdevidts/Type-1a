@@ -118,6 +118,24 @@ export interface MealWindowInsight {
   rapidDoseCount: number;
   avgBasalUnits?: number | undefined;
   basalDoseCount: number;
+  /**
+   * Promedios de macronutrientes de las comidas de la franja (Fase 13,
+   * ítem 7). Solo entran las comidas donde la usuaria efectivamente cargó ese
+   * macro — una comida sin proteína anotada no cuenta como "0 g de proteína",
+   * porque no lo es: es un dato ausente. Por eso cada macro lleva su propio
+   * `sampleSize` en vez de compartir `mealCount`.
+   *
+   * Es descriptivo, igual que el resto del módulo: grasa y proteína influyen
+   * en cuándo sube la glucosa después de comer, y verlo por franja ayuda a
+   * conversarlo con el equipo clínico. La app **no** deriva de acá ningún
+   * ajuste de dosis ni de tiempos de insulina.
+   */
+  avgProteinG?: number | undefined;
+  proteinSampleSize: number;
+  avgFatG?: number | undefined;
+  fatSampleSize: number;
+  avgFiberG?: number | undefined;
+  fiberSampleSize: number;
   outcomes: HorizonOutcome[];
 }
 
@@ -214,6 +232,14 @@ export function buildNutritionInsights(input: NutritionInsightsInput): MealWindo
         .map((meal) => meal.confirmedCarbsG!),
     ];
 
+    // Un macro ausente se omite; no se cuenta como 0. Ver la nota en
+    // `MealWindowInsight`.
+    const macroValues = (pick: (meal: MealEvent) => number | undefined): number[] =>
+      meals.map(pick).filter((value): value is number => value !== undefined);
+    const proteinValues = macroValues((meal) => meal.proteinG);
+    const fatValues = macroValues((meal) => meal.fatG);
+    const fiberValues = macroValues((meal) => meal.fiberG);
+
     const rapidDoses = input.insulin.filter((dose) => dose.type === 'rapid' && inWindow(dose.timestamp));
     const basalDoses = input.insulin.filter((dose) => dose.type === 'basal' && inWindow(dose.timestamp));
 
@@ -253,6 +279,12 @@ export function buildNutritionInsights(input: NutritionInsightsInput): MealWindo
       rapidDoseCount: rapidDoses.length,
       avgBasalUnits: mean(basalDoses.map((dose) => dose.units)),
       basalDoseCount: basalDoses.length,
+      avgProteinG: mean(proteinValues),
+      proteinSampleSize: proteinValues.length,
+      avgFatG: mean(fatValues),
+      fatSampleSize: fatValues.length,
+      avgFiberG: mean(fiberValues),
+      fiberSampleSize: fiberValues.length,
       outcomes,
     };
   });

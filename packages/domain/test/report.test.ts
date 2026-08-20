@@ -143,3 +143,36 @@ describe('buildReportRows', () => {
     expect(rows[2]!.detail).toBe('62 kg');
   });
 });
+
+describe('cetonas en el reporte (Fase 13, ítem 8)', () => {
+  function vitals(ketonesMmolL: number): VitalsEvent {
+    return {
+      id: `v-${ketonesMmolL}`,
+      timestamp: '2026-08-18T10:00:00.000Z',
+      ketonesMmolL,
+      source: 'manual',
+      createdAt: '2026-08-18T10:00:00.000Z',
+    };
+  }
+
+  function detailFor(ketonesMmolL: number): string {
+    const rows = buildReportRows({
+      readings: [], insulin: [], carbs: [], meals: [],
+      activities: [], notes: [], vitals: [vitals(ketonesMmolL)], hba1c: [],
+    });
+    return rows.find((row) => row.detail.includes('Cetonas'))!.detail;
+  }
+
+  it('incluye el valor y la banda', () => {
+    expect(detailFor(0.2)).toContain('0.2 mmol/L');
+    expect(detailFor(0.2)).toContain('Normales');
+    expect(detailFor(2)).toContain('riesgo de cetoacidosis');
+  });
+
+  it('no sugiere ninguna acción con insulina', () => {
+    for (const value of [0.2, 0.9, 2, 4]) {
+      expect(detailFor(value).toLowerCase())
+        .not.toMatch(/\b(insulina|unidades?|dosis|corrige|corregir|ponte|inyecta)\b/u);
+    }
+  });
+});

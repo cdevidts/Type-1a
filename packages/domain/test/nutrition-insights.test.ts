@@ -230,3 +230,56 @@ describe('buildNutritionInsights', () => {
     expect(outcomes.find((o) => o.horizonHours === 2)!.sampleSize).toBe(0);
   });
 });
+
+describe('macronutrientes por franja (Fase 13, ítem 7)', () => {
+  const base = { readings: [], insulin: [], carbs: [] };
+
+  // `atLocal`, no un literal UTC: las franjas se calculan con la hora LOCAL,
+  // así que un timestamp en Z caería en otra franja según el huso del runtime
+  // y el test pasaría o fallaría según la máquina.
+  function meal(hour: number, macros: Partial<MealEvent>): MealEvent {
+    const at = atLocal(18, hour);
+    return {
+      id: `m-${hour}-${JSON.stringify(macros)}`,
+      timestamp: at,
+      source: 'manual',
+      createdAt: at,
+      ...macros,
+    } as MealEvent;
+  }
+
+  it('promedia solo las comidas que traen ese macro', () => {
+    const insights = buildNutritionInsights({
+      ...base,
+      meals: [
+        meal(13, { proteinG: 30, fatG: 10 }),
+        meal(14, { proteinG: 50 }),
+        meal(15, {}),
+      ],
+    });
+    const midday = insights.find((window) => window.startHour <= 13 && window.endHour > 13);
+    expect(midday).toBeDefined();
+    // Proteína: (30 + 50) / 2 — la comida sin proteína NO cuenta como 0.
+    expect(midday!.avgProteinG).toBe(40);
+    expect(midday!.proteinSampleSize).toBe(2);
+    // Grasa: solo una comida la trae.
+    expect(midday!.avgFatG).toBe(10);
+    expect(midday!.fatSampleSize).toBe(1);
+  });
+
+  it('deja el promedio indefinido cuando ninguna comida trae el macro', () => {
+    const insights = buildNutritionInsights({ ...base, meals: [meal(13, { proteinG: 20 })] });
+    const midday = insights.find((window) => window.startHour <= 13 && window.endHour > 13);
+    expect(midday!.avgFiberG).toBeUndefined();
+    expect(midday!.fiberSampleSize).toBe(0);
+  });
+
+  it('un macro en 0 sí cuenta como dato', () => {
+    // "0 g de fibra" es una afirmación; "sin anotar" no lo es. La diferencia
+    // importa para no inventar un promedio.
+    const insights = buildNutritionInsights({ ...base, meals: [meal(13, { fiberG: 0 })] });
+    const midday = insights.find((window) => window.startHour <= 13 && window.endHour > 13);
+    expect(midday!.avgFiberG).toBe(0);
+    expect(midday!.fiberSampleSize).toBe(1);
+  });
+});

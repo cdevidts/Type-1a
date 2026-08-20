@@ -2,7 +2,7 @@ import { convertGlucose } from '@type1a/domain';
 import type { CGMReading, GlucoseUnit } from '@type1a/schemas';
 import { fromZonedTime } from 'date-fns-tz';
 
-import { addDerivedTrends } from './trend.js';
+import { addDerivedTrends } from './trend';
 
 export interface LibreViewCsvParseResult {
   readings: CGMReading[];

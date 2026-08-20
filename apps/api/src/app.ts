@@ -17,6 +17,8 @@ import {
 import { assessFreshness } from '@type1a/domain';
 import { MealEpisodeMetricsSchema } from '@type1a/schemas';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { createHash } from 'node:crypto';
+
 import { z } from 'zod';
 
 import type { AppConfig } from './config.js';
@@ -87,6 +89,7 @@ function createProvider(config: AppConfig): CGMProvider {
       password: config.LIBRELINKUP_PASSWORD,
       region: config.LIBRELINKUP_REGION,
       staleAfterMinutes: config.CGM_STALE_AFTER_MINUTES,
+      sha256Hex: (input) => Promise.resolve(createHash('sha256').update(input).digest('hex')),
     });
   }
 

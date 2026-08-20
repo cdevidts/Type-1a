@@ -24,7 +24,7 @@ import type {
   TherapyProfile,
 } from '@type1a/schemas';
 
-import { fetchCGMReadings, fetchCGMStatus } from './src/api';
+
 // Side-effect import: registers the background-task handler at module load,
 // which is required even on the headless launch Android uses to run it with
 // no UI on screen — see backgroundSync.ts.
@@ -36,10 +36,12 @@ import { InsulinAssociationModal } from './src/components/InsulinAssociationModa
 import { MealModal, type ConfirmedMealDraft } from './src/components/MealModal';
 import { NumericEntryModal } from './src/components/NumericEntryModal';
 import { SettingsModal } from './src/components/SettingsModal';
-import { logSaveError } from './src/log';
+import { KetonesModal } from './src/components/KetonesModal';
 import { OnboardingModal } from './src/components/OnboardingModal';
 import { SummaryModal } from './src/components/SummaryModal';
 import { Timeline } from './src/components/Timeline';
+import { logSaveError } from './src/log';
+import { fetchSensorReadings, fetchSensorStatus } from './src/sensorConnection';
 import {
   getCGMReadings,
   attachEntryToReading,
@@ -84,6 +86,7 @@ import {
   saveMealWithEpisode,
   saveReminderAlertStyle,
   saveTherapyProfile,
+  saveVitalsEvent,
   saveUnifiedEntry,
   setSetting,
   updateCarbEvent,
@@ -145,6 +148,7 @@ function Type1AApp() {
   const [entryOpen, setEntryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const [ketonesOpen, setKetonesOpen] = useState(false);
   const [showGlucoseOnLockScreen, setShowGlucoseOnLockScreen] = useState(false);
   const [mealAlarmOffsets, setMealAlarmOffsets] = useState<number[]>([...DEFAULT_MEAL_ALARM_OFFSETS_MINUTES]);
   const [correctionReminder, setCorrectionReminder] = useState<CorrectionReminderSettings>({
@@ -225,9 +229,12 @@ function Type1AApp() {
       let nextStatus: CGMProviderStatus | null = null;
       let remoteReadings: CGMReading[] = [];
       try {
+        // `fetchSensor*` usa la cuenta LibreLinkUp propia de la usuaria si la
+        // conectó, y si no la ruta del backend de siempre — ver
+        // `src/sensorConnection.ts`.
         [nextStatus, remoteReadings] = await Promise.all([
-          fetchCGMStatus(),
-          fetchCGMReadings(from, to),
+          fetchSensorStatus(),
+          fetchSensorReadings(from, to),
         ]);
       } catch (error) {
         // A genuine network/backend failure — the only case that should ever
@@ -369,6 +376,9 @@ function Type1AApp() {
       timestamp,
       confirmedCarbsG: draft.confirmedCarbsG,
       createdAt: timestamp,
+      ...(draft.proteinG === undefined ? {} : { proteinG: draft.proteinG }),
+      ...(draft.fatG === undefined ? {} : { fatG: draft.fatG }),
+      ...(draft.fiberG === undefined ? {} : { fiberG: draft.fiberG }),
       ...(draft.imageUri === undefined ? {} : { imageUri: draft.imageUri }),
       ...(draft.analysis === undefined
         ? {}
@@ -464,6 +474,17 @@ function Type1AApp() {
       rows: buildReportRows({ readings, insulin, carbs, meals, activities, notes, vitals, hba1c }),
       unreadableCount: tally.unreadable,
     };
+  }
+
+  async function registerKetones(mmolL: number): Promise<void> {
+    await saveVitalsEvent(db, {
+      id: Crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+      ketonesMmolL: mmolL,
+      source: 'manual',
+      createdAt: new Date().toISOString(),
+    });
+    await loadLocalState();
   }
 
   async function updatePrivacy(show: boolean): Promise<void> {
@@ -681,6 +702,13 @@ function Type1AApp() {
           <QuickButton label="Rápida" value="+ U" color={colors.blue} soft="#E5F1FA" onPress={() => { setQuickRoute('rapid'); }} />
           <QuickButton label="Basal" value="+ U" color={colors.navy} soft="#E7EDF2" onPress={() => { setQuickRoute('basal'); }} />
           <QuickButton label="Corrección" value="ƒ(x)" color={colors.teal} soft={colors.tealSoft} onPress={() => { setQuickRoute('correction'); }} />
+          {/*
+            Cetonas va acá y no dentro de "Nueva entrada" porque el momento en
+            que se mide —enfermedad, glucosa alta sostenida— es justo cuando
+            no se quiere navegar. Cae en su propia fila por el `flexWrap`, lo
+            que además la separa visualmente de las cuatro rutinarias.
+          */}
+          <QuickButton label="Cetonas" value="mmol/L" color={colors.red} soft={colors.redSoft} onPress={() => { setKetonesOpen(true); }} />
         </View>
 
         <Pressable style={styles.mealButton} onPress={() => { setMealOpen(true); }}>
@@ -760,11 +788,24 @@ function Type1AApp() {
         capillaryReminder={capillaryReminder}
         onSaveCapillaryReminder={updateCapillaryReminder}
         onExportReport={exportReport}
+        onSensorConnectionChange={async () => {
+          // Al cambiar de cuenta hay que soltar el estado en memoria del
+          // sensor anterior antes de recargar, para no mostrar ni un instante
+          // la glucosa de otra persona como si fuera la propia.
+          setReadings([]);
+          setStatus(null);
+          await refresh(true);
+        }}
       />
       <SummaryModal
         visible={summaryOpen}
         onClose={() => { setSummaryOpen(false); }}
         onLoadSummary={loadSummary}
+      />
+      <KetonesModal
+        visible={ketonesOpen}
+        onClose={() => { setKetonesOpen(false); }}
+        onSubmit={registerKetones}
       />
       <InsulinAssociationModal
         pending={pendingAssociations[0] ?? null}

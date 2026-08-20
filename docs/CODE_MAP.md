@@ -13,7 +13,10 @@ apps/
   mobile/     App Expo/React Native — UI, SQLite local, notificaciones.
 packages/
   domain/     Lógica determinística y crítica de seguridad (sin IA, sin red).
-  cgm/        Abstracción CGMProvider + implementaciones (mock, Junction, CSV).
+  cgm/        Abstracción CGMProvider + implementaciones (LibreLinkUp — el
+              proveedor REAL en uso —, Junction, mock, CSV). Desde 2026-08-19
+              lo bundlea también apps/mobile, así que sus imports relativos no
+              pueden llevar extensión .js.
   ai/         Cliente Abacus RouteLLM (visión de comida, insight descriptivo).
   schemas/    Esquemas Zod compartidos — contrato entre api, mobile y packages.
 docs/
@@ -64,12 +67,19 @@ docs/
 - `meal.ts` — construcción de Meal Episodes y métricas +60/+120/+180, pico,
   delta, tiempo a pico. **2026-08-19**: `calculateMealEpisodeMetrics()`
   normaliza cada `CGMReading` a mg/dL (`convertGlucose`) antes de calcular
-  cualquier cosa — Junction (proveedor real, región EU) puede devolver
-  mmol/L, y antes ese número crudo se colaba sin convertir hasta el
+  cualquier cosa — LibreLinkUp/LibreView (el proveedor real; ver
+  `docs/CGM_INTEGRATION_DECISION.md`) puede devolver mmol/L, y antes ese número crudo se colaba sin convertir hasta el
   resumen de IA y las comparaciones de rango. `MealEpisodeMetrics` es
   **siempre mg/dL** de acá en más (ver JSDoc en
   `packages/schemas/src/index.ts`); ningún consumidor debe volver a
   convertir.
+- `ketones.ts` (2026-08-19) — `assessKetones()` y las bandas de cetonas **en
+  sangre** (0,6 / 1,5 / 3,0 mmol/L). Convención clínica fija, del mismo tipo
+  que `glucose-thresholds.ts`: describe una medición ya hecha, nunca calcula
+  ni ajusta nada. **Frontera de seguridad explícita en su cabecera**: la
+  literatura de cetonas viene con protocolos de insulina y nada de eso puede
+  entrar acá ni en ninguna pantalla. Hay un test que falla si una etiqueta
+  menciona insulina, unidades o dosis.
 - `units.ts` — conversión mg/dL ↔ mmol/L (`convertGlucose`, lanza ante un
   valor no positivo, a propósito), más `formatGlucose`/`formatGlucoseWithUnit`
   para presentar un valor que **ya está en mg/dL** en la unidad elegida.
@@ -295,9 +305,9 @@ docs/
   `docs/UX_GUIDELINES.md`.
 - **Invariante de unidades de glucosa (2026-08-19, ver detalle en
   `docs/ROADMAP_V0.2.md` § Fase 13, ítem 11)**: `CGMReading.glucose` puede
-  venir en `'mg/dL'` o `'mmol/L'` — **Junction, el proveedor real en
-  producción (región EU), puede devolver mmol/L legítimamente**, no es un
-  caso de borde de importación CSV. Todo consumidor que muestra, guarda en
+  venir en `'mg/dL'` o `'mmol/L'` — **LibreLinkUp, el proveedor real en
+  producción, puede devolver mmol/L legítimamente** según la región y la
+  configuración de la cuenta; no es un caso de borde de importación CSV. Todo consumidor que muestra, guarda en
   otro campo, o **calcula con** un valor de glucosa tiene que convertir con
   `convertGlucose(value, reading.unit, 'mg/dL')` (`packages/domain/src/
   units.ts`) antes de usarlo — nunca asumir mg/dL por el hardcode de la
@@ -310,6 +320,20 @@ docs/
   desde que se escribieron. Antes de agregar un lugar nuevo que lea
   `.glucose` de un `CGMReading`, convertir siempre — no asumir que el
   proveedor activo siempre entrega mg/dL.
+- `src/sensorConnection.ts` (2026-08-19) — **cómo se conecta el sensor de
+  cada usuaria.** Guarda sus credenciales de LibreLinkUp en
+  `expo-secure-store` y habla **directo con Abbott desde el teléfono**,
+  reusando la misma `LibreLinkUpCGMProvider` de `packages/cgm` que corre en el
+  backend (única diferencia: `sha256Hex` inyectado, `expo-crypto` acá y
+  `node:crypto` allá). Si no hay credenciales guardadas, cae a la ruta del
+  backend de siempre. **Antes de esto la app era de un solo usuario**: las
+  credenciales eran variables de entorno del backend, así que todas las
+  instalaciones leían el mismo sensor. Ver `docs/ROADMAP_V0.2.md` § "Conexión
+  al sensor" y la guía de usuaria `docs/CONECTAR_SENSOR.md`. Nota: si la ruta
+  del dispositivo falla **no** se cae al backend, a propósito — sería mostrar
+  el sensor de otra persona como propio.
+- `src/components/KetonesModal.tsx` (2026-08-19) — registro de cetonas en
+  sangre. Las bandas viven en `packages/domain/src/ketones.ts`, no acá.
 - `src/rowDecode.ts` (2026-08-19) — decodificación tolerante de filas de
   SQLite, **aparte de `db.ts` a propósito**: es lógica pura sin imports de
   Expo, así que tiene test propio (`rowDecode.test.ts`) mientras que `db.ts`

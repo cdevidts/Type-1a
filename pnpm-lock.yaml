@@ -69,6 +69,9 @@ importers:
 
   apps/mobile:
     dependencies:
+      '@type1a/cgm':
+        specifier: workspace:*
+        version: link:../../packages/cgm
       '@type1a/domain':
         specifier: workspace:*
         version: link:../../packages/domain

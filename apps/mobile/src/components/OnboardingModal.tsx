@@ -79,6 +79,18 @@ const STEPS: Step[] = [
       'Poder elegir mmol/L está pendiente. Mientras tanto la app no lo ofrece, para que no queden dos unidades conviviendo en la misma pantalla.',
   },
   {
+    title: 'Conecta tu sensor',
+    body:
+      'Type 1A lee tu FreeStyle Libre a través de LibreLinkUp, la app de seguimiento de Abbott. Vas a necesitar una cuenta de LibreLinkUp que siga a tu sensor: no es la misma con la que escaneas en LibreLink.',
+    bullets: [
+      'En LibreLink: menú → Compartir → activa LibreLinkUp e invita a tu propio correo.',
+      'Instala LibreLinkUp, regístrate con ese correo y acepta la invitación.',
+      'Comprueba que veas tu glucosa en LibreLinkUp; recién ahí conéctala en Ajustes → Dispositivos.',
+    ],
+    warning:
+      'Tu contraseña de LibreLinkUp se guarda cifrada en este teléfono y viaja solo hacia Abbott: no pasa por los servidores de Type 1A. Sin sensor conectado la app igual sirve para registrar todo a mano.',
+  },
+  {
     title: 'Falta un paso, y lo das tú',
     body:
       'Las calculadoras de dosis quedan bloqueadas hasta que cargues tus parámetros en Ajustes → Terapia: objetivo, factor de corrección e incremento de la pluma.',

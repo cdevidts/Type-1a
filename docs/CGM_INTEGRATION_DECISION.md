@@ -1,6 +1,41 @@
 # CGM integration decision — 2026-08-12
 
-## Decision
+> ## ⚠️ Actualización 2026-08-19: lo que se decidió acá NO es lo que quedó
+> ## implementado. Lee esto antes que el resto del documento.
+>
+> Este documento sigue siendo el registro válido de *por qué* se eligió
+> Junction en su momento, pero el código terminó por otro camino y durante
+> meses nadie lo anotó. Estado real, verificado contra el backend en
+> producción (`GET /v1/cgm/status` devuelve
+> `"provider": "librelinkup-freestyle-libre"`):
+>
+> - **El proveedor en uso es LibreLinkUp**, la API no oficial y de ingeniería
+>   inversa (`packages/cgm/src/librelinkup.ts`), seleccionada con
+>   `CGM_PROVIDER=librelinkup`. Es exactamente lo que la tabla de abajo
+>   descartaba como "experimental feature flag only".
+> - **Junction quedó implementado pero sin uso en la ruta de datos.** El botón
+>   "Iniciar conexión LibreView" de Ajustes llamaba a
+>   `/v1/provider/junction/link`, que no cambia de dónde salen las lecturas.
+>   Ese botón se eliminó en la Fase 13 y se reemplazó por una conexión real de
+>   LibreLinkUp. `JunctionCGMProvider` y `JunctionLinkService` siguen en el
+>   repo y funcionan; simplemente no son el camino activo.
+> - **Hasta la Fase 13 la app era de un solo usuario.** Las credenciales de
+>   LibreLinkUp eran variables de entorno del backend
+>   (`LIBRELINKUP_EMAIL`/`LIBRELINKUP_PASSWORD`), leídas una única vez al
+>   arrancar el servidor, así que **cualquiera que instalara el APK leía el
+>   sensor de la dueña de esa credencial**. Resuelto: ahora cada usuaria
+>   conecta su propia cuenta desde el teléfono
+>   (`apps/mobile/src/sensorConnection.ts`), y las credenciales del backend
+>   quedan solo como camino heredado para la instalación original.
+> - Para conectar un sensor hoy, la guía de usuaria es
+>   [`CONECTAR_SENSOR.md`](CONECTAR_SENSOR.md).
+>
+> **Lección de proceso, no solo técnica:** una decisión de arquitectura que se
+> abandona en el código tiene que anotarse en su ADR/documento en la misma
+> corrida. Este documento indujo a error a varias corridas de agente, que
+> asumieron Junction porque era lo único documentado.
+
+## Decision (histórica — ver la advertencia de arriba)
 
 Use a provider abstraction and prioritize Junction's `freestyle_libre` practice-based LibreView connection in the EU region. Do not make LibreLinkUp reverse engineering a critical dependency.
 

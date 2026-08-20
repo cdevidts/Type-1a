@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { JunctionCGMProvider, reinterpretFloatingTimestamp } from '../src/index.js';
+import { JunctionCGMProvider, reinterpretFloatingTimestamp } from '../src/index';
 
 describe('Junction LibreView normalization', () => {
   it('reinterprets FreeStyle floating time in America/Santiago instead of treating +00:00 as UTC', () => {

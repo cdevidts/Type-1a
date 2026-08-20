@@ -1,11 +1,9 @@
-import { createHash } from 'node:crypto';
-
 import { assessFreshness } from '@type1a/domain';
 import type { CGMProviderStatus, CGMReading, CGMTrend } from '@type1a/schemas';
 import { z } from 'zod';
 
-import { CGMProviderError, type CGMProvider } from './provider.js';
-import { addDerivedTrends } from './trend.js';
+import { CGMProviderError, type CGMProvider } from './provider';
+import { addDerivedTrends } from './trend';
 
 export const LLU_REGIONS = [
   'ae', 'ap', 'au', 'ca', 'de', 'eu', 'eu2', 'fr', 'jp', 'us', 'la', 'ru', 'cn',
@@ -118,6 +116,18 @@ export interface LibreLinkUpProviderOptions {
   staleAfterMinutes?: number;
   fetcher?: typeof fetch;
   now?: () => Date;
+  /**
+   * SHA-256 hex de una cadena. Se inyecta en vez de importar `node:crypto`
+   * arriba, porque este mismo proveedor corre en dos runtimes: el backend
+   * (`apps/api`, con `node:crypto`) y **el teléfono** (`apps/mobile`, con
+   * `expo-crypto`), donde un `import 'node:crypto'` a nivel de módulo rompe
+   * el bundle de Metro aunque nunca se ejecute. Es `async` porque la API de
+   * `expo-crypto` lo es; la de Node se envuelve trivialmente.
+   *
+   * Se usa solo para el header `account-id` que exige la API de LibreLinkUp
+   * — no es una primitiva de seguridad nuestra.
+   */
+  sha256Hex: (input: string) => Promise<string>;
 }
 
 export class LibreLinkUpCGMProvider implements CGMProvider {
@@ -196,7 +206,7 @@ export class LibreLinkUpCGMProvider implements CGMProvider {
       throw new CGMProviderError('LibreLinkUp credentials were rejected.', 'authentication_required', false);
     }
 
-    const accountIdHash = createHash('sha256').update(user.id).digest('hex');
+    const accountIdHash = await this.options.sha256Hex(user.id);
     const patientId = await this.fetchPrimaryPatientId(region, {
       region,
       token: authTicket.token,

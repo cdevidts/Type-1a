@@ -1,3 +1,4 @@
+import { assessKetones } from './ketones';
 import type {
   ActivityEvent,
   CarbEvent,
@@ -174,7 +175,12 @@ export function buildReportRows(input: ReportInput): ReportRow[] {
     if (vitals.systolicBP !== undefined && vitals.diastolicBP !== undefined) {
       parts.push(`${vitals.systolicBP}/${vitals.diastolicBP} mmHg`);
     }
-    if (vitals.ketonesMmolL !== undefined) parts.push(`Cetonas ${vitals.ketonesMmolL} mmol/L`);
+    if (vitals.ketonesMmolL !== undefined) {
+      // Con la banda, no solo el número: en una tabla larga es lo que permite
+      // a un equipo clínico ubicar de un vistazo una medición de riesgo.
+      // Descriptivo — `assessKetones` nunca menciona insulina ni una dosis.
+      parts.push(`Cetonas ${vitals.ketonesMmolL} mmol/L (${assessKetones(vitals.ketonesMmolL).label})`);
+    }
     rows.push({
       timestamp: vitals.timestamp,
       kind: 'vitals',

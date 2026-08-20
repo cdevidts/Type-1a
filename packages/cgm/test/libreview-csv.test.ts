@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseLibreViewCsv } from '../src/index.js';
+import { parseLibreViewCsv } from '../src/index';
 
 describe('LibreView CSV fallback', () => {
   it('imports historical readings without presenting them as live', () => {
