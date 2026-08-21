@@ -24,6 +24,16 @@ const EnvironmentSchema = z.object({
   LIBRELINKUP_REGION: z
     .enum(['ae', 'ap', 'au', 'ca', 'de', 'eu', 'eu2', 'fr', 'jp', 'us', 'la', 'ru', 'cn'])
     .default('la'),
+  // Catálogo de alimentos compartido (backend preparado 2026-08-21, ver
+  // docs/adr/0003-shared-food-catalog.md). Ausente → los endpoints
+  // /v1/food-catalog degradan a 503, el mismo patrón de "sin configurar" que
+  // ya usa cada integración externa de este archivo. Es la ÚNICA variable
+  // de este config que le da estado al backend — el resto son credenciales
+  // hacia servicios externos sin estado.
+  DATABASE_URL: EmptyToUndefined,
+  // Piso de moderación: cuántas veces tiene que haberse visto un alimento
+  // antes de servírselo a otra usuaria. Ver food-catalog-store.ts.
+  SHARED_CATALOG_MIN_TIMES_SEEN: z.coerce.number().int().nonnegative().default(3),
 });
 
 export type AppConfig = z.infer<typeof EnvironmentSchema>;

@@ -111,11 +111,18 @@ Reporta los cambios y espera aprobación antes del build.
 
 - **Ítem 10b**: mostrar glucosa en mmol/L en toda la app. Bloqueado hasta que
   `TherapyProfile` guarde la unidad como parte del modelo de datos.
-- **Catálogo compartido entre usuarias** en Abacus: preparado y sin disparar,
-  necesita un ADR antes (ver `DEEPAGENT_REDEPLOY_PROMPT.md`).
+- **Catálogo compartido entre usuarias**: ya **construido** (2026-08-21,
+  `apps/api/src/food-catalog-store.ts`, `docs/adr/0003-shared-food-catalog.md`).
+  Falta el redeploy (ver `DEEPAGENT_REDEPLOY_PROMPT.md`, prompt consolidado
+  con la Fase 17) y, después, la fase de `apps/mobile` que lo consuma —
+  todavía sin número de fase asignado en el roadmap.
 - **Quitar `LIBRELINKUP_EMAIL`/`PASSWORD`** del entorno de Abacus cuando
-  Verónica confirme que su cuenta quedó conectada desde la app. Aprovechar el
-  redeploy de la Fase 17.
+  Verónica confirme que su cuenta quedó conectada desde la app. Va como
+  addendum opcional del mismo prompt consolidado, no en el cuerpo principal.
 - **Nada de gestos ni notificaciones se puede dar por verificado sin
   dispositivo.** El swipe de la Fase 16 pasó una corrida entera roto porque
   `pnpm verify` no dice nada al respecto.
+- **2026-08-21**: si esta corrida terminó sin disparar el redeploy
+  consolidado, `apps/api` sigue un paso atrás de lo que hay en el repo — dos
+  cosas nuevas sin desplegar: el modo de edición por instrucción (Fase 17) y
+  el catálogo compartido. No es bloqueante para nada de lo que ya funciona.

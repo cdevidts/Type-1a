@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../src/app.js';
 import { readConfig } from '../src/config.js';
+import type { FoodCatalogStore } from '../src/food-catalog-store.js';
 
 const apps: Awaited<ReturnType<typeof buildApp>>[] = [];
 
@@ -158,5 +159,97 @@ describe('Type 1A API', () => {
 
     expect(response.statusCode).toBe(400);
     expect(response.json().error.code).toBe('invalid_meal_input');
+  });
+
+  describe('shared food catalog (backend prepared, not yet consumed by the app)', () => {
+    it('returns a manual/local-only fallback when the store is not configured', async () => {
+      const app = await buildApp(testConfig());
+      apps.push(app);
+
+      const get = await app.inject({ method: 'GET', url: '/v1/food-catalog?q=arroz' });
+      const post = await app.inject({ method: 'POST', url: '/v1/food-catalog', payload: { entries: [] } });
+
+      expect(get.statusCode).toBe(503);
+      expect(get.json().error.code).toBe('food_catalog_not_configured');
+      expect(post.statusCode).toBe(503);
+    });
+
+    it('passes the search term and the configured moderation floor through to the store', async () => {
+      let receivedArgs: unknown[] = [];
+      const foodCatalogStore: FoodCatalogStore = {
+        search: async (...args) => { receivedArgs = args; return []; },
+        upsertMany: async () => ({ accepted: 0, rejected: 0 }),
+      };
+      const app = await buildApp(readConfig({ NODE_ENV: 'test', CGM_PROVIDER: 'mock', SHARED_CATALOG_MIN_TIMES_SEEN: '5' }), { foodCatalogStore });
+      apps.push(app);
+
+      const response = await app.inject({ method: 'GET', url: '/v1/food-catalog?q=arroz&limit=10' });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ foods: [] });
+      expect(receivedArgs).toEqual(['arroz', 10, 5]);
+    });
+
+    it('forwards only the validated entries to the store, stripping anything the schema does not declare', async () => {
+      let received: unknown = null;
+      const foodCatalogStore: FoodCatalogStore = {
+        search: async () => [],
+        upsertMany: async (entries) => { received = entries; return { accepted: entries.length, rejected: 0 }; },
+      };
+      const app = await buildApp(testConfig(), { foodCatalogStore });
+      apps.push(app);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/food-catalog',
+        payload: {
+          entries: [{
+            name: 'Arroz',
+            carbsPer100g: 28,
+            proteinPer100g: 2.7,
+            fatPer100g: 0.3,
+            fiberPer100g: 0.4,
+            kcalPer100g: 130,
+            // Ningún cliente debería mandar esto, pero si uno mal escrito lo
+            // hace, Zod lo descarta antes de llegar al store — la misma
+            // frontera estructural que MealSnapshotSchema (Fase 17).
+            key: 'deberia-desaparecer',
+            timesSeen: 999,
+          }],
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ accepted: 1, rejected: 0 });
+      expect(received).toEqual([{
+        name: 'Arroz',
+        carbsPer100g: 28,
+        proteinPer100g: 2.7,
+        fatPer100g: 0.3,
+        fiberPer100g: 0.4,
+        kcalPer100g: 130,
+      }]);
+    });
+
+    it('rejects an implausible entry body before it reaches the store', async () => {
+      const app = await buildApp(testConfig(), {
+        foodCatalogStore: {
+          search: async () => [],
+          upsertMany: async () => { throw new Error('should not be called'); },
+        },
+      });
+      apps.push(app);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/food-catalog',
+        // 150 g de carbohidratos por 100 g del alimento no es posible; el
+        // límite del schema de red (max 100) lo rechaza antes de tocar el store.
+        payload: { entries: [{ name: 'Arroz', carbsPer100g: 150, proteinPer100g: 0, fatPer100g: 0, fiberPer100g: 0, kcalPer100g: 0 }] },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe('invalid_catalog_entries');
+    });
   });
 });

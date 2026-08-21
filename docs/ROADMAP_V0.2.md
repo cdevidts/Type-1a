@@ -1556,6 +1556,18 @@ suyo gana.
   decisión de `docs/adr/0001-local-first.md` y merece su propio ADR, no ser el
   efecto colateral de una corrida de features.
 
+> **Actualización 2026-08-21: el ADR ya existe y el backend ya está
+> construido, todavía sin disparar el redeploy.** `docs/adr/0003-shared-food-catalog.md`
+> registra la decisión; `apps/api/src/food-catalog-store.ts` implementa
+> `GET`/`POST /v1/food-catalog` reusando las mismas funciones puras del
+> catálogo local (`foodKey`, `isPlausibleCatalogEntry`, `blendCatalogEntry`),
+> auto-provee su tabla al arrancar (sin migración manual) y degrada a 503 sin
+> `DATABASE_URL`. **La app móvil sigue sin tocarse a propósito** — el pedido
+> explícito de Verónica fue dejar el backend listo de antemano para que,
+> cuando esta fase se implemente en `apps/mobile`, esa corrida futura sea
+> puro trabajo de cliente y no necesite otro redeploy. Ver
+> `docs/DEEPAGENT_REDEPLOY_PROMPT.md` para el prompt consolidado.
+
 ### Hallazgos de `domain-safety-reviewer` corregidos en la misma corrida
 
 Siete, dos de severidad alta. Los dos primeros los introduje yo en esta misma

@@ -1,4 +1,5 @@
 import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
 import {
   AIServiceError,
   AbacusGlucoseInsightService,
@@ -15,18 +16,29 @@ import {
   type CGMProvider,
 } from '@type1a/cgm';
 import { assessFreshness } from '@type1a/domain';
-import { MealEditInputSchema, MealEpisodeMetricsSchema } from '@type1a/schemas';
+import {
+  MealEditInputSchema,
+  MealEpisodeMetricsSchema,
+  SharedCatalogUploadSchema,
+} from '@type1a/schemas';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
+import { Pool } from 'pg';
 
 import { z } from 'zod';
 
 import type { AppConfig } from './config.js';
+import { PostgresFoodCatalogStore, type FoodCatalogStore } from './food-catalog-store.js';
 import { JunctionLinkError, JunctionLinkService } from './junction-link.js';
 
 const ReadingsQuerySchema = z.object({
   from: z.iso.datetime({ offset: true }),
   to: z.iso.datetime({ offset: true }),
+});
+
+const FoodCatalogQuerySchema = z.object({
+  q: z.string().trim().max(120).optional(),
+  limit: z.coerce.number().int().positive().max(60).default(20),
 });
 
 const MealAnalysisBodySchema = z.union([
@@ -75,6 +87,7 @@ export interface AppDependencies {
   mealVisionService?: MealVisionService;
   glucoseInsightService?: GlucoseInsightService;
   junctionLinkService?: JunctionLinkService;
+  foodCatalogStore?: FoodCatalogStore;
 }
 
 function createProvider(config: AppConfig): CGMProvider {
@@ -129,6 +142,30 @@ function createAiServices(config: AppConfig): {
   };
 }
 
+/**
+ * Construye el catálogo compartido cuando hay `DATABASE_URL`, y auto-provee
+ * su esquema — ver el comentario de `ensureSchema` en `food-catalog-store.ts`
+ * para por qué eso es a propósito.
+ *
+ * Un fallo de conexión acá **no puede tumbar el resto del backend**: CGM y
+ * los otros endpoints de IA no tienen nada que ver con esta tabla, así que
+ * degradan a 503 solo en `/v1/food-catalog` — el mismo principio de
+ * "un proveedor que falla degrada a manual" de `AGENTS.md`, aplicado a esta
+ * función en vez de a un CGM.
+ */
+async function createFoodCatalogStore(config: AppConfig, log: FastifyInstance['log']): Promise<FoodCatalogStore | undefined> {
+  if (config.DATABASE_URL === undefined) return undefined;
+  try {
+    const pool = new Pool({ connectionString: config.DATABASE_URL });
+    const store = new PostgresFoodCatalogStore(pool);
+    await store.ensureSchema();
+    return store;
+  } catch (error) {
+    log.error({ err: error }, 'No se pudo preparar el catálogo compartido; /v1/food-catalog degrada a 503.');
+    return undefined;
+  }
+}
+
 export async function buildApp(config: AppConfig, dependencies: AppDependencies = {}): Promise<FastifyInstance> {
   const app = Fastify({
     logger: config.NODE_ENV !== 'test'
@@ -137,11 +174,18 @@ export async function buildApp(config: AppConfig, dependencies: AppDependencies 
     bodyLimit: 12_000_000,
   });
   await app.register(cors, { origin: config.NODE_ENV === 'production' ? false : true });
+  // Global generoso; el límite real que importa es el de la ruta de
+  // escritura del catálogo compartido, registrado más abajo. Sin esto, un
+  // endpoint anónimo de escritura queda abierto a que un bot lo inunde de
+  // filas basura — antes de la Fase de catálogo compartido no había ningún
+  // endpoint que aceptara escritura sin credencial, así que no hacía falta.
+  await app.register(rateLimit, { max: 300, timeWindow: '1 minute' });
 
   const cgm = dependencies.cgmProvider ?? createProvider(config);
   const ai = createAiServices(config);
   const mealVision = dependencies.mealVisionService ?? ai.meal;
   const glucoseInsight = dependencies.glucoseInsightService ?? ai.insight;
+  const foodCatalog = dependencies.foodCatalogStore ?? await createFoodCatalogStore(config, app.log);
   const junctionLink = dependencies.junctionLinkService ?? (
     config.JUNCTION_API_KEY !== undefined && config.JUNCTION_USER_ID !== undefined
       ? new JunctionLinkService({
@@ -218,6 +262,36 @@ export async function buildApp(config: AppConfig, dependencies: AppDependencies 
     const result = await junctionLink.connectFreestyleLibre(body.data.email, body.data.region);
     return { provider: 'freestyle_libre', state: result.state };
   });
+
+  // Catálogo de alimentos compartido — ver food-catalog-store.ts y el ADR.
+  // Todavía NO lo consume la app móvil (Fase futura del roadmap); vive acá
+  // ya funcionando para que esa fase, cuando llegue, sea puro trabajo de
+  // apps/mobile sin volver a tocar el backend.
+  app.get('/v1/food-catalog', async (request, reply) => {
+    if (foodCatalog === undefined) {
+      return reply.status(503).send({ error: { code: 'food_catalog_not_configured', message: 'El catálogo compartido no está configurado.', retryable: false } });
+    }
+    const query = FoodCatalogQuerySchema.safeParse(request.query);
+    if (!query.success) return reply.status(400).send({ error: { code: 'invalid_query', message: 'Parámetros de búsqueda inválidos.', retryable: false } });
+    const foods = await foodCatalog.search(query.data.q ?? '', query.data.limit, config.SHARED_CATALOG_MIN_TIMES_SEEN);
+    return { foods };
+  });
+
+  app.post(
+    '/v1/food-catalog',
+    // Límite de cuerpo propio, mucho más chico que el global (pensado para
+    // fotos): esta ruta solo recibe nombres y números.
+    { bodyLimit: 20_000, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      if (foodCatalog === undefined) {
+        return reply.status(503).send({ error: { code: 'food_catalog_not_configured', message: 'El catálogo compartido no está configurado.', retryable: false } });
+      }
+      const body = SharedCatalogUploadSchema.safeParse(request.body);
+      if (!body.success) return reply.status(400).send({ error: { code: 'invalid_catalog_entries', message: 'Las entradas del catálogo no son válidas.', retryable: false } });
+      const outcome = await foodCatalog.upsertMany(body.data.entries, new Date().toISOString());
+      return outcome;
+    },
+  );
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof AIServiceError || error instanceof CGMProviderError || error instanceof JunctionLinkError) {

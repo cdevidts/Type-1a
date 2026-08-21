@@ -344,3 +344,64 @@ export const mealAnalysisJsonSchema = z.toJSONSchema(MealAnalysisSchema, {
 export const glucoseInsightJsonSchema = z.toJSONSchema(GlucoseInsightSchema, {
   target: 'draft-2020-12',
 });
+
+/**
+ * Catálogo de alimentos COMPARTIDO entre usuarias (backend preparado
+ * 2026-08-21, Fase futura del roadmap — todavía NO consumido por la app;
+ * ver `docs/adr/0003-shared-food-catalog.md`).
+ *
+ * Espejo estructural de `CatalogFood` en `packages/domain/src/food-catalog.ts`
+ * (el catálogo LOCAL de cada usuaria en SQLite), pero es un schema de red
+ * **separado a propósito**: uno vive en el teléfono, este cruza la red hacia
+ * un backend que hoy es sin estado por decisión (`docs/adr/0001-local-first.md`),
+ * y mezclarlos haría que un campo nuevo de uno se filtrara al otro sin que
+ * nadie lo decidiera — el mismo motivo por el que `MealSnapshotSchema`
+ * (Fase 17) quedó separado de `MealEvent`.
+ *
+ * **La anonimidad es estructural, no una promesa de texto.** No hay campo de
+ * id de usuaria, foto, glucosa, insulina, ni marca de tiempo de una comida —
+ * un alimento no puede quedar asociado a quien lo comió porque el schema no
+ * tiene dónde ponerlo. Los límites numéricos coinciden a propósito con
+ * `MAX_MACRO_PER_100G`/`MAX_KCAL_PER_100G` de `isPlausibleCatalogEntry` en
+ * `packages/domain`, para rechazar un valor absurdo en la puerta de entrada,
+ * antes de gastar una consulta a la base de datos.
+ */
+export const SharedCatalogEntryInputSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  carbsPer100g: z.number().nonnegative().max(100).finite(),
+  proteinPer100g: z.number().nonnegative().max(100).finite(),
+  fatPer100g: z.number().nonnegative().max(100).finite(),
+  fiberPer100g: z.number().nonnegative().max(100).finite(),
+  kcalPer100g: z.number().nonnegative().max(900).finite(),
+  /** Ver `servingGrams`/`servingLabel` en `CatalogFood` — ambos opcionales, ausente = 100 g. */
+  servingGrams: z.number().positive().max(2000).optional(),
+  servingLabel: z.string().trim().min(1).max(40).optional(),
+});
+export type SharedCatalogEntryInput = z.infer<typeof SharedCatalogEntryInputSchema>;
+
+export const SharedCatalogUploadSchema = z.object({
+  entries: z.array(SharedCatalogEntryInputSchema).min(1).max(30),
+});
+export type SharedCatalogUpload = z.infer<typeof SharedCatalogUploadSchema>;
+
+/**
+ * Lo que devuelve una búsqueda. `key` y `timesSeen` los calcula el servidor
+ * (`foodKey()` del nombre, y el peso acumulado de `blendCatalogEntry`) —
+ * nunca los envía un cliente, así que no hay forma de que una instalación
+ * falsifique cuántas veces se vio "su" estimación para saltarse el piso de
+ * moderación.
+ */
+export const SharedCatalogFoodSchema = z.object({
+  key: z.string().min(1),
+  name: z.string().min(1),
+  carbsPer100g: z.number().nonnegative(),
+  proteinPer100g: z.number().nonnegative(),
+  fatPer100g: z.number().nonnegative(),
+  fiberPer100g: z.number().nonnegative(),
+  kcalPer100g: z.number().nonnegative(),
+  timesSeen: z.number().int().nonnegative(),
+  lastSeenAt: IsoTimestampSchema,
+  servingGrams: z.number().positive().optional(),
+  servingLabel: z.string().optional(),
+});
+export type SharedCatalogFood = z.infer<typeof SharedCatalogFoodSchema>;

@@ -231,6 +231,17 @@ docs/
 - `config.ts` — `readConfig()` parsea `process.env` con Zod
   (`EnvironmentSchema`) — única fuente de verdad de variables de entorno.
 - `junction-link.ts` — flujo de conexión/link de cuenta Junction.
+- `food-catalog-store.ts` — **catálogo de alimentos compartido** (backend
+  preparado 2026-08-21, ver `docs/adr/0003-shared-food-catalog.md`). La
+  ÚNICA parte con estado del backend: `PostgresFoodCatalogStore` reusa
+  `foodKey`/`isPlausibleCatalogEntry`/`blendCatalogEntry` de
+  `packages/domain` (las mismas que gobiernan el catálogo local del
+  teléfono), y auto-provee su tabla al levantar el proceso — nadie tiene que
+  correr una migración a mano. `GET`/`POST /v1/food-catalog` en `app.ts`.
+  `DATABASE_URL` ausente → 503, el resto del backend sigue igual. **La app
+  móvil todavía no llama a esto** — está listo para cuando esa fase llegue,
+  a propósito, para que esa corrida futura sea solo trabajo de
+  `apps/mobile`.
 - `test/app.test.ts` — tests de la API.
 
 ## `apps/mobile` — Expo / React Native
@@ -513,6 +524,9 @@ docs/
   backend.
 - `0002-ai-boundary.md` — por qué la IA vive detrás del backend y nunca
   decide dosis.
+- `0003-shared-food-catalog.md` — por qué el backend gana **un** estado
+  acotado (el catálogo compartido) sin revertir el ADR 0001, y por qué es
+  anónimo por construcción.
 
 ## Cuándo leer qué (guía rápida para un agente)
 
