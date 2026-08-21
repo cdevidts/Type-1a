@@ -1,30 +1,47 @@
 import { useMemo, useRef } from 'react';
 import { AccessibilityInfo, PanResponder, type PanResponderInstance } from 'react-native';
 
-import { NAV_ORDER, type NavDestination } from './components/BottomNav';
+import { isSwipeBlocked, resetSwipeGuard } from './swipeGuard';
+import { nextSwipeDestination } from './swipeOrder';
+import type { NavDestination } from './components/BottomNav';
 
 /**
- * Navegación lateral por gesto entre los cinco destinos de la barra inferior
- * (Fase 16), en el mismo orden que los botones.
+ * Navegación lateral por gesto entre las secciones de la barra inferior.
  *
- * ## El riesgo real: robarle el gesto al gráfico
+ * ## Historia: la primera versión no navegaba a ninguna parte (2026-08-21)
  *
- * `GlucoseChart` es un **`ScrollView` horizontal** — se desliza para ver días
- * anteriores. Un reconocedor de swipe ingenuo le roba ese gesto y deja el
- * gráfico principal de la app inservible. Dos defensas:
+ * Verónica reportó que el swipe "no hace nada". Eran **dos** bugs
+ * independientes, y cada uno bastaba para romperlo:
  *
- * 1. **Umbral direccional**: sólo se toma el gesto si el desplazamiento
- *    horizontal supera `MIN_DX` y es al menos `DIRECTION_RATIO` veces el
- *    vertical. Un arrastre diagonal o casi vertical se le deja al
- *    `ScrollView` de la pantalla.
- * 2. **`onMoveShouldSetPanResponder`, no `onStart...`**: no se reclama el
- *    gesto al tocar, sino recién cuando el movimiento ya demostró ser
- *    horizontal. Mientras tanto los hijos siguen recibiéndolo.
+ * 1. **Los `panHandlers` estaban pegados al `ScrollView` de la pantalla.** Un
+ *    `ScrollView` es un componente nativo que maneja el arrastre él mismo; los
+ *    props del sistema de responders de JS puestos encima nunca llegan a
+ *    decidir nada. El gesto no se disparaba jamás — por eso tampoco "se rompía
+ *    el gráfico": no había ningún reconocedor compitiendo. Ahora el
+ *    `PanResponder` va en un `View` que **envuelve** al `ScrollView`, y reclama
+ *    en **fase de captura**, que es la forma documentada de que un padre le
+ *    gane un arrastre a un hijo que scrollea.
  *
- * Aun así, el contenedor que use esto **no debe envolver al gráfico**: se
- * aplica al contenedor de la pantalla, y el gráfico queda fuera de su
- * jerarquía de gestos o con su propio `onStartShouldSetPanResponderCapture`
- * devolviendo `false`.
+ * 2. **El orden incluía `entry` y `chat`.** Desde la pantalla principal, los
+ *    dos vecinos inmediatos eran justamente esos: uno abre un formulario y el
+ *    otro es un aviso de "todavía no está". Aun con el gesto arreglado, jamás
+ *    se habría llegado a Nutrición ni a Resumen deslizando. Ahora el orden del
+ *    swipe salta lo que no es un destino navegable.
+ *
+ * ## Qué recorre el gesto
+ *
+ * `entry` queda fuera porque es una **acción**, no un lugar: abrir un
+ * formulario con campos por un gesto accidental es exactamente lo que no se
+ * quiere en una app que se usa apurada. `chat` queda fuera hasta que exista
+ * (Fase 8). La pantalla principal es una posición más del recorrido — el
+ * centro —, así que deslizar de vuelta al centro cierra el modal en el que
+ * estés y te deja en casa.
+ *
+ * ## No robarle el gesto al gráfico
+ *
+ * `GlucoseChart` es un `ScrollView` horizontal. Reclamar en captura también le
+ * ganaría a él, así que se coordina con `swipeGuard.ts`: si el toque empezó
+ * dentro del gráfico, este reconocedor no reclama nada durante ese toque.
  */
 
 /** Píxeles horizontales mínimos para considerar que hubo swipe. */
@@ -37,9 +54,10 @@ export function useSwipeNavigation({
   onNavigate,
   enabled = true,
 }: {
-  /** Destino actual; `null` = pantalla principal, que es el centro (`entry`). */
+  /** Destino actual; `null` = pantalla principal. */
   active: NavDestination | null;
-  onNavigate: (destination: NavDestination) => void;
+  /** `null` = volver a la pantalla principal, cerrando lo que esté abierto. */
+  onNavigate: (destination: NavDestination | null) => void;
   enabled?: boolean;
 }): PanResponderInstance {
   // Se lee una vez y se guarda: consultarlo dentro del gesto lo haría async
@@ -54,23 +72,28 @@ export function useSwipeNavigation({
   return useMemo(
     () =>
       PanResponder.create({
-        onMoveShouldSetPanResponder: (_event, gesture) => {
-          if (!enabled) return false;
+        // No reclama el toque; lo usa para resetear el árbitro al empezar.
+        // Corre antes que el marcador del gráfico, que está más abajo en el
+        // árbol — esa es justamente la razón de que la coordinación funcione.
+        onStartShouldSetPanResponderCapture: () => {
+          resetSwipeGuard();
+          return false;
+        },
+        // En captura, no en burbuja: el `ScrollView` de la pantalla es nativo
+        // y no cede el arrastre si se le pide en burbuja.
+        onMoveShouldSetPanResponderCapture: (_event, gesture) => {
+          if (!enabled || isSwipeBlocked()) return false;
           return Math.abs(gesture.dx) > MIN_DX
             && Math.abs(gesture.dx) > Math.abs(gesture.dy) * DIRECTION_RATIO;
         },
         onPanResponderRelease: (_event, gesture) => {
           if (!enabled) return;
           if (Math.abs(gesture.dx) <= MIN_DX) return;
-          const currentIndex = active === null
-            ? NAV_ORDER.indexOf('entry')
-            : NAV_ORDER.indexOf(active);
-          if (currentIndex < 0) return;
-          // Deslizar a la izquierda avanza hacia la derecha en la barra.
-          const nextIndex = gesture.dx < 0 ? currentIndex + 1 : currentIndex - 1;
-          if (nextIndex < 0 || nextIndex >= NAV_ORDER.length) return;
-          const next = NAV_ORDER[nextIndex];
-          if (next !== undefined) onNavigate(next);
+          const next = nextSwipeDestination(active, gesture.dx);
+          // `undefined` = no hay a dónde ir. `null` sí es un destino: la
+          // pantalla principal.
+          if (next === undefined) return;
+          onNavigate(next);
         },
       }),
     [active, onNavigate, enabled],

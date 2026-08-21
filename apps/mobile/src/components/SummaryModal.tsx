@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View, type GestureResponderHandlers } from 'react-native';
 
 import {
   buildAmbulatoryProfile,
@@ -66,10 +66,13 @@ export function SummaryModal({
   visible,
   onClose,
   onLoadSummary,
+  swipeHandlers,
 }: {
   visible: boolean;
   onClose: () => void;
   onLoadSummary: (range: { from: Date; to: Date }) => Promise<SummaryData>;
+  /** Navegación lateral por gesto — es un destino de la barra inferior. */
+  swipeHandlers?: GestureResponderHandlers;
 }) {
   const { width } = useWindowDimensions();
   const [tab, setTab] = useState<SummaryTab>('days');
@@ -139,7 +142,7 @@ export function SummaryModal({
   const chartWidth = Math.max(240, width - spacing.lg * 2 - spacing.md * 2);
 
   return (
-    <ModalShell visible={visible} title="Resumen" onClose={onClose} scroll={false}>
+    <ModalShell visible={visible} title="Resumen" onClose={onClose} scroll={false} swipeHandlers={swipeHandlers}>
       <View style={styles.tabBar}>
         {TABS.map((entry) => {
           const active = entry.key === tab;

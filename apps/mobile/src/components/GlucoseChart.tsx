@@ -6,6 +6,7 @@ import { convertGlucose, latestLiveReading } from '@type1a/domain';
 import type { CGMReading } from '@type1a/schemas';
 
 import { colors } from '../theme';
+import { horizontalScrollerGuardHandlers } from '../swipeGuard';
 
 const HEIGHT = 150;
 const PADDING_TOP = 10;
@@ -172,7 +173,14 @@ export function GlucoseChart({ readings }: { readings: readonly CGMReading[] }) 
           <SvgText x={AXIS_WIDTH - 4} y={yForGlucose(HIGH_THRESHOLD) + 3} fontSize={10} fill={colors.muted} textAnchor="end">{HIGH_THRESHOLD}</SvgText>
           <SvgText x={AXIS_WIDTH - 4} y={yForGlucose(LOW_THRESHOLD) + 3} fontSize={10} fill={colors.muted} textAnchor="end">{LOW_THRESHOLD}</SvgText>
         </Svg>
+        {/*
+          El gesto de navegación lateral de la app reclama el arrastre en fase
+          de captura, así que sin esto le ganaría también a este scroll y el
+          gráfico dejaría de poder deslizarse para ver días anteriores. Marca
+          que el toque empezó acá; no reclama nada.
+        */}
         <ScrollView
+          {...horizontalScrollerGuardHandlers}
           ref={scrollRef}
           horizontal
           showsHorizontalScrollIndicator={false}

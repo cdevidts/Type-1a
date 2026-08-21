@@ -759,13 +759,15 @@ function Type1AApp() {
         : summaryOpen ? 'summary'
           : null;
 
-  function navigateTo(destination: NavDestination): void {
+  function navigateTo(destination: NavDestination | null): void {
     // Se cierra todo antes de abrir: dos modales encimados dejan uno
-    // inalcanzable detrás del otro.
+    // inalcanzable detrás del otro. `null` = volver a la pantalla principal,
+    // que es lo que hace el swipe cuando vuelve al centro del recorrido.
     setNutritionOpen(false);
     setCatalogOpen(false);
     setSummaryOpen(false);
     setEntryOpen(false);
+    if (destination === null) return;
     if (destination === 'nutrition') setNutritionOpen(true);
     else if (destination === 'summary') setSummaryOpen(true);
     else if (destination === 'entry') setEntryOpen(true);
@@ -784,12 +786,14 @@ function Type1AApp() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="dark" />
       {/*
-        El PanResponder va en el ScrollView de la pantalla, NO envolviendo al
-        gráfico: `GlucoseChart` es un ScrollView horizontal y hay que dejarle
-        su gesto. Ver `useSwipeNavigation`.
+        El PanResponder va en un View que ENVUELVE al ScrollView, no en el
+        ScrollView mismo: un ScrollView es nativo y nunca le entrega la
+        decisión al sistema de responders de JS, así que puesto encima el
+        gesto no se disparaba nunca. Ver `useSwipeNavigation`, que documenta
+        los dos bugs de la primera versión.
       */}
+      <View style={styles.flex} {...swipe.panHandlers}>
       <ScrollView
-        {...swipe.panHandlers}
         contentContainerStyle={styles.screen}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { void refresh(true); }} tintColor={colors.teal} />}
       >
@@ -880,6 +884,7 @@ function Type1AApp() {
           <Text style={styles.footerText}>No sustituye las alarmas de FreeStyle, una medición capilar cuando corresponda ni las indicaciones de tu equipo clínico.</Text>
         </View>
       </ScrollView>
+      </View>
 
       <NumericEntryModal
         route={numericRoute}
@@ -964,9 +969,11 @@ function Type1AApp() {
         visible={summaryOpen}
         onClose={() => { setSummaryOpen(false); }}
         onLoadSummary={loadSummary}
+        swipeHandlers={swipe.panHandlers}
       />
       <NutritionModal
         visible={nutritionOpen}
+        swipeHandlers={swipe.panHandlers}
         onClose={() => { setNutritionOpen(false); }}
         profile={nutritionProfile}
         onSaveProfile={async (next) => {
@@ -1039,6 +1046,8 @@ export default function App() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.background },
+  /** Contenedor del gesto lateral; envuelve al ScrollView de la pantalla. */
+  flex: { flex: 1 },
   // paddingBottom generoso: la barra inferior es `position: absolute` y sin
   // esto tapa la última tarjeta. 96 = alto de la barra + holgura; el inset
   // del sistema lo suma la barra por dentro.

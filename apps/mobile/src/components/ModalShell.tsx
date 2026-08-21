@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
+  AccessibilityInfo,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -8,6 +9,7 @@ import {
   StyleSheet,
   Text,
   View,
+  type GestureResponderHandlers,
 } from 'react-native';
 // `SafeAreaView` tiene que venir de `react-native-safe-area-context`, NO de
 // `react-native`: el de RN es iOS-only y en Android se comporta como un
@@ -25,13 +27,38 @@ export function ModalShell({
   onClose,
   children,
   scroll = true,
+  swipeHandlers,
 }: {
   visible: boolean;
   title: string;
   onClose: () => void;
   children: ReactNode;
   scroll?: boolean;
+  /**
+   * Gesto de navegación lateral, para los modales que son **destinos** de la
+   * barra inferior (Nutrición, Catálogo, Resumen). Los que son formularios
+   * —Ajustes, Nueva entrada, editar comida— no lo reciben: deslizar dentro de
+   * un formulario a medio llenar y que la pantalla se vaya a otra sección
+   * sería perder lo escrito.
+   *
+   * Va en un `View` que envuelve el contenido, nunca en el `ScrollView`: ver
+   * `useSwipeNavigation` para por qué encima del `ScrollView` no funciona.
+   */
+  swipeHandlers?: GestureResponderHandlers | undefined;
 }) {
+  // "Reduce Motion" del sistema: con la preferencia activa, el modal aparece
+  // sin la transición deslizante. Es una regla de las HIG y de
+  // `docs/UX_GUIDELINES.md`, y hasta ahora se leía la preferencia sin usarla
+  // para nada.
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void AccessibilityInfo.isReduceMotionEnabled()
+      .then((value) => { if (alive) setReduceMotion(value); })
+      .catch(() => { /* si no se puede leer, se deja la animación por defecto */ });
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => { alive = false; subscription.remove(); };
+  }, []);
   // `scroll={false}` hands the child full control of its own scrolling and
   // padding (see SummaryModal: fixed tab bar + range row, then its own
   // ScrollView for the tab content) — applying `styles.content`'s padding
@@ -47,19 +74,26 @@ export function ModalShell({
   );
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      animationType={reduceMotion ? 'none' : 'slide'}
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
       <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
         <KeyboardAvoidingView
           style={styles.flex}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <View style={styles.header}>
-            <Text style={styles.title}>{title}</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel="Cerrar" onPress={onClose} hitSlop={10}>
-              <Text style={styles.close}>Cerrar</Text>
-            </Pressable>
+          <View style={styles.flex} {...swipeHandlers}>
+            <View style={styles.header}>
+              <Text style={styles.title}>{title}</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Cerrar" onPress={onClose} hitSlop={10}>
+                <Text style={styles.close}>Cerrar</Text>
+              </Pressable>
+            </View>
+            {body}
           </View>
-          {body}
         </KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>

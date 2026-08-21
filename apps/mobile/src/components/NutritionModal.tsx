@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type GestureResponderHandlers } from 'react-native';
 
 import {
   ACTIVITY_LEVELS,
@@ -106,12 +106,15 @@ export function NutritionModal({
   profile,
   onSaveProfile,
   onLoadDay,
+  swipeHandlers,
 }: {
   visible: boolean;
   onClose: () => void;
   profile: NutritionProfile | null;
   onSaveProfile: (profile: NutritionProfile) => Promise<void>;
   onLoadDay: () => Promise<NutritionDayData>;
+  /** Navegación lateral por gesto — es un destino de la barra inferior. */
+  swipeHandlers?: GestureResponderHandlers;
 }) {
   const [tab, setTab] = useState<NutritionTab>('today');
   const [data, setData] = useState<NutritionDayData | null>(null);
@@ -140,7 +143,7 @@ export function NutritionModal({
   );
 
   return (
-    <ModalShell visible={visible} title="Nutrición" onClose={onClose} scroll={false}>
+    <ModalShell visible={visible} title="Nutrición" onClose={onClose} scroll={false} swipeHandlers={swipeHandlers}>
       <View style={styles.tabBar}>
         {TABS.map((entry) => {
           const active = entry.key === tab;
