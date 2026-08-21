@@ -142,6 +142,10 @@ const MAX_MACRO_PER_100G = 100;
 const MAX_KCAL_PER_100G = 900;
 
 export function isPlausibleCatalogEntry(entry: Omit<CatalogFood, 'timesSeen'>): boolean {
+  // La porción también: es el multiplicador de todos los macros, así que una
+  // porción imposible produce sugerencias imposibles aunque los valores por
+  // 100 g sean perfectamente razonables.
+  if (entry.servingGrams !== undefined && !isValidServingGrams(entry.servingGrams)) return false;
   const macros = [entry.carbsPer100g, entry.proteinPer100g, entry.fatPer100g, entry.fiberPer100g];
   if (macros.some((value) => !Number.isFinite(value) || value < 0 || value > MAX_MACRO_PER_100G)) return false;
   if (!Number.isFinite(entry.kcalPer100g) || entry.kcalPer100g < 0 || entry.kcalPer100g > MAX_KCAL_PER_100G) return false;
@@ -203,9 +207,27 @@ export function blendCatalogEntry(
  */
 export const DEFAULT_SERVING_GRAMS = 100;
 
+/**
+ * Cota de la porción de referencia.
+ *
+ * No es cosmética. `isPlausibleCatalogEntry` solo mira los macros por 100 g,
+ * así que una porción absurda pasa entera: escribir 1500 donde iban 150 hace
+ * que la app anuncie "una porción son 1500 g" y sugiera ≈420 g de
+ * carbohidratos para un plato de arroz normal — un número plausible por 100 g
+ * multiplicado por una porción imposible. Y si los macros escalados se pasan
+ * de los topes de `MealEventSchema`, la comida directamente no se guarda y la
+ * usuaria solo ve "no se pudo guardar".
+ */
+export const MAX_SERVING_GRAMS = 2000;
+export const MIN_SERVING_GRAMS = 1;
+
+export function isValidServingGrams(grams: number): boolean {
+  return Number.isFinite(grams) && grams >= MIN_SERVING_GRAMS && grams <= MAX_SERVING_GRAMS;
+}
+
 export function servingGramsOf(food: CatalogFood): number {
   const grams = food.servingGrams;
-  return grams !== undefined && Number.isFinite(grams) && grams > 0 ? grams : DEFAULT_SERVING_GRAMS;
+  return grams !== undefined && isValidServingGrams(grams) ? grams : DEFAULT_SERVING_GRAMS;
 }
 
 /**
@@ -234,6 +256,65 @@ export function scaleCatalogFoodByServings(food: CatalogFood, servings: number):
     throw new Error(`Servings must be between ${MIN_SERVINGS} and ${MAX_SERVINGS}.`);
   }
   return scaleCatalogFood(food, servings * servingGramsOf(food));
+}
+
+/**
+ * Lo que la pantalla de catálogo puede corregir de un alimento (Fase 18).
+ *
+ * `timesSeen` no está: es el peso que `blendCatalogEntry` le da a lo ya
+ * sabido, o sea un parámetro del algoritmo, no un dato de la comida.
+ */
+export interface CatalogFoodEdit {
+  name?: string;
+  carbsPer100g?: number;
+  proteinPer100g?: number;
+  fatPer100g?: number;
+  fiberPer100g?: number;
+  kcalPer100g?: number;
+  /** `null` borra la porción de referencia y vuelve al default de 100 g. */
+  servingGrams?: number | null;
+  servingLabel?: string | null;
+}
+
+/**
+ * Aplica una corrección a un alimento del catálogo, o devuelve `null` si el
+ * resultado no sería físicamente posible.
+ *
+ * Vive acá y no en `db.ts` porque es la puerta por la que pasa **toda**
+ * escritura manual al catálogo, y lo que se guarde ahí termina sugiriendo
+ * carbohidratos en cada comida futura que reuse el alimento. `AGENTS.md` pide
+ * que ese tipo de cálculo sea puro, determinístico y con test; en `db.ts` no
+ * se puede probar, porque ese módulo importa nativos de Expo.
+ *
+ * La clave **no** cambia aunque cambie el nombre: si cambiara, el alimento
+ * corregido sería uno nuevo y el viejo —con la estimación mala— seguiría ahí,
+ * que es justo lo que la pantalla de catálogo viene a resolver.
+ */
+export function applyCatalogEdit(existing: CatalogFood, edit: CatalogFoodEdit): CatalogFood | null {
+  // Los campos de porción se construyen desde cero y no con un spread: con
+  // `exactOptionalPropertyTypes`, "la borré" tiene que dejar la propiedad
+  // fuera del objeto, no puesta en `undefined`.
+  const servingGrams = edit.servingGrams === undefined
+    ? existing.servingGrams
+    : (edit.servingGrams ?? undefined);
+  const servingLabel = edit.servingLabel === undefined
+    ? existing.servingLabel
+    : (edit.servingLabel ?? undefined);
+
+  const next: CatalogFood = {
+    key: existing.key,
+    timesSeen: existing.timesSeen,
+    lastSeenAt: existing.lastSeenAt,
+    name: edit.name === undefined || edit.name.trim() === '' ? existing.name : edit.name.trim(),
+    carbsPer100g: edit.carbsPer100g ?? existing.carbsPer100g,
+    proteinPer100g: edit.proteinPer100g ?? existing.proteinPer100g,
+    fatPer100g: edit.fatPer100g ?? existing.fatPer100g,
+    fiberPer100g: edit.fiberPer100g ?? existing.fiberPer100g,
+    kcalPer100g: edit.kcalPer100g ?? existing.kcalPer100g,
+    ...(servingGrams === undefined ? {} : { servingGrams }),
+    ...(servingLabel === undefined ? {} : { servingLabel }),
+  };
+  return isPlausibleCatalogEntry(next) ? next : null;
 }
 
 /**

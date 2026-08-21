@@ -4,6 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
+  catalogEntryFromPortion,
   MAX_SERVINGS,
   MIN_SERVINGS,
   isValidServings,
@@ -158,6 +159,13 @@ export function MealModal({
   const [appliedCatalog, setAppliedCatalog] = useState<{ food: CatalogFood; grams: number } | null>(null);
   /** Datos de la comida esperando la respuesta a esa pregunta. */
   const [catalogQuestion, setCatalogQuestion] = useState<ConfirmedMealDraft | null>(null);
+  /**
+   * Segundo paso de la pregunta: qué quedaría escrito en el catálogo, por
+   * 100 g, antes de escribirlo. Ver `catalogPreviewFor`.
+   */
+  const [catalogPreview, setCatalogPreview] = useState<
+    { mode: 'update' | 'variant'; carbsPer100g: number; proteinPer100g: number; fatPer100g: number } | null
+  >(null);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -184,6 +192,7 @@ export function MealModal({
     setCatalogSuggestedCarbsG(null);
     setAppliedCatalog(null);
     setCatalogQuestion(null);
+    setCatalogPreview(null);
   }, [visible]);
 
   async function captureAndAnalyze(): Promise<void> {
@@ -378,7 +387,10 @@ export function MealModal({
       // del catálogo Y ella cambió algo que describe al **alimento**, no a
       // esta comida. Cambiar cuántas porciones comió no pregunta nada: eso es
       // un dato de hoy, no del alimento.
-      if (appliedCatalog !== null && catalogMacrosEdited(protein, fat, fiber, parsed)) {
+      // La pregunta NO se hace si la comida además pasó por un análisis: ahí
+      // los carbohidratos confirmados cubren varios alimentos y atribuirle la
+      // diferencia al del catálogo sería inventar.
+      if (analysis === null && appliedCatalog !== null && catalogMacrosEdited(protein, fat, fiber, parsed)) {
         setCatalogQuestion(draft);
         setBusy(false);
         return;
@@ -426,6 +438,40 @@ export function MealModal({
       || differs(carbs, expected.carbsG);
   }
 
+  /**
+   * Qué quedaría escrito en el catálogo, por 100 g, si aceptara.
+   *
+   * **Esto existe porque el número no es obvio y puede estar mal.** La app
+   * tiene un solo campo de carbohidratos, que es el total de *la comida*: si
+   * ella reusó "Arroz" y además comió pan, la diferencia contra lo que
+   * predijo el catálogo no es del arroz. Escribir ese total como si
+   * describiera al arroz lo dejaría inflado para siempre, y con un valor
+   * perfectamente plausible que ninguna validación puede atrapar. Mostrarlo
+   * por 100 g antes de escribirlo es lo que le permite ver el disparate.
+   */
+  function catalogPreviewFor(mode: 'update' | 'variant'): void {
+    const draft = catalogQuestion;
+    if (draft === null || appliedCatalog === null) return;
+    const entry = catalogEntryFromPortion(appliedCatalog.food, {
+      grams: appliedCatalog.grams,
+      carbsG: draft.confirmedCarbsG,
+      proteinG: draft.proteinG ?? 0,
+      fatG: draft.fatG ?? 0,
+      fiberG: draft.fiberG ?? 0,
+      caloriesKcal: scaleCatalogFood(appliedCatalog.food, appliedCatalog.grams).caloriesKcal,
+    }, new Date().toISOString());
+    if (entry === null) {
+      setMessage('Esos valores no son posibles por 100 g, así que el catálogo no se puede corregir con ellos. Puedes guardar solo esta comida.');
+      return;
+    }
+    setCatalogPreview({
+      mode,
+      carbsPer100g: entry.carbsPer100g,
+      proteinPer100g: entry.proteinPer100g,
+      fatPer100g: entry.fatPer100g,
+    });
+  }
+
   /** Resuelve la pregunta de tres salidas y guarda. */
   async function answerCatalogQuestion(mode: 'update' | 'variant' | 'none'): Promise<void> {
     const draft = catalogQuestion;
@@ -437,6 +483,7 @@ export function MealModal({
     const macrosComplete = draft.proteinG !== undefined && draft.fatG !== undefined && draft.fiberG !== undefined;
     const effectiveMode = macrosComplete ? mode : 'none';
     setCatalogQuestion(null);
+    setCatalogPreview(null);
     setBusy(true);
     try {
       await onConfirm(effectiveMode === 'none' ? draft : {
@@ -450,6 +497,8 @@ export function MealModal({
           proteinG: draft.proteinG ?? 0,
           fatG: draft.fatG ?? 0,
           fiberG: draft.fiberG ?? 0,
+          // Los `?? 0` son inalcanzables por `macrosComplete`; están para que
+          // el tipo cierre, no como default silencioso.
           // El catálogo guarda calorías; sin análisis propio no hay un valor
           // medido, así que se escalan las que ya tenía para esa porción.
           caloriesKcal: scaleCatalogFood(appliedCatalog.food, appliedCatalog.grams).caloriesKcal,
@@ -620,15 +669,45 @@ export function MealModal({
         </View>
       ) : null}
 
-      {catalogQuestion === null || appliedCatalog === null ? null : (
+      {catalogQuestion === null || appliedCatalog === null ? null : catalogPreview !== null ? (
         <View style={styles.questionBox}>
-          <Text style={styles.questionTitle}>Cambiaste los valores de {appliedCatalog.food.name}</Text>
+          <Text style={styles.questionTitle}>
+            {catalogPreview.mode === 'update'
+              ? `${appliedCatalog.food.name} quedaría así`
+              : `El alimento nuevo quedaría así`}
+          </Text>
+          <Text style={styles.questionHint}>
+            Por cada 100 g: {catalogPreview.carbsPer100g} g de carbohidratos, {catalogPreview.proteinPer100g} g de
+            proteína, {catalogPreview.fatPer100g} g de grasa.
+          </Text>
+          <Text style={styles.questionWarning}>
+            Esto supone que lo que anotaste corresponde solo a {appliedCatalog.food.name}. Si en esa comida hubo
+            algo más, los números de arriba van a quedar inflados — y se usarían cada vez que lo elijas.
+          </Text>
+          <Pressable
+            style={styles.questionOption}
+            onPress={() => { void answerCatalogQuestion(catalogPreview.mode); }}
+            accessibilityRole="button"
+          >
+            <Text style={styles.questionOptionTitle}>Sí, guardar así</Text>
+          </Pressable>
+          <Pressable
+            style={styles.questionOption}
+            onPress={() => { setCatalogPreview(null); }}
+            accessibilityRole="button"
+          >
+            <Text style={styles.questionOptionTitle}>Volver</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <View style={styles.questionBox}>
+          <Text style={styles.questionTitle}>Lo que anotaste no cuadra con {appliedCatalog.food.name}</Text>
           <Text style={styles.questionHint}>
             Ese alimento se reutiliza en cada comida donde lo elijas. ¿Qué hacemos con él?
           </Text>
           <Pressable
             style={styles.questionOption}
-            onPress={() => { void answerCatalogQuestion('update'); }}
+            onPress={() => { catalogPreviewFor('update'); }}
             accessibilityRole="button"
           >
             <Text style={styles.questionOptionTitle}>Corregir el alimento</Text>
@@ -636,7 +715,7 @@ export function MealModal({
           </Pressable>
           <Pressable
             style={styles.questionOption}
-            onPress={() => { void answerCatalogQuestion('variant'); }}
+            onPress={() => { catalogPreviewFor('variant'); }}
             accessibilityRole="button"
           >
             <Text style={styles.questionOptionTitle}>Guardar como alimento nuevo</Text>
@@ -648,7 +727,9 @@ export function MealModal({
             accessibilityRole="button"
           >
             <Text style={styles.questionOptionTitle}>Solo para esta comida</Text>
-            <Text style={styles.questionOptionCopy}>El catálogo no se toca.</Text>
+            <Text style={styles.questionOptionCopy}>
+              El catálogo no se toca. Es lo correcto si en esta comida hubo algo más además de {appliedCatalog.food.name}.
+            </Text>
           </Pressable>
         </View>
       )}
@@ -734,6 +815,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     marginBottom: spacing.sm,
   },
+  questionWarning: { fontSize: 12, color: colors.warning, fontWeight: '600', marginBottom: spacing.md, lineHeight: 16 },
   questionOptionTitle: { fontSize: 14, fontWeight: '700', color: colors.ink },
   questionOptionCopy: { fontSize: 12, color: colors.muted, marginTop: 2, lineHeight: 16 },
   portionInput: {

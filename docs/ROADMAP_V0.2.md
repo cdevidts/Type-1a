@@ -1828,9 +1828,36 @@ Anotarlo en `docs/DEEPAGENT_REDEPLOY_PROMPT.md` cuando se construya.
 - `blendCatalogEntry` **conserva la porción que definió la usuaria**: un
   análisis nuevo de la IA no trae ese campo, así que sin esto se lo borraba en
   cada identificación.
-- Toda escritura al catálogo pasa por `isPlausibleCatalogEntry`. Un valor
+- Toda escritura al catálogo pasa por `applyCatalogEdit` en `packages/domain`
+  (puro y con test), que valida con `isPlausibleCatalogEntry`. Un valor
   imposible por 100 g guardado ahí sugeriría carbohidratos imposibles en cada
   comida futura que reuse el alimento.
+
+**Cuatro hallazgos de la revisión de seguridad, corregidos en la misma
+corrida.** Vale la pena dejarlos escritos porque tres de ellos eran
+plausibles a la vista y ninguna validación los habría atrapado:
+
+1. **El total de carbohidratos de la comida se escribía como si describiera a
+   un solo alimento.** La app tiene un campo de carbos, y es de *la comida*:
+   si ella reusa "Arroz" y además come pan, la diferencia contra lo que
+   predijo el catálogo no es del arroz. La pregunta de tres salidas escribía
+   ese total igual, dejando el arroz inflado ~65 % para siempre y con un
+   número perfectamente plausible. Arreglado con dos defensas: la pregunta ya
+   **no aparece** si la comida además pasó por un análisis (ahí hay otros
+   alimentos identificados), y cuando aparece hay un **segundo paso que
+   muestra lo que quedaría escrito por 100 g** y advierte que eso supone que
+   la comida fue solo ese alimento. Un número inflado se ve a simple vista;
+   un cambio silencioso, no.
+2. **El editor mandaba `0` a la IA con decimales escritos con coma.** Usaba
+   `Number()` crudo, y `Number('28,5')` es `NaN` → `|| 0`. En un teclado
+   decimal chileno "28,5" es exactamente lo que se escribe, así que la IA
+   recibía el alimento con **0 g por 100 g** como estado actual, "corregía"
+   desde cero y devolvía macros inventados.
+3. **La porción de referencia no tenía cota superior.** `isPlausibleCatalogEntry`
+   solo miraba los macros, así que un 1500 donde iban 150 pasaba entero y
+   multiplicaba por diez cada sugerencia. Ahora se valida en el dominio.
+4. **Los guardas de escritura de `db.ts` no tenían test.** La lógica se movió
+   a `applyCatalogEdit` en `packages/domain` y quedó cubierta.
 
 **No requiere redeploy propio** ni cambios en los reportes: el catálogo es una
 comodidad de registro, no una métrica clínica; lo que sí llega al reporte —los

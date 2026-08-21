@@ -8,27 +8,24 @@ import WandSparkles from 'lucide-react-native/icons/wand-sparkles';
 
 import {
   DEFAULT_SERVING_GRAMS,
+  MAX_SERVING_GRAMS,
+  isValidServingGrams,
   servingGramsOf,
   type CatalogFood,
+  type CatalogFoodEdit,
 } from '@type1a/domain';
+
+/**
+ * Re-exportado con el nombre que usa `App`: el tipo canónico vive en
+ * `packages/domain` junto a `applyCatalogEdit`, que es quien lo valida.
+ */
+export type CatalogEdit = CatalogFoodEdit;
 
 import { editCatalogFoodWithInstruction, MobileApiError } from '../api';
 import { parseNonNegativeNumber } from '../format';
 import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
 import { ModalShell } from './ModalShell';
-
-/** Lo que la pantalla puede corregir; mismo lenguaje que `CatalogFoodEdit`. */
-export interface CatalogEdit {
-  name?: string;
-  carbsPer100g?: number;
-  proteinPer100g?: number;
-  fatPer100g?: number;
-  fiberPer100g?: number;
-  kcalPer100g?: number;
-  servingGrams?: number | null;
-  servingLabel?: string | null;
-}
 
 const numberText = (value: number): string => String(Number(value.toFixed(2)));
 
@@ -100,17 +97,28 @@ function FoodEditor({
       setMessage('Escribe qué hay que corregir, por ejemplo "son 28 g de carbos por 100 g".');
       return;
     }
+    // Si algún campo está ilegible, se para acá: mandarle a la IA un alimento
+    // con valores equivocados hace que "corrija" desde una base falsa.
+    if ([carbs, protein, fat, fiber, kcal].some((value) => parseNonNegativeNumber(value) === null)) {
+      setMessage('Revisa los macros: alguno no es un número. La IA necesita los valores actuales para corregirlos.');
+      return;
+    }
     setBusy(true);
     try {
       const result = await editCatalogFoodWithInstruction({
         instruction: instruction.trim(),
+        // `parseNonNegativeNumber`, no `Number()`: en un teclado decimal
+        // chileno se escribe "28,5", y `Number('28,5')` es NaN. Con el
+        // `|| 0` que había antes, la IA recibía **0 g por 100 g** como estado
+        // actual del alimento, "corregía" desde cero y devolvía macros
+        // inventados que se escribían en los campos.
         food: {
           name,
-          carbsPer100g: Number(carbs) || 0,
-          proteinPer100g: Number(protein) || 0,
-          fatPer100g: Number(fat) || 0,
-          fiberPer100g: Number(fiber) || 0,
-          kcalPer100g: Number(kcal) || 0,
+          carbsPer100g: parseNonNegativeNumber(carbs) ?? 0,
+          proteinPer100g: parseNonNegativeNumber(protein) ?? 0,
+          fatPer100g: parseNonNegativeNumber(fat) ?? 0,
+          fiberPer100g: parseNonNegativeNumber(fiber) ?? 0,
+          kcalPer100g: parseNonNegativeNumber(kcal) ?? 0,
         },
       });
       const revised = result.estimate.foods[0];
@@ -161,8 +169,8 @@ function FoodEditor({
     let serving: number | null = null;
     if (gramsText !== '') {
       const value = parseNonNegativeNumber(gramsText);
-      if (value === null || value <= 0) {
-        setMessage('El tamaño de la porción debe ser mayor que cero, o quedar en blanco para usar 100 g.');
+      if (value === null || !isValidServingGrams(value)) {
+        setMessage(`El tamaño de la porción debe estar entre 1 y ${MAX_SERVING_GRAMS} g, o quedar en blanco para usar ${DEFAULT_SERVING_GRAMS} g.`);
         return;
       }
       serving = value;
@@ -247,6 +255,7 @@ function FoodEditor({
       <Text style={styles.sectionTitle}>Porción de referencia</Text>
       <Text style={styles.sectionHint}>
         Opcional. En blanco son {DEFAULT_SERVING_GRAMS} g. Sirve para pedir "dos tazas" en vez de calcular gramos.
+        Entre 1 y {MAX_SERVING_GRAMS} g.
       </Text>
       <Field label="Una porción pesa" unit="g" value={servingGrams} onChangeText={setServingGrams} placeholder={String(DEFAULT_SERVING_GRAMS)} />
       <View style={styles.field}>

@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { z } from 'zod';
 
-import { blendCatalogEntry, convertGlucose, foodKey, isPlausibleCatalogEntry, planMySugrImport, type CatalogFood } from '@type1a/domain';
+import { applyCatalogEdit, blendCatalogEntry, convertGlucose, foodKey, isPlausibleCatalogEntry, planMySugrImport, type CatalogFood, type CatalogFoodEdit } from '@type1a/domain';
 import {
   ActivityEventSchema,
   CGMReadingSchema,
@@ -1848,40 +1848,6 @@ export async function recordCatalogFoods(
 }
 
 /** Borra un alimento del catálogo — la salida cuando una estimación quedó mal. */
-/**
- * Lo que la pantalla de catálogo puede corregir de un alimento (Fase 18).
- *
- * `timesSeen` no está: es el contador de cuántas veces lo identificó la IA, o
- * sea el peso que `blendCatalogEntry` le da a lo ya sabido. Dejarlo editable
- * sería dejar editar cuánta inercia tiene un valor, que no es un dato de la
- * comida sino del algoritmo.
- */
-export interface CatalogFoodEdit {
-  name?: string;
-  carbsPer100g?: number;
-  proteinPer100g?: number;
-  fatPer100g?: number;
-  fiberPer100g?: number;
-  kcalPer100g?: number;
-  /** `null` borra la porción de referencia y vuelve al default de 100 g. */
-  servingGrams?: number | null;
-  servingLabel?: string | null;
-}
-
-/**
- * Corrige un alimento del catálogo **en su lugar**, conservando su clave.
- *
- * Conservar la clave es lo que hace que la corrección alcance a todas las
- * comidas futuras que lo reusen. Cambiar el nombre no cambia la clave a
- * propósito: si cambiara, el alimento corregido sería uno nuevo y el viejo
- * —con la estimación mala— seguiría ahí, que es justo lo que esta pantalla
- * viene a resolver. Para un alimento realmente distinto está
- * `createCatalogFoodVariant`.
- *
- * Rechaza una corrección físicamente imposible (`isPlausibleCatalogEntry`) en
- * vez de fosilizarla: un valor absurdo guardado acá sugiere carbohidratos
- * absurdos en cada comida que lo reuse.
- */
 export async function updateCatalogFood(
   db: SQLiteDatabase,
   key: string,
@@ -1889,34 +1855,14 @@ export async function updateCatalogFood(
 ): Promise<CatalogFood> {
   const row = await db.getFirstAsync<FoodCatalogRow>('SELECT * FROM food_catalog WHERE key = ?', key);
   if (row === null) throw new Error('Ese alimento ya no está en el catálogo.');
-  const existing = rowToCatalogFood(row);
 
-  const servingGrams = edit.servingGrams === undefined
-    ? existing.servingGrams
-    : (edit.servingGrams ?? undefined);
-  const servingLabel = edit.servingLabel === undefined
-    ? existing.servingLabel
-    : (edit.servingLabel ?? undefined);
-
-  // Los campos de porción se construyen desde cero, no con un spread de
-  // `existing`: con `exactOptionalPropertyTypes` un `undefined` explícito no
-  // es lo mismo que ausente, y "borré la porción" tiene que dejar la
-  // propiedad fuera del objeto, no puesta en `undefined`.
-  const next: CatalogFood = {
-    key: existing.key,
-    timesSeen: existing.timesSeen,
-    lastSeenAt: existing.lastSeenAt,
-    name: edit.name === undefined || edit.name.trim() === '' ? existing.name : edit.name.trim(),
-    carbsPer100g: edit.carbsPer100g ?? existing.carbsPer100g,
-    proteinPer100g: edit.proteinPer100g ?? existing.proteinPer100g,
-    fatPer100g: edit.fatPer100g ?? existing.fatPer100g,
-    fiberPer100g: edit.fiberPer100g ?? existing.fiberPer100g,
-    kcalPer100g: edit.kcalPer100g ?? existing.kcalPer100g,
-    ...(servingGrams === undefined ? {} : { servingGrams }),
-    ...(servingLabel === undefined ? {} : { servingLabel }),
-  };
-  if (!isPlausibleCatalogEntry(next)) {
-    throw new Error('Esos valores no son posibles por 100 g. Revisa los macros.');
+  // Toda la construcción y validación vive en `packages/domain`
+  // (`applyCatalogEdit`), pura y con test: es la puerta por la que pasa cada
+  // escritura manual al catálogo, y lo que quede ahí sugiere carbohidratos en
+  // cada comida futura que reuse el alimento.
+  const next = applyCatalogEdit(rowToCatalogFood(row), edit);
+  if (next === null) {
+    throw new Error('Esos valores no son posibles. Revisa los macros y el tamaño de la porción.');
   }
 
   await db.runAsync(

@@ -10,8 +10,11 @@ import {
   isPlausibleCatalogEntry,
   MAX_BLEND_WEIGHT,
   toCatalogEntry,
+  applyCatalogEdit,
   catalogEntryFromPortion,
   DEFAULT_SERVING_GRAMS,
+  isValidServingGrams,
+  MAX_SERVING_GRAMS,
   isValidServings,
   scaleCatalogFoodByServings,
   servingGramsOf,
@@ -273,5 +276,71 @@ describe('porciones de referencia (Fase 18)', () => {
       '2026-08-21T13:00:00.000Z',
     );
     expect(entry).toBeNull();
+  });
+});
+
+describe('applyCatalogEdit (la puerta de toda escritura manual al catálogo)', () => {
+  const base: CatalogFood = {
+    key: 'arroz',
+    name: 'Arroz',
+    carbsPer100g: 28,
+    proteinPer100g: 2.7,
+    fatPer100g: 0.3,
+    fiberPer100g: 0.4,
+    kcalPer100g: 130,
+    timesSeen: 4,
+    lastSeenAt: '2026-08-21T12:00:00.000Z',
+  };
+
+  it('corrige solo lo que se le pasa y deja el resto igual', () => {
+    const next = applyCatalogEdit(base, { carbsPer100g: 25 });
+    expect(next?.carbsPer100g).toBe(25);
+    expect(next?.proteinPer100g).toBe(2.7);
+    expect(next?.name).toBe('Arroz');
+  });
+
+  it('no cambia la clave aunque cambie el nombre', () => {
+    // Si cambiara, el alimento corregido sería uno nuevo y el viejo —con la
+    // estimación mala— seguiría sugiriéndose. Es justo lo que la pantalla de
+    // catálogo viene a resolver.
+    const next = applyCatalogEdit(base, { name: 'Arroz integral' });
+    expect(next?.key).toBe('arroz');
+    expect(next?.name).toBe('Arroz integral');
+  });
+
+  it('no toca timesSeen: es el peso del algoritmo, no un dato de la comida', () => {
+    expect(applyCatalogEdit(base, { carbsPer100g: 25 })?.timesSeen).toBe(4);
+  });
+
+  it('rechaza valores imposibles por 100 g en vez de fosilizarlos', () => {
+    expect(applyCatalogEdit(base, { carbsPer100g: 150 })).toBeNull();
+    expect(applyCatalogEdit(base, { kcalPer100g: 5000 })).toBeNull();
+    // Más fibra que carbohidratos es incoherente, no un alimento raro.
+    expect(applyCatalogEdit(base, { fiberPer100g: 90 })).toBeNull();
+  });
+
+  it('rechaza una porción de referencia absurda', () => {
+    // `isPlausibleCatalogEntry` solo miraba los macros, así que un 1500 donde
+    // iban 150 pasaba entero y multiplicaba cada sugerencia por diez.
+    expect(applyCatalogEdit(base, { servingGrams: 5000 })).toBeNull();
+    expect(applyCatalogEdit(base, { servingGrams: 0.5 })).toBeNull();
+    expect(applyCatalogEdit(base, { servingGrams: 150 })?.servingGrams).toBe(150);
+    expect(isValidServingGrams(MAX_SERVING_GRAMS)).toBe(true);
+    expect(isValidServingGrams(MAX_SERVING_GRAMS + 1)).toBe(false);
+  });
+
+  it('distingue borrar la porción de no tocarla', () => {
+    const conPorcion: CatalogFood = { ...base, servingGrams: 150, servingLabel: 'taza' };
+    expect(applyCatalogEdit(conPorcion, {})?.servingGrams).toBe(150);
+    const borrada = applyCatalogEdit(conPorcion, { servingGrams: null, servingLabel: null });
+    expect(borrada).not.toBeNull();
+    expect('servingGrams' in borrada!).toBe(false);
+    expect('servingLabel' in borrada!).toBe(false);
+    // Y sin porción vuelve a comportarse como 100 g, como antes de la Fase 18.
+    expect(servingGramsOf(borrada!)).toBe(DEFAULT_SERVING_GRAMS);
+  });
+
+  it('un nombre en blanco no borra el que había', () => {
+    expect(applyCatalogEdit(base, { name: '   ' })?.name).toBe('Arroz');
   });
 });
