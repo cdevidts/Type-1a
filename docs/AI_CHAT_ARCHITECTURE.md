@@ -219,9 +219,11 @@ día es el objetivo del documento.
 | Registrar entrada empaquetada (glucosa capilar + carbos + insulina + nota) | `saveUnifiedEntry(db, input)` | Insulina = lo que tecleó la usuaria, nunca sugerido. |
 | Adjuntar carbos/insulina/nota a una lectura del sensor | `attachEntryToReading(db, readingId, input)` | No reescribe el valor del sensor ni su origen. |
 | Editar / borrar una entrada empaquetada | `updateUnifiedEntryGroup`, `deleteUnifiedEntryGroup` (db) | Un ancla de sensor se preserva; no se borra dato real. |
-| Registrar/editar/borrar glucosa manual, carbos, insulina, comida, nota sueltos | `saveCarbEvent`, `saveInsulinEvent`, `updateManualCGMReading`, `updateMealNote`, `updateNoteEvent`, `delete*` (db) | Solo lecturas `origin:'manual'` son editables en valor. |
+| Registrar/editar/borrar glucosa manual, carbos, insulina, comida, nota sueltos | `saveCarbEvent`, `saveInsulinEvent`, `updateManualCGMReading`, `updateNoteEvent`, `delete*` (db) | Solo lecturas `origin:'manual'` son editables en valor. |
 | Confirmar carbos de una comida | modales de comida → `saveMealWithEpisode` | La confirmación es acto de la usuaria, no de la IA. |
 | Estimar **todos los macros** desde foto o texto | `analyzeMealImage`, `analyzeMealDescription` (api) | 2026-08-20: el prompt siempre pidió carbohidratos, proteína, grasa, fibra, calorías y confianza por alimento, y `FoodEstimateSchema` los lleva — lo que faltaba era que la app los usara. Ahora precargan proteína/grasa/fibra (editables) y alimentan el catálogo. **Los carbohidratos NO se precargan a propósito**: son los que determinan el bolo, y `AGENTS.md` exige que lo estimado por IA no se confunda con lo confirmado. El chat debe respetar la misma asimetría. |
+| **Editar una comida guardada con una instrucción en lenguaje natural** | `editMealWithInstruction({instruction, current})` (api) → tercer modo de `/v1/ai/meal-analysis` → `updateMealFromEdit(db, id, patch)` | 2026-08-21 ✅ (Fase 17). **Es el patrón que el chat va a reusar tal cual**, así que vale la pena leerlo entero: (1) el modelo recibe un `MealSnapshot`, que **no tiene campo de insulina, glucosa ni parámetro de terapia** — la frontera es la forma del tipo, no una frase del prompt, porque un prompt se puede ignorar y un campo que no existe no se puede alcanzar; (2) hay un guardrail **de entrada**, `requestsInsulinAdvice()`, que rechaza "¿cuánta insulina me pongo?" *antes* de gastar la llamada — el chat necesita el mismo, no solo el filtro de salida; (3) la respuesta es la comida **completa** revisada, no un diff, porque fusionar un diff en el cliente es donde se cuelan los errores; (4) la UI muestra un **antes/después campo por campo** y no escribe nada hasta que la usuaria confirma. Un "¿lo aplico?" sin mostrar qué cambia no es confirmación informada. |
+| Editar macros / carbos confirmados / nota / foto de una comida | `updateMealFromEdit(db, id, patch)` (db) | 2026-08-21 ✅. `undefined` = no tocar, `null` = borrar — la distinción "no anotado" vs. "0 g" recorre toda la app. Sincroniza la fila espejo de `carb_events` vía `syncConfirmedCarbRow`, así que el chat no puede dejar las dos copias de los carbos confirmados en desacuerdo. `macrosSource` nunca queda en `user` tras una edición asistida por IA. |
 | Guardar alimentos identificados en el catálogo | `recordCatalogFoods` (db) + `catalogEntriesFrom` (domain) | 2026-08-20 ✅. Promedia ponderado por veces vistas, así que el catálogo converge con el uso. Solo entran alimentos con gramos estimados: sin porción no se puede normalizar a 100 g y escalar sería inventar el dato. |
 | Programar/ajustar alarmas y recordatorios | `saveMealAlarmOffsets`, `saveCorrectionReminderSettings`, `saveReminderAlertStyle`, `saveCapillaryReminderSettings` + `schedule*` (notifications) | Recordatorios avisan; no calculan dosis. |
 | Importar historial MySugr | `importMySugrCsv(db, csv)` | Datos importados quedan marcados como tales. |
@@ -263,7 +265,11 @@ correspondiente con sus propios parámetros.
 - Definir el formato exacto de las *tool specs* y dónde vive el registro
   (probable: un módulo compartido que derive los esquemas Zod ya existentes).
 - Mecanismo de confirmación en UI para herramientas de escritura (¿hoja de
-  confirmación por acción? ¿"deshacer"?).
+  confirmación por acción? ¿"deshacer"?). **La Fase 17 ya resolvió una
+  versión de esto** y conviene copiarla antes que inventar otra: se muestra
+  el antes/después campo por campo, con lo que cambia marcado, y el botón de
+  guardar es la única escritura. El chat puede reusar esa misma vista para
+  cualquier herramienta W.
 - Política de contexto: cuánto timeline resumir y cómo, sin subir todo.
 - Telemetría de rechazos del guardia de seguridad (para verificar que el filtro
   efectivamente se dispara).

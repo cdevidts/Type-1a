@@ -195,7 +195,11 @@ export interface MealWithEpisode {
 export type TimelineEditPayload =
   | { kind: 'insulin'; type: 'rapid' | 'basal'; units: number; insulinName?: string }
   | { kind: 'carbs'; carbsG: number }
-  | { kind: 'meal'; note: string }
+  // La comida NO tiene variante acá: desde la Fase 17 se edita en
+  // `MealEditModal`, que además de la nota toca macros, carbohidratos
+  // confirmados y foto, y ofrece los tres modos de IA. Un segundo camino de
+  // edición inline para lo mismo garantizaba que los dos se fueran
+  // separando.
   // A standalone glucose reading. `glucose` (the value) is only present when
   // editing a hand-typed 'manual' reading — a sensor/imported/synthetic value
   // is read-only. The optional attachment fields turn a bare reading into a

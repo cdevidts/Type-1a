@@ -109,6 +109,45 @@ describe('Type 1A API', () => {
     expect(receivedInput).toEqual({ description: 'tres sopaipillas con pebre' });
   });
 
+  it('routes an edit instruction and strips any insulin field the client sends', async () => {
+    let receivedInput: unknown = null;
+    const mealVisionService: MealVisionService = {
+      analyze: async (input) => {
+        receivedInput = input;
+        return {
+          analysisId: 'edit-1',
+          model: 'test',
+          estimate: {
+            foods: [{ name: 'sándwich de queso', estimatedGrams: 160, carbsG: 38, proteinG: 16, fatG: 14, fiberG: 3, caloriesKcal: 400, confidence: 0.5 }],
+            uncertaintyNotes: ['El tipo de pan no se especifica.'],
+          },
+          totals: { carbsG: 38, proteinG: 16, fatG: 14, fiberG: 3, caloriesKcal: 400 },
+        };
+      },
+    };
+    const app = await buildApp(testConfig(), { mealVisionService });
+    apps.push(app);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/ai/meal-analysis',
+      payload: {
+        instruction: 'esto era un sándwich de queso',
+        // Un cliente mal escrito (o modificado) manda la dosis igual. El
+        // schema no la declara, así que Zod la descarta antes de que llegue
+        // al proveedor: la frontera de AGENTS.md no depende de que el
+        // cliente se porte bien.
+        current: { confirmedCarbsG: 30, rapidUnits: 4, glucose: 180 },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(receivedInput).toEqual({
+      instruction: 'esto era un sándwich de queso',
+      current: { confirmedCarbsG: 30 },
+    });
+  });
+
   it('rejects a meal-analysis body with neither an image nor a description', async () => {
     const app = await buildApp(testConfig(), {
       mealVisionService: { analyze: async () => { throw new Error('should not be called'); } },

@@ -353,26 +353,9 @@ export async function deleteCarbEvent(db: SQLiteDatabase, id: string): Promise<v
   await db.runAsync('DELETE FROM carb_events WHERE id = ?', id);
 }
 
-export async function updateMealNote(db: SQLiteDatabase, id: string, note: string): Promise<void> {
-  // Only the note is editable here. `confirmedCarbsG` is intentionally NOT
-  // touched from this path — it's shown on this same Timeline item, but it
-  // lives as its own carb_events row (see writeMealWithEpisode) with its own
-  // id, and that row is what the separate "Carbohidratos confirmados"
-  // Timeline item edits. Editing carbs from two different places against
-  // the same underlying row would need a sync step this schema doesn't
-  // support cleanly; keeping one editable path per row avoids it entirely.
-  // AI-estimated fields (aiEstimatedCarbsG, macros) stay immutable — they
-  // are a record of what the AI actually said, not a value to correct.
-  const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM meal_events WHERE id = ?', id);
-  if (row === null) return;
-  const existing = MealEventSchema.parse(JSON.parse(row.payload));
-  const next = MealEventSchema.parse({ ...existing, note });
-  await db.runAsync('UPDATE meal_events SET payload = ? WHERE id = ?', JSON.stringify(next), id);
-}
-
 /**
- * Like `updateMealNote`, but also updates `confirmedCarbsG` — for editing a
- * packaged "Nueva entrada" group (`updateUnifiedEntryGroup`), where carbs
+ * Actualiza `note` y `confirmedCarbsG` de una comida — para editar un grupo
+ * de "Nueva entrada" empaquetado (`updateUnifiedEntryGroup`), where carbs
  * and note are meant to be edited together in one form, not through two
  * separate Timeline items. Propagates to the linked `carb_events` row
  * (`source: 'meal_confirmed'`, matched by timestamp — same convention
@@ -395,22 +378,42 @@ async function updateMealCarbsAndNoteRows(
     note: updates.note,
   });
   await db.runAsync('UPDATE meal_events SET payload = ? WHERE id = ?', JSON.stringify(next), id);
+  await syncConfirmedCarbRow(db, existing, next.confirmedCarbsG);
+}
+
+/**
+ * Mantiene alineada la fila espejo de `carb_events` con los carbohidratos
+ * confirmados de una comida.
+ *
+ * Los carbos confirmados viven **duplicados**: en el payload de la comida y
+ * como su propia fila de `carb_events` con `source: 'meal_confirmed'`
+ * (pareada por timestamp, la misma convención que usa `deleteMealEvent`). Si
+ * un camino de edición actualiza uno y no el otro, las dos copias se
+ * bifurcan y el Timeline muestra un número distinto del que ve el reporte.
+ * Cualquier escritura nueva que toque `confirmedCarbsG` tiene que pasar por
+ * acá.
+ */
+async function syncConfirmedCarbRow(
+  db: SQLiteDatabase,
+  existing: MealEvent,
+  confirmedCarbsG: number | undefined,
+): Promise<void> {
   const carbRow = await db.getFirstAsync<{ id: string }>(
     "SELECT id FROM carb_events WHERE timestamp = ? AND source = 'meal_confirmed'",
     existing.timestamp,
   );
-  if (next.confirmedCarbsG === undefined) {
+  if (confirmedCarbsG === undefined) {
     if (carbRow !== null) await db.runAsync('DELETE FROM carb_events WHERE id = ?', carbRow.id);
   } else if (carbRow === null) {
     await saveCarbEvent(db, {
       id: Crypto.randomUUID(),
       timestamp: existing.timestamp,
-      carbsG: next.confirmedCarbsG,
+      carbsG: confirmedCarbsG,
       source: 'meal_confirmed',
       createdAt: existing.createdAt,
     });
   } else {
-    await db.runAsync('UPDATE carb_events SET carbs_g = ? WHERE id = ?', next.confirmedCarbsG, carbRow.id);
+    await db.runAsync('UPDATE carb_events SET carbs_g = ? WHERE id = ?', confirmedCarbsG, carbRow.id);
   }
 }
 
@@ -421,6 +424,120 @@ export async function updateMealCarbsAndNote(
 ): Promise<void> {
   await db.withTransactionAsync(async () => {
     await updateMealCarbsAndNoteRows(db, id, updates);
+  });
+}
+
+/**
+ * Lo que la edición de una comida (Fase 17) puede cambiar.
+ *
+ * Un campo ausente **no se toca**; un campo presente en `null` se **borra**.
+ * La distinción importa: "no lo anoté" y "0 g" son afirmaciones distintas en
+ * toda esta app, y un formulario que deja un macro en blanco está diciendo lo
+ * primero, no lo segundo.
+ *
+ * No hay campo de insulina acá, y no es un olvido: la dosis de una comida se
+ * edita desde su propio ítem del Timeline. Una edición de comida —y menos una
+ * asistida por IA— no puede alcanzarla.
+ */
+export interface MealEditPatch {
+  confirmedCarbsG?: number | null;
+  note?: string | null;
+  proteinG?: number | null;
+  fatG?: number | null;
+  fiberG?: number | null;
+  caloriesKcal?: number | null;
+  imageUri?: string | null;
+  macrosSource?: MealEvent['macrosSource'];
+  /**
+   * Análisis nuevo, cuando la edición pasó por la IA. `aiEstimatedCarbsG` y
+   * `aiAnalysisId` se **reemplazan**, no se borran: son el registro de lo
+   * último que la IA dijo sobre esta comida, y después de re-analizarla el
+   * registro viejo ya no describe nada.
+   */
+  analysis?: { aiEstimatedCarbsG: number; aiAnalysisId: string };
+}
+
+/** Non-transactional core — see `writeMealWithEpisode` for why this exists. */
+async function updateMealFromEditRows(
+  db: SQLiteDatabase,
+  id: string,
+  patch: MealEditPatch,
+): Promise<void> {
+  const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM meal_events WHERE id = ?', id);
+  if (row === null) return;
+  const existing = MealEventSchema.parse(JSON.parse(row.payload));
+
+  // `undefined` = no se tocó, `null` = borrar. Sin esta distinción explícita
+  // un spread convertiría los dos casos en el mismo.
+  const apply = <T>(current: T | undefined, incoming: T | null | undefined): T | undefined =>
+    incoming === undefined ? current : (incoming ?? undefined);
+
+  const next = MealEventSchema.parse({
+    ...existing,
+    confirmedCarbsG: apply(existing.confirmedCarbsG, patch.confirmedCarbsG),
+    note: apply(existing.note, patch.note),
+    proteinG: apply(existing.proteinG, patch.proteinG),
+    fatG: apply(existing.fatG, patch.fatG),
+    fiberG: apply(existing.fiberG, patch.fiberG),
+    caloriesKcal: apply(existing.caloriesKcal, patch.caloriesKcal),
+    imageUri: apply(existing.imageUri, patch.imageUri),
+    ...(patch.macrosSource === undefined ? {} : { macrosSource: patch.macrosSource }),
+    ...(patch.analysis === undefined
+      ? {}
+      : {
+          aiEstimatedCarbsG: patch.analysis.aiEstimatedCarbsG,
+          aiAnalysisId: patch.analysis.aiAnalysisId,
+        }),
+  });
+  await db.runAsync('UPDATE meal_events SET payload = ? WHERE id = ?', JSON.stringify(next), id);
+  await syncConfirmedCarbRow(db, existing, next.confirmedCarbsG);
+
+  // Si cambió algo que el episodio post-comida ya había congelado en sus
+  // métricas, hay que recalcularlo.
+  //
+  // `processReadyEpisodes` solo mira episodios en estado 'collecting': una vez
+  // que un episodio quedó 'complete', sus `metrics` (y el texto de IA que
+  // describe esas métricas) son una foto del momento. Antes de la Fase 17 eso
+  // era inofensivo, porque de una comida guardada solo se podía editar la
+  // nota. Ahora se pueden corregir los carbohidratos confirmados y los
+  // macros, así que sin esto el resumen post-comida seguiría diciendo "45 g"
+  // después de que ella lo corrigió a 25 — y ese resumen es justamente el que
+  // se lleva al médico.
+  //
+  // Se vuelve a 'collecting' en vez de recalcular acá: el cálculo necesita las
+  // lecturas de CGM y la insulina asociada, que es exactamente lo que
+  // `processReadyEpisodes` ya sabe juntar. Se limpia también el insight,
+  // porque describía las métricas viejas.
+  const metricsChanged = existing.confirmedCarbsG !== next.confirmedCarbsG
+    || existing.proteinG !== next.proteinG
+    || existing.fatG !== next.fatG;
+  if (metricsChanged) {
+    await db.runAsync(
+      `UPDATE meal_episodes
+       SET status = 'collecting', metrics_json = NULL, insight_json = NULL, updated_at = ?
+       WHERE meal_id = ?`,
+      new Date().toISOString(),
+      id,
+    );
+  }
+}
+
+/**
+ * Edición completa de una comida ya guardada (Fase 17).
+ *
+ * El camino anterior (`updateMealNote`) solo llegaba a la nota. Acá los
+ * macros y los carbohidratos confirmados **sí** se pueden corregir: es exactamente el vacío que la fase
+ * viene a llenar (guardaste solo los carbos y después quieres decir que era
+ * un sándwich de queso). Lo que no cambia es quién decide: la IA propone y la
+ * usuaria confirma antes de que esta función se llame.
+ */
+export async function updateMealFromEdit(
+  db: SQLiteDatabase,
+  id: string,
+  patch: MealEditPatch,
+): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    await updateMealFromEditRows(db, id, patch);
   });
 }
 

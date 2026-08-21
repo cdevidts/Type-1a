@@ -1708,7 +1708,49 @@ recesivas (`colors.line`), la etiqueta en `colors.muted`.
 
 ---
 
-## Fase 17 — Editar una entrada con la misma potencia que crearla (planificada 2026-08-20)
+## Fase 17 — Editar una comida con la misma potencia que crearla ✅ (2026-08-21)
+
+**Entregado.** Lo construido, y las decisiones que no estaban en el plan:
+
+- `apps/mobile/src/components/MealEditModal.tsx` — los tres modos (otra foto,
+  descripción de texto, instrucción en lenguaje natural) más la corrección a
+  mano de macros, carbohidratos confirmados y nota.
+- El botón "Editar" de una comida en `TimelineDetailModal` abre este modal;
+  **se eliminó el formulario inline anterior**, que solo llegaba a la nota, y
+  con él la variante `{ kind: 'meal' }` de `TimelineEditPayload` y
+  `updateMealNote`. Dos caminos de edición para lo mismo se habrían separado.
+- `MealSnapshotSchema` / `MealEditInputSchema` (`packages/schemas`) — lo que
+  viaja a la IA. **Sin campo de insulina, glucosa ni parámetro de terapia**:
+  la frontera de `AGENTS.md` quedó en la forma del tipo, no en una frase del
+  prompt. Un test de `apps/api` prueba que Zod descarta una dosis que un
+  cliente mande igual.
+- `requestsInsulinAdvice()` (`packages/domain/src/ai-safety.ts`) — guardrail
+  **de entrada**: "¿cuánta insulina me pongo?" se rechaza antes de gastar la
+  llamada. Los patrones son distintos de los de salida a propósito: una
+  pregunta no dispara los patrones de recomendación. Trampa encontrada al
+  escribirlo: `\b` en JavaScript es ASCII, así que después de "qué" no hay
+  límite de palabra — ahí va un lookahead explícito.
+- **Confirmación informada, no un "¿aplico?"**: se muestra el antes/después
+  campo por campo, con lo cambiado marcado. Los carbohidratos siguen sin
+  autocompletarse (siguen siendo acto de la usuaria); la propuesta queda como
+  una sugerencia tocable al lado del campo.
+- **Dos incoherencias encontradas revisando el propio diff, no en el plan:**
+  1. Una foto nueva cuya propuesta no se aplicaba igual reemplazaba la foto
+     guardada, dejando la imagen y los macros describiendo comidas distintas.
+     Ahora la foto se adopta solo junto con su análisis.
+  2. Un episodio post-comida ya `complete` congela sus métricas. Como hasta
+     ahora solo la nota era editable, daba igual; con carbos y macros
+     editables, el resumen post-comida seguiría mostrando el número viejo —
+     y ese resumen es el que se lleva al médico. `updateMealFromEdit` devuelve
+     el episodio a `collecting` y `App.saveMealEdit` lo recalcula en el acto.
+
+**Requiere redeploy** (no build): el modo de instrucción es una rama nueva de
+`/v1/ai/meal-analysis`. Hasta que se redespliegue, la foto y el texto siguen
+funcionando y "Explícale el cambio" responde 400. Ver
+`docs/DEEPAGENT_REDEPLOY_PROMPT.md` § "Qué cambió desde el último deploy".
+
+### Plan original (2026-08-20)
+
 
 Hoy se puede crear una comida con IA pero **no editarla con IA**. Si guardaste
 solo los carbohidratos, no hay forma de decirle después "esto era un sándwich

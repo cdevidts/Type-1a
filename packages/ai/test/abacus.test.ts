@@ -4,7 +4,10 @@ import {
   AbacusGlucoseInsightService,
   AbacusMealVisionService,
   AbacusRouteLLMClient,
+  AIServiceError,
+  MEAL_EDIT_PROMPT_VERSION,
   MEAL_TEXT_PROMPT_VERSION,
+  mealEditSystemPrompt,
   mealTextSystemPrompt,
   sanitizeForStrictJsonSchema,
 } from '../src/index.js';
@@ -183,5 +186,70 @@ describe('Abacus RouteLLM services', () => {
         timeBelowRangeMinutes: 0,
       }),
     ).rejects.toMatchObject({ code: 'unsafe_output' });
+  });
+});
+
+describe('modo edición (Fase 17)', () => {
+  const editResponse = {
+    foods: [
+      {
+        name: 'sándwich de queso',
+        estimatedGrams: 160,
+        carbsG: 38,
+        proteinG: 16,
+        fatG: 14,
+        fiberG: 3,
+        caloriesKcal: 400,
+        confidence: 0.5,
+      },
+    ],
+    uncertaintyNotes: ['El tipo de pan no se especifica.'],
+  };
+
+  it('usa el prompt de edición y manda la comida actual junto a la instrucción', async () => {
+    let sentMessages: unknown[] = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      sentMessages = JSON.parse(String(init?.body)).messages;
+      return routeResponse(editResponse);
+    };
+    const service = new AbacusMealVisionService(
+      new AbacusRouteLLMClient({ apiKey: 'server-secret', fetcher }),
+    );
+
+    const result = await service.analyze({
+      instruction: 'esto era un sándwich de queso',
+      current: { confirmedCarbsG: 30, note: 'almuerzo' },
+    });
+
+    const [system, user] = sentMessages as [{ content: string }, { content: { text: string }[] }];
+    expect(system.content).toBe(mealEditSystemPrompt);
+    expect(user.content[0]!.text).toContain('esto era un sándwich de queso');
+    expect(user.content[0]!.text).toContain('"confirmedCarbsG":30');
+    // Sin bloque de imagen: la edición por instrucción no manda foto.
+    expect(user.content).toHaveLength(1);
+    expect(result.analysisId.startsWith(MEAL_EDIT_PROMPT_VERSION)).toBe(true);
+    expect(result.totals.proteinG).toBe(16);
+  });
+
+  it('rechaza una instrucción que pide insulina SIN llamar al proveedor', async () => {
+    // El punto de la prueba es el "sin llamar": una pregunta de dosis no
+    // puede salir del teléfono hacia un servicio externo, ni siquiera para
+    // que el filtro de salida la rechace después.
+    let called = 0;
+    const fetcher: typeof fetch = async () => {
+      called += 1;
+      return routeResponse(editResponse);
+    };
+    const service = new AbacusMealVisionService(
+      new AbacusRouteLLMClient({ apiKey: 'server-secret', fetcher }),
+    );
+
+    await expect(
+      service.analyze({
+        instruction: '¿cuánta insulina me pongo con esto?',
+        current: { confirmedCarbsG: 30 },
+      }),
+    ).rejects.toBeInstanceOf(AIServiceError);
+    expect(called).toBe(0);
   });
 });

@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import type { MealEvent } from '@type1a/schemas';
+
 import { formatDayTime } from '../format';
 import { colors, radius, spacing } from '../theme';
 import type { TimelineEditPayload, TimelineItem } from '../types';
+import { MealEditModal, type MealEditResult } from './MealEditModal';
 import { TimelineDetailModal } from './TimelineDetailModal';
 
 const toneColors = {
@@ -20,12 +23,16 @@ export function Timeline({
   items,
   onSaveItem,
   onDeleteItem,
+  onSaveMealEdit,
 }: {
   items: readonly TimelineItem[];
   onSaveItem: (item: TimelineItem, payload: TimelineEditPayload) => Promise<void>;
   onDeleteItem: (item: TimelineItem) => Promise<void>;
+  /** Guarda la edición completa de una comida (Fase 17). */
+  onSaveMealEdit: (mealId: string, result: MealEditResult) => Promise<void>;
 }) {
   const [selected, setSelected] = useState<TimelineItem | null>(null);
+  const [editingMeal, setEditingMeal] = useState<MealEvent | null>(null);
 
   return (
     <View style={styles.section}>
@@ -62,6 +69,18 @@ export function Timeline({
         onClose={() => { setSelected(null); }}
         onSave={onSaveItem}
         onDelete={onDeleteItem}
+        onEditMeal={(meal) => {
+          // Se cierra el detalle ANTES de abrir el editor. Dos `Modal` de
+          // React Native abiertos a la vez en Android dejan el de abajo
+          // capturando los toques: el editor se ve pero no responde.
+          setSelected(null);
+          setEditingMeal(meal);
+        }}
+      />
+      <MealEditModal
+        meal={editingMeal}
+        onClose={() => { setEditingMeal(null); }}
+        onSave={onSaveMealEdit}
       />
     </View>
   );

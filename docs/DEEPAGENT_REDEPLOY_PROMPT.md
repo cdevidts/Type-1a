@@ -22,6 +22,36 @@ en vez de abrir la pregunta de nuevo.
 | 2026-08-20 | Fase 14: pantalla de Nutrición (metas de calorías/macros, patrones de grasa/proteína vs. glucosa tardía) | No — solo `packages/domain`, `packages/schemas` y `apps/mobile`. Todo el cálculo es local por diseño (`docs/adr/0001-local-first.md`): no hay llamada nueva al backend ni a ninguna API de alimentos. |
 | 2026-08-20 | Fase 15: catálogo de alimentos propio + macros de la IA en el registro de comida | No para lo construido — es todo `packages/domain`, `packages/schemas` y `apps/mobile`, y el catálogo es **local** (tabla `food_catalog` en SQLite). El backend ya devolvía todos los macros; el bug era que la app los tiraba. **Pero sí hay trabajo de backend preparado y sin disparar**: el catálogo compartido entre usuarias, ver § "Catálogo de alimentos compartido" más abajo. |
 | 2026-08-20 | Fase 16: barra inferior, swipe, iconos Lucide, marcas de hora | No — solo `apps/mobile`. Ni `apps/api` ni `packages/*` se tocaron. La única dependencia nueva (`lucide-react-native`) es de la app. |
+| 2026-08-21 | **Fase 17: editar una comida con IA** (foto, texto, instrucción en lenguaje natural) | **SÍ, esta vez sí.** Es la primera corrida desde la Fase 13 que agrega comportamiento nuevo al backend: una tercera rama en `MealAnalysisBodySchema` (`apps/api/src/app.ts`) y un tercer modo en `AbacusMealVisionService` con su prompt (`packages/ai`). **Consecuencia concreta:** hasta que se redespliegue, los modos de foto y texto siguen funcionando igual, pero **"Explícale el cambio" responde HTTP 400 `invalid_meal_input`** — el backend viejo no conoce esa forma de body. La app degrada bien (muestra el mensaje de error y deja corregir los campos a mano), así que **no es bloqueante para instalar el APK**, pero la función estrella de la fase no funciona hasta el redeploy. Ver § "Qué cambió desde el último deploy". |
+
+## Qué cambió desde el último deploy (2026-08-21, Fase 17)
+
+Lo pendiente en producción, para no re-derivarlo:
+
+1. **Tercer modo de `/v1/ai/meal-analysis`: edición por instrucción.**
+   `MealAnalysisBodySchema` (`apps/api/src/app.ts`) pasó a aceptar
+   `{ instruction, current }`, y `AbacusMealVisionService` (`packages/ai`)
+   tiene su prompt propio (`mealEditSystemPrompt`) y su guardrail de entrada
+   (`requestsInsulinAdvice`, en `packages/domain`). Sin redeploy, el botón
+   "Explícale el cambio" recibe **HTTP 400 `invalid_meal_input`**.
+2. **Sigue pendiente desde la Fase 13**: `glucoseInsightSystemPrompt` con la
+   instrucción explícita de decir "mg/dL" (riesgo bajo, ver la fila de esa
+   corrida en la tabla de arriba).
+3. **Y aprovechar el mismo redeploy** para quitar
+   `LIBRELINKUP_EMAIL`/`LIBRELINKUP_PASSWORD` del entorno de Abacus, una vez
+   que Verónica confirme que su cuenta quedó conectada desde la app (ver la
+   fila de la Fase 13 Grupo C).
+
+Cómo verificar que el deploy quedó al día, contra el servidor real:
+
+```bash
+curl -X POST https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
+  -H 'Content-Type: application/json' \
+  -d '{"instruction":"era media porción","current":{"confirmedCarbsG":30}}'
+```
+
+Un `400 invalid_meal_input` = el backend todavía es el viejo. Cualquier otra
+cosa (200 con la estimación, o 503 `ai_not_configured`) = ya conoce el modo.
 
 ## Cuándo usarlo
 

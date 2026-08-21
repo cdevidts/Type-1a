@@ -217,6 +217,44 @@ export const MealAnalysisResultSchema = z.object({
 });
 export type MealAnalysisResult = z.infer<typeof MealAnalysisResultSchema>;
 
+/**
+ * Lo que se le manda a la IA de una comida ya guardada para que la edite
+ * (Fase 17).
+ *
+ * **La frontera de seguridad de `AGENTS.md` está en la forma de este schema,
+ * no en el texto del prompt.** No hay campo de insulina, ni de glucosa, ni de
+ * parámetro de terapia — y no los hay a propósito: un prompt se puede
+ * ignorar, un campo que no existe no se puede alcanzar. Si alguna edición
+ * futura necesita "contexto" de la dosis, la respuesta correcta es que no,
+ * no lo necesita: la IA estima comida.
+ *
+ * `foods` viaja cuando la comida tuvo un análisis previo, para que la
+ * instrucción ("sácale el pan") pueda operar sobre alimentos concretos en vez
+ * de sobre un total ciego.
+ */
+export const MealSnapshotSchema = z.object({
+  note: z.string().trim().max(300).optional(),
+  confirmedCarbsG: z.number().nonnegative().max(500).finite().optional(),
+  proteinG: z.number().nonnegative().max(500).finite().optional(),
+  fatG: z.number().nonnegative().max(500).finite().optional(),
+  fiberG: z.number().nonnegative().max(200).finite().optional(),
+  caloriesKcal: z.number().nonnegative().max(10000).finite().optional(),
+  foods: z.array(FoodEstimateSchema).max(30).optional(),
+});
+export type MealSnapshot = z.infer<typeof MealSnapshotSchema>;
+
+/**
+ * Modo de edición por instrucción: la comida actual más una corrección en
+ * lenguaje natural ("agrégale una cucharada de aceite", "en realidad fue
+ * media porción"). La salida es una `MealAnalysis` completa, no un diff —
+ * fusionar un diff en el cliente es donde se cuelan los errores.
+ */
+export const MealEditInputSchema = z.object({
+  instruction: z.string().trim().min(1).max(300),
+  current: MealSnapshotSchema,
+});
+export type MealEditInput = z.infer<typeof MealEditInputSchema>;
+
 export const MealEventSchema = z.object({
   id: z.string().min(1),
   timestamp: IsoTimestampSchema,

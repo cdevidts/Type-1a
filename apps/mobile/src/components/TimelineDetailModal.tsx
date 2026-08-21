@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import type { MealEvent } from '@type1a/schemas';
+
 import { formatDayTime, parseNonNegativeNumber, parsePositiveNumber, trendArrow } from '../format';
 import { colors, radius, spacing } from '../theme';
 import type { TimelineEditPayload, TimelineItem } from '../types';
@@ -118,7 +120,10 @@ function hasReadOnlyGlucoseAnchor(item: TimelineItem): boolean {
  * lets you attach carbs/insulina/nota to it after the fact — the sensor value
  * itself stays read-only. */
 function isEditable(item: TimelineItem): boolean {
-  return item.kind !== 'episode';
+  // La comida tampoco: tiene su propio editor completo (`MealEditModal`,
+  // Fase 17) con macros, foto y los tres modos de IA. El formulario de acá
+  // solo llegaba a la nota.
+  return item.kind !== 'episode' && item.kind !== 'meal';
 }
 
 function deleteLabel(item: TimelineItem): string {
@@ -147,11 +152,14 @@ export function TimelineDetailModal({
   onClose,
   onSave,
   onDelete,
+  onEditMeal,
 }: {
   item: TimelineItem | null;
   onClose: () => void;
   onSave: (item: TimelineItem, payload: TimelineEditPayload) => Promise<void>;
   onDelete: (item: TimelineItem) => Promise<void>;
+  /** Abre `MealEditModal` para una comida (Fase 17). */
+  onEditMeal: (meal: MealEvent) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -185,8 +193,6 @@ export function TimelineDetailModal({
       setInsulinName(item.raw.insulinName ?? '');
     } else if (item.kind === 'carbs') {
       setCarbsG(String(item.raw.carbsG));
-    } else if (item.kind === 'meal') {
-      setNote(item.raw.note ?? '');
     } else if (item.kind === 'glucose') {
       setGlucose(String(item.raw.glucose));
       // Attachment fields (reused from the packaged-entry form) start empty —
@@ -232,8 +238,6 @@ export function TimelineDetailModal({
         return;
       }
       payload = { kind: 'carbs', carbsG: parsed };
-    } else if (item.kind === 'meal') {
-      payload = { kind: 'meal', note: note.trim() };
     } else if (item.kind === 'glucose') {
       // A 'manual' reading's value is editable; any other origin is a record
       // of what the source reported and stays read-only — you can still
@@ -401,24 +405,6 @@ export function TimelineDetailModal({
                 <TextInput value={carbsG} onChangeText={setCarbsG} keyboardType="decimal-pad" style={styles.input} selectTextOnFocus />
                 <Text style={styles.inputUnit}>g</Text>
               </View>
-            </>
-          ) : null}
-          {item.kind === 'meal' ? (
-            <>
-              {item.raw.confirmedCarbsG === undefined ? null : (
-                <Text style={styles.hint}>
-                  Carbohidratos confirmados: {item.raw.confirmedCarbsG} g. Se editan desde el ítem "Carbohidratos confirmados" del Timeline, no desde acá.
-                </Text>
-              )}
-              <Text style={styles.fieldLabel}>Nota</Text>
-              <TextInput
-                value={note}
-                onChangeText={setNote}
-                style={[styles.textInput, styles.textArea]}
-                placeholder="Contexto de la comida"
-                placeholderTextColor={colors.muted}
-                multiline
-              />
             </>
           ) : null}
           {item.kind === 'glucose' ? (
@@ -590,6 +576,15 @@ export function TimelineDetailModal({
 
           {error === null ? null : <Text style={styles.error}>{error}</Text>}
           <View style={styles.actionRow}>
+            {item.kind === 'meal' ? (
+              <Pressable
+                style={[styles.button, styles.secondaryButton]}
+                onPress={() => { onEditMeal(item.raw); }}
+                accessibilityRole="button"
+              >
+                <Text style={styles.secondaryButtonText}>Editar comida</Text>
+              </Pressable>
+            ) : null}
             {isEditable(item) ? (
               <Pressable style={[styles.button, styles.secondaryButton]} onPress={() => { setEditing(true); }}>
                 <Text style={styles.secondaryButtonText}>Editar</Text>

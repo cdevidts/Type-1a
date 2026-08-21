@@ -15,7 +15,7 @@ import {
   type CGMProvider,
 } from '@type1a/cgm';
 import { assessFreshness } from '@type1a/domain';
-import { MealEpisodeMetricsSchema } from '@type1a/schemas';
+import { MealEditInputSchema, MealEpisodeMetricsSchema } from '@type1a/schemas';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { createHash } from 'node:crypto';
 
@@ -40,6 +40,11 @@ const MealAnalysisBodySchema = z.union([
   z.object({
     description: z.string().trim().min(1).max(500),
   }),
+  // Edit path (Fase 17): an already-logged meal plus a correction in the
+  // user's own words. `MealEditInputSchema` has no insulin/glucose/therapy
+  // field by construction, so this route cannot forward one even if the
+  // client sends it — Zod strips what the schema doesn't declare.
+  MealEditInputSchema,
 ]);
 
 const JunctionLinkBodySchema = z.object({
@@ -181,6 +186,9 @@ export async function buildApp(config: AppConfig, dependencies: AppDependencies 
     }
     const body = MealAnalysisBodySchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: 'invalid_meal_input', message: 'Falta una imagen válida o una descripción de texto.', retryable: false } });
+    if ('instruction' in body.data) {
+      return mealVision.analyze({ instruction: body.data.instruction, current: body.data.current });
+    }
     return mealVision.analyze(
       'imageBase64' in body.data
         ? {

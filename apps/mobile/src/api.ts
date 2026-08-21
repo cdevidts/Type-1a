@@ -11,6 +11,7 @@ import {
   type GlucoseInsight,
   type MealAnalysisResult,
   type MealEpisodeMetrics,
+  type MealSnapshot,
 } from '@type1a/schemas';
 
 const ApiErrorEnvelopeSchema = z.object({
@@ -99,6 +100,26 @@ export async function analyzeMealDescription(description: string): Promise<MealA
   const payload = await requestJson('/v1/ai/meal-analysis', {
     method: 'POST',
     body: JSON.stringify({ description }),
+  });
+  return MealAnalysisResultSchema.parse(payload);
+}
+
+/**
+ * Modo de edición (Fase 17): la comida guardada más una corrección en
+ * lenguaje natural. Mismo endpoint que los otros dos modos.
+ *
+ * `current` es un `MealSnapshot`, que **no tiene** campo de insulina, glucosa
+ * ni parámetro de terapia. Es la frontera de `AGENTS.md` hecha estructura: no
+ * hay forma de que una dosis registrada viaje a un servicio externo por esta
+ * ruta, porque no hay dónde ponerla.
+ */
+export async function editMealWithInstruction(input: {
+  instruction: string;
+  current: MealSnapshot;
+}): Promise<MealAnalysisResult> {
+  const payload = await requestJson('/v1/ai/meal-analysis', {
+    method: 'POST',
+    body: JSON.stringify(input),
   });
   return MealAnalysisResultSchema.parse(payload);
 }

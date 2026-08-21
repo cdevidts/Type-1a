@@ -167,10 +167,17 @@ docs/
   debajo de `MIN_SAMPLE_FOR_RATE` (3) devuelve `inTargetPct: undefined` en
   vez de un porcentaje — con 1-2 dosis el número sería ruido presentado como
   patrón. Excluye sintéticas.
-- `ai-safety.ts` — `containsTherapyRecommendation()`: filtro regex (español)
-  que **rechaza** cualquier salida de IA que suene a consejo de dosis. Este es
-  el guardrail técnico detrás de la regla "Never let an LLM calculate, infer,
-  or recommend insulin" de `AGENTS.md`. Si tocas esto, agrega casos de test.
+- `ai-safety.ts` — dos guardrails, uno en cada dirección. Son el respaldo
+  técnico de la regla "Never let an LLM calculate, infer, or recommend
+  insulin" de `AGENTS.md`. Si tocas cualquiera, agrega casos de test.
+  - `containsTherapyRecommendation()` — **salida**: filtro regex (español)
+    que rechaza cualquier respuesta de IA que suene a consejo de dosis.
+  - `requestsInsulinAdvice()` — **entrada** (Fase 17): rechaza una
+    instrucción de edición que *pide* calcular insulina ("¿cuánta me
+    pongo?"), **antes** de llamar al proveedor. Los patrones son distintos a
+    propósito: una pregunta no dispara los patrones de recomendación.
+    Ojo con `\b` en JS: es ASCII, así que después de "qué" no hay límite de
+    palabra — por eso ahí va un lookahead explícito y no `\b`.
 - `test/` — un archivo de test por módulo; son las pruebas de aceptación de
   seguridad (ver "Safety acceptance criteria" en `docs/MVP_IMPLEMENTATION_BRIEF.md`).
 
@@ -299,7 +306,14 @@ docs/
   SQLCipher concurrentes anotado en `docs/ROADMAP_V0.2.md`, no confirmado
   en dispositivo aún.
 - `src/components/` — `Timeline`, `TimelineDetailModal` (editar/eliminar
-  por tipo, ver `db.ts` arriba para qué es editable), `GlucoseCard`,
+  por tipo, ver `db.ts` arriba para qué es editable; **la comida ya no se
+  edita ahí**: su botón abre `MealEditModal`), `MealEditModal` (Fase 17,
+  2026-08-21: edición completa de una comida guardada — macros,
+  carbohidratos confirmados, foto y nota — con tres modos de IA: otra foto,
+  descripción de texto, e instrucción en lenguaje natural. La IA **propone**
+  y se muestra un antes/después campo por campo; nada se escribe hasta que
+  la usuaria toca Guardar, y los carbohidratos siguen sin autocompletarse),
+  `GlucoseCard`,
   `GlucoseChart`, `EntryModal`, `CorrectionModal`, `MealModal`,
   `SummaryModal` + `SummaryCharts` (Fase 11, 2026-08-19: pantalla "Resumen",
   se abre desde el botón ◔ de la barra superior. Tres sub-páginas en una
@@ -385,6 +399,12 @@ docs/
   la alimentación se revisa. Todo el cálculo vive en `packages/domain`.
   Paleta: `macroColors` en `theme.ts` (categórica, validada, **distinta de
   `glucoseBands`** que es de estado clínico).
+- `src/components/MealEditModal.tsx` — **edición** de una comida ya guardada
+  (Fase 17). Devuelve un `MealEditResult` en el mismo lenguaje que
+  `MealEditPatch` de `db.ts`: `undefined` = no se tocó, `null` = borrar. No
+  tiene campo de insulina, y el `MealSnapshot` que le manda a la IA tampoco
+  — la frontera de `AGENTS.md` es estructural, no una instrucción del prompt.
+  `macrosSource` nunca queda en `user` tras una edición asistida.
 - `src/components/MealModal.tsx` — registro de comida. **2026-08-20 (Fase
   15)**: la IA precarga proteína/grasa/fibra (editables) desde su análisis, y
   `CatalogPicker` deja reusar un alimento ya conocido sin llamar a la IA

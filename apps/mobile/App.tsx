@@ -34,6 +34,7 @@ import { CorrectionModal } from './src/components/CorrectionModal';
 import { EntryModal, type UnifiedEntryDraft } from './src/components/EntryModal';
 import { GlucoseCard } from './src/components/GlucoseCard';
 import { InsulinAssociationModal } from './src/components/InsulinAssociationModal';
+import type { MealEditResult } from './src/components/MealEditModal';
 import { MealModal, type ConfirmedMealDraft } from './src/components/MealModal';
 import { NumericEntryModal } from './src/components/NumericEntryModal';
 import { SettingsModal } from './src/components/SettingsModal';
@@ -109,7 +110,7 @@ import {
   updateCarbEvent,
   updateInsulinEvent,
   updateManualCGMReading,
-  updateMealNote,
+  updateMealFromEdit,
   updateNoteEvent,
   updateUnifiedEntryGroup,
   upsertCGMReadings,
@@ -640,8 +641,6 @@ function Type1AApp() {
       });
     } else if (payload.kind === 'carbs') {
       await updateCarbEvent(db, item.id, payload.carbsG);
-    } else if (payload.kind === 'meal') {
-      await updateMealNote(db, item.id, payload.note);
     } else if (payload.kind === 'glucose') {
       const hasAttachments = payload.carbsG !== undefined || payload.description !== undefined
         || payload.rapidUnits !== undefined || payload.basalUnits !== undefined || payload.note !== undefined;
@@ -684,6 +683,24 @@ function Type1AApp() {
         ...(payload.note === undefined ? {} : { note: payload.note }),
       });
     }
+    await loadLocalState();
+  }
+
+  /**
+   * Guarda la edición completa de una comida (Fase 17).
+   *
+   * La IA ya propuso y la usuaria ya confirmó en `MealEditModal`; acá solo se
+   * escribe. `loadLocalState()` al final para que el Timeline, el resumen y
+   * la pantalla de nutrición vean el mismo número — los carbos confirmados
+   * viven duplicados en `carb_events` y `updateMealFromEdit` los sincroniza.
+   */
+  async function saveMealEdit(mealId: string, result: MealEditResult): Promise<void> {
+    await updateMealFromEdit(db, mealId, result);
+    // Si la edición cambió carbos o macros, `updateMealFromEdit` devolvió el
+    // episodio a 'collecting' para que se recalcule. Se recalcula acá mismo y
+    // no en el próximo refresh: el resumen post-comida quedaría en blanco
+    // mientras tanto, y ella acaba de mirar justo esa comida.
+    await processReadyEpisodes(db);
     await loadLocalState();
   }
 
@@ -856,7 +873,7 @@ function Type1AApp() {
           <Text style={styles.chevron}>›</Text>
         </Pressable>
 
-        <Timeline items={timeline} onSaveItem={saveTimelineItem} onDeleteItem={deleteTimelineItem} />
+        <Timeline items={timeline} onSaveItem={saveTimelineItem} onDeleteItem={deleteTimelineItem} onSaveMealEdit={saveMealEdit} />
 
         <View style={styles.footerSafety}>
           <Text style={styles.footerTitle}>Software de desarrollo</Text>

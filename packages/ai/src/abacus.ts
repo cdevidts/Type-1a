@@ -1,4 +1,4 @@
-import { containsTherapyRecommendation, totalFoodEstimates } from '@type1a/domain';
+import { containsTherapyRecommendation, requestsInsulinAdvice, totalFoodEstimates } from '@type1a/domain';
 import {
   GlucoseInsightSchema,
   MealAnalysisSchema,
@@ -7,14 +7,17 @@ import {
   type GlucoseInsight,
   type MealAnalysisResult,
   type MealEpisodeMetrics,
+  type MealSnapshot,
 } from '@type1a/schemas';
 import { z } from 'zod';
 
 import {
   GLUCOSE_INSIGHT_PROMPT_VERSION,
+  MEAL_EDIT_PROMPT_VERSION,
   MEAL_TEXT_PROMPT_VERSION,
   MEAL_VISION_PROMPT_VERSION,
   glucoseInsightSystemPrompt,
+  mealEditSystemPrompt,
   mealTextSystemPrompt,
   mealVisionSystemPrompt,
 } from './prompts.js';
@@ -158,7 +161,13 @@ export type MealVisionInput =
   // type what she ate instead of always needing a picture. `description` is
   // required here (there's nothing else for the model to go on), unlike the
   // image case where it's optional context.
-  | { description: string };
+  | { description: string }
+  // Edit mode (Fase 17): an already-logged meal plus a correction written in
+  // the user's own words. `current` is a `MealSnapshot`, which by
+  // construction carries no insulin, glucose or therapy field — see the
+  // schema's comment for why the boundary lives in the type and not in the
+  // prompt.
+  | { instruction: string; current: MealSnapshot };
 
 export interface MealVisionService {
   analyze(input: MealVisionInput): Promise<MealAnalysisResult>;
@@ -168,15 +177,30 @@ export class AbacusMealVisionService implements MealVisionService {
   public constructor(private readonly client: AbacusRouteLLMClient) {}
 
   public async analyze(input: MealVisionInput): Promise<MealAnalysisResult> {
+    const isEdit = 'instruction' in input;
     const hasImage = 'imageBase64' in input;
+
+    // El rechazo va ANTES de la llamada, no después de ella. Ver
+    // `requestsInsulinAdvice`: una instrucción que pide dosis no debe llegar
+    // al proveedor externo en primer lugar.
+    if (isEdit && requestsInsulinAdvice(input.instruction)) {
+      throw new AIServiceError(
+        'La IA no calcula ni sugiere insulina. Edita la comida y decide la dosis tú.',
+        'unsafe_output',
+        false,
+      );
+    }
+
     const content: unknown[] = [
       {
         type: 'text',
-        text: hasImage
-          ? (input.description?.trim()
-            ? `Analiza la comida. Contexto del usuario: ${input.description.trim()}`
-            : 'Analiza la comida visible y explicita la incertidumbre de porción.')
-          : `Analiza esta comida a partir únicamente de la descripción del usuario, sin foto. Descripción: ${input.description.trim()}`,
+        text: isEdit
+          ? `Comida guardada actualmente:\n${JSON.stringify(input.current)}\n\nCorrección de la usuaria: ${input.instruction.trim()}`
+          : hasImage
+            ? (input.description?.trim()
+              ? `Analiza la comida. Contexto del usuario: ${input.description.trim()}`
+              : 'Analiza la comida visible y explicita la incertidumbre de porción.')
+            : `Analiza esta comida a partir únicamente de la descripción del usuario, sin foto. Descripción: ${input.description.trim()}`,
       },
     ];
     if (hasImage) {
@@ -186,7 +210,10 @@ export class AbacusMealVisionService implements MealVisionService {
       schemaName: 'type1a_meal_analysis',
       schema: mealAnalysisJsonSchema,
       messages: [
-        { role: 'system', content: hasImage ? mealVisionSystemPrompt : mealTextSystemPrompt },
+        {
+          role: 'system',
+          content: isEdit ? mealEditSystemPrompt : hasImage ? mealVisionSystemPrompt : mealTextSystemPrompt,
+        },
         { role: 'user', content },
       ],
     });
@@ -199,7 +226,7 @@ export class AbacusMealVisionService implements MealVisionService {
     }
 
     return {
-      analysisId: `${hasImage ? MEAL_VISION_PROMPT_VERSION : MEAL_TEXT_PROMPT_VERSION}:${crypto.randomUUID()}`,
+      analysisId: `${isEdit ? MEAL_EDIT_PROMPT_VERSION : hasImage ? MEAL_VISION_PROMPT_VERSION : MEAL_TEXT_PROMPT_VERSION}:${crypto.randomUUID()}`,
       model: completion.model,
       estimate: estimate.data,
       totals: totalFoodEstimates(estimate.data.foods),
