@@ -319,10 +319,12 @@ persistencia de datos de salud, o `packages/cgm`.
 | **14** | ✅ **Completada (2026-08-20).** Pantalla de Nutrición: metas de calorías/macros y patrones de grasa/proteína vs. glucosa tardía. Ver detalle abajo. | 1, 7 |
 | **15** | ✅ **Completada (2026-08-20).** La IA estima todos los macros (foto y texto) y arma el catálogo propio de alimentos. Ver detalle abajo. | 14 |
 | **16** | ✅ **Completada (2026-08-20).** Barra inferior, swipe y sistema de iconos. Reorganiza la navegación entera y reemplaza los glifos Unicode por iconos SVG reales. **Todo JS: no necesita build nativo.** Ver detalle abajo. | 14, 15 |
-| **17** | **Editar entradas con la misma potencia que crearlas**, incluida la IA en modo edición (foto, texto, y "explícale el cambio"). Ver detalle abajo. | 15 |
+| **17** | 🟡 **Solo comidas, construido.** Editar entradas con la misma potencia que crearlas, incluida la IA en modo edición (foto, texto, y "explícale el cambio"). Ver detalle abajo — el alcance completo (glucosa automática, entrada empaquetada) quedó en la **Fase 21**. | 15 |
 | **18** | **Catálogo de comidas editable** (pantalla propia), porciones, y la pregunta de "¿editar la del catálogo o crear una nueva?". Ver detalle abajo. | 15, 17 |
 | **19** | **Notificaciones distinguibles**: un icono, un color y un título propios por tipo de alarma. **Necesita build nativo** (los iconos de notificación de Android son recursos drawable). Ver detalle abajo. | 16 (usa el sistema de iconos) |
 | **20** | **Widget de pantalla de inicio** 4×3. **Necesita build nativo** (config plugin). Ver detalle abajo. | 8 (para los accesos al chat), 16 |
+| **21** | **Editar CUALQUIER entrada con el mismo poder que "Nueva entrada"** (glucosa automática, entrada empaquetada): foto + IA, macros, calculadora de dosis. Es el alcance que la Fase 17 prometía en su título y no entregó — ver detalle abajo. | 17 |
+| **22** | **Animación del swipe entre pantallas.** El gesto ya navega (corregido 2026-08-21); falta que la pantalla siguiente se vea aparecer mientras se desliza, en vez de saltar de golpe al soltar. Ver detalle abajo. | 16 |
 
 No se numeró por prioridad de negocio sino por dependencia técnica — el
 orden de ejecución real se acuerda con Verónica fase por fase, no se asume.
@@ -1741,7 +1743,20 @@ recesivas (`colors.line`), la etiqueta en `colors.muted`.
 
 ## Fase 17 — Editar una comida con la misma potencia que crearla ✅ (2026-08-21)
 
-**Entregado.** Lo construido, y las decisiones que no estaban en el plan:
+> **🟡 Alcance real vs. lo prometido en la tabla de fases (encontrado
+> 2026-08-21, cuando Verónica preguntó por esto):** la fila de la tabla dice
+> "editar **entradas**" en general; esta sección y lo construido son solo
+> para **una comida** que ya existe como su propia entrada del Timeline. Una
+> lectura automática de glucosa o una entrada empaquetada ("Nueva entrada")
+> **no** ganaron esta potencia: hoy, al editarlas, solo se puede adjuntar un
+> número de carbohidratos, texto libre, insulina y nota — sin foto, sin IA,
+> sin macros, sin calculadora de dosis. Verificado contra el código:
+> `TimelineEditPayload` (`apps/mobile/src/types.ts`) no tiene esos campos
+> para `kind: 'glucose'` ni `kind: 'entry'` — no es que estén rotos, es que
+> no se escribieron. El alcance completo queda como **Fase 21**.
+
+**Entregado (para una comida).** Lo construido, y las decisiones que no
+estaban en el plan:
 
 - `apps/mobile/src/components/MealEditModal.tsx` — los tres modos (otra foto,
   descripción de texto, instrucción en lenguaje natural) más la corrección a
@@ -2037,6 +2052,74 @@ de entregar el widget en una corrida "sin build".
 - Los accesos de insulina **abren la app**; el widget no calcula ni registra
   dosis por su cuenta.
 - Depende de la Fase 8 para las celdas de chat.
+
+## Fase 21 — Editar cualquier entrada con el mismo poder que "Nueva entrada" (planificada 2026-08-21)
+
+**Es el alcance que la Fase 17 prometía en el título de la tabla y no
+entregó** (ver el aviso al principio de la Fase 17). Confirmado con
+Verónica el 2026-08-21: quiere que editar una lectura automática de glucosa,
+o una entrada empaquetada, tenga **el mismo formulario y el mismo poder que
+crear una "Nueva entrada"** (`EntryModal.tsx`, Fase 5) — no solo los campos
+sueltos que tiene hoy.
+
+### Qué falta, concretamente
+
+Hoy `TimelineEditPayload` (`apps/mobile/src/types.ts`) para `kind: 'glucose'`
+y `kind: 'entry'` solo acepta: glucosa (si es manual), un número plano de
+carbohidratos, descripción de texto libre, insulina rápida, insulina basal y
+nota. Comparado con lo que ya tiene `EntryModal.tsx` al crear:
+
+- **Foto con estimación de IA** — falta al editar.
+- **Macros** (proteína, grasa, fibra) — falta al editar.
+- **Calculadora de dosis** (`calculateMealBolus`) — falta al editar.
+
+### Cómo encararla, para no repetir dos veces el mismo trabajo
+
+`MealEditModal.tsx` (Fase 17) ya resolvió la parte difícil de este problema
+para comidas: los tres modos de IA, la confirmación campo por campo, y el
+guardrail estructural (`MealSnapshotSchema`) que impide que insulina o
+glucosa viajen a la IA. La forma más barata de hacer la Fase 21 es que el
+formulario de edición de `glucose`/`entry` **reuse esos mismos componentes**
+en vez de reconstruirlos — el trabajo nuevo real es conectar la foto/macros
+al `attachEntryToReading`/`updateUnifiedEntryGroup` de `db.ts`, no reinventar
+el modo de edición con IA.
+
+### Frontera de seguridad (sin cambios respecto a la Fase 17)
+
+La IA puede proponer macros; **nunca** insulina. Si la entrada ya tiene una
+dosis registrada, ninguna edición asistida por IA la toca ni la ve —
+`MealSnapshotSchema` ya garantiza esto estructuralmente para comidas, y la
+misma regla aplica acá.
+
+---
+
+## Fase 22 — Animación del swipe entre pantallas (planificada 2026-08-21)
+
+El gesto de swipe ya navega correctamente (corregido el 2026-08-21, ver el
+aviso dentro de la Fase 16). Lo que falta es la sensación: hoy, al soltar el
+dedo, la pantalla siguiente **aparece de golpe** — no hay transición. Pedido
+explícito de Verónica: que mientras se desliza el dedo, se vea la pantalla
+siguiente **entrar en tiempo real con el gesto** (como un carrusel), no un
+salto instantáneo al soltar. Es lo que hace que se sienta inmersivo.
+
+### Qué toca
+
+`useSwipeNavigation.ts` decide a dónde navegar recién en
+`onPanResponderRelease` (al soltar) — ahí es donde hoy se pierde la
+sensación de "ir siguiendo el dedo". Para animarlo de verdad, la pantalla
+destino tiene que estar montada (o pre-renderizada) y desplazarse en
+`onPanResponderMove` según `gesture.dx`, con un resorte de vuelta si el
+gesto no llega al umbral — no es un cambio de una línea, es la parte del
+gesto que hoy no existe.
+
+### Cuidado con lo que ya está resuelto
+
+No tocar el árbitro de `swipeGuard.ts` (evita robarle el gesto al scroll
+horizontal de `GlucoseChart`) ni el recorrido de `swipeOrder.ts` (ya tiene
+test) — el problema es puramente de animación/transición, no de a dónde
+navega. Respetar "Reduce Motion" (`ModalShell` ya lee la preferencia): con
+la preferencia activa, la transición debe seguir siendo instantánea, no
+animada.
 
 ## Verificación por fase
 

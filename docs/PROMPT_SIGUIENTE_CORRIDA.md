@@ -74,7 +74,7 @@ CIERRE OBLIGATORIO (CLAUDE.md § Cierre de corrida):
 - docs/CODE_MAP.md y docs/AI_CHAT_ARCHITECTURE.md (§3: programar alarmas ya
   está listado; actualiza la nota si cambia la forma).
 - docs/DEEPAGENT_REDEPLOY_PROMPT.md: si no tocas apps/api, anótalo en la tabla.
-  El redeploy de la Fase 17 SIGUE PENDIENTE (lo comparten la 17 y la 18).
+  El redeploy de la Fase 17/18/catálogo compartido YA SE HIZO (2026-08-21).
 - docs/ROADMAP_V0.2.md: marca la Fase 19 completada.
 - Reescribe docs/PROMPT_SIGUIENTE_CORRIDA.md apuntando a la Fase 20.
 - Commit + push a claude/revision-build-prep-b6p20n.
@@ -102,8 +102,8 @@ Reporta los cambios y espera aprobación antes del build.
 | Fase | Alcance | ¿Build? | ¿Redeploy? |
 |---|---|---|---|
 | ~~16~~ | ~~Barra inferior, swipe, iconos, marcas de hora~~ | Hecho (`98acb218`) | No |
-| ~~17~~ | ~~Editar comida con IA~~ | Sin build aún | **Sí, pendiente** |
-| ~~18~~ | ~~Catálogo editable, porciones, pregunta de 3 salidas~~ | Sin build aún | No (comparte el de la 17) |
+| ~~17~~ | ~~Editar comida con IA~~ | Sin build aún | Hecho (2026-08-21) |
+| ~~18~~ | ~~Catálogo editable, porciones, pregunta de 3 salidas~~ | Sin build aún | Hecho (comparte el de la 17) |
 | **19** | Notificaciones distinguibles | **Sí, propio** | No |
 | 20 | Widget 4×3 de pantalla de inicio | **Sí, propio** | No |
 
@@ -111,11 +111,11 @@ Reporta los cambios y espera aprobación antes del build.
 
 - **Ítem 10b**: mostrar glucosa en mmol/L en toda la app. Bloqueado hasta que
   `TherapyProfile` guarde la unidad como parte del modelo de datos.
-- **Catálogo compartido entre usuarias**: ya **construido** (2026-08-21,
-  `apps/api/src/food-catalog-store.ts`, `docs/adr/0003-shared-food-catalog.md`).
-  Falta el redeploy (ver `DEEPAGENT_REDEPLOY_PROMPT.md`, prompt consolidado
-  con la Fase 17) y, después, la fase de `apps/mobile` que lo consuma —
-  todavía sin número de fase asignado en el roadmap.
+- **Catálogo compartido entre usuarias**: construido y **ya desplegado**
+  (2026-08-21, `apps/api/src/food-catalog-store.ts`,
+  `docs/adr/0003-shared-food-catalog.md`, verificado en vivo con
+  `GET /v1/food-catalog` → 200). Falta la fase de `apps/mobile` que lo
+  consuma — todavía sin número de fase asignado en el roadmap.
 - **Quitar `LIBRELINKUP_EMAIL`/`PASSWORD`** del entorno de Abacus: Verónica
   ya confirmó (2026-08-21) que su cuenta propia funciona, pero pidió
   DIFERIRLO al día de producción real, no dispararlo ahora. No preguntar de
@@ -130,7 +130,14 @@ Reporta los cambios y espera aprobación antes del build.
 - **Nada de gestos ni notificaciones se puede dar por verificado sin
   dispositivo.** El swipe de la Fase 16 pasó una corrida entera roto porque
   `pnpm verify` no dice nada al respecto.
-- **2026-08-21**: si esta corrida terminó sin disparar el redeploy
-  consolidado, `apps/api` sigue un paso atrás de lo que hay en el repo — dos
-  cosas nuevas sin desplegar: el modo de edición por instrucción (Fase 17) y
-  el catálogo compartido. No es bloqueante para nada de lo que ya funciona.
+- **Fase 21 (nueva, 2026-08-21):** editar una lectura de glucosa automática o
+  una entrada empaquetada NO tiene el mismo poder que crearla (sin foto/IA,
+  sin macros, sin calculadora) — la Fase 17 solo lo resolvió para comidas
+  standalone. Ver `docs/ROADMAP_V0.2.md` § Fase 21 antes de asumir que ya
+  está.
+- **Fase 22 (nueva, 2026-08-21):** el swipe ya navega pero sin animación —
+  salta de golpe al soltar en vez de seguir el dedo. Ver `docs/ROADMAP_V0.2.md`
+  § Fase 22.
+- **2026-08-21**: el redeploy consolidado YA SE DISPARÓ y se verificó en
+  vivo (modo de edición por instrucción + catálogo compartido, ambos 200).
+  `apps/api` está al día con este repo.
