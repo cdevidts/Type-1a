@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { z } from 'zod';
 
-import { blendCatalogEntry, convertGlucose, planMySugrImport, type CatalogFood } from '@type1a/domain';
+import { blendCatalogEntry, convertGlucose, foodKey, isPlausibleCatalogEntry, planMySugrImport, type CatalogFood } from '@type1a/domain';
 import {
   ActivityEventSchema,
   CGMReadingSchema,
@@ -164,6 +164,18 @@ export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS food_catalog_last_seen ON food_catalog(last_seen_at DESC);
   `);
+
+  // Porción de referencia (Fase 18). Se agrega con ALTER y NO con un CREATE
+  // nuevo: la tabla ya tiene datos reales en el teléfono de Verónica, y todo
+  // el catálogo sigue guardándose por 100 g. Ausente = 100 g, así que las
+  // filas viejas siguen comportándose exactamente igual.
+  const catalogColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(food_catalog)');
+  if (!catalogColumns.some((column) => column.name === 'serving_grams')) {
+    await db.execAsync('ALTER TABLE food_catalog ADD COLUMN serving_grams REAL;');
+  }
+  if (!catalogColumns.some((column) => column.name === 'serving_label')) {
+    await db.execAsync('ALTER TABLE food_catalog ADD COLUMN serving_label TEXT;');
+  }
 
   const episodeColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(meal_episodes)');
   if (!episodeColumns.some((column) => column.name === 'rapid_insulin_event_id')) {
@@ -1802,11 +1814,7 @@ export async function recordCatalogFoods(
   if (entries.length === 0) return;
   await db.withTransactionAsync(async () => {
     for (const entry of entries) {
-      const row = await db.getFirstAsync<{
-        key: string; name: string; carbs_per_100g: number; protein_per_100g: number;
-        fat_per_100g: number; fiber_per_100g: number; kcal_per_100g: number;
-        times_seen: number; last_seen_at: string;
-      }>('SELECT * FROM food_catalog WHERE key = ?', entry.key);
+      const row = await db.getFirstAsync<FoodCatalogRow>('SELECT * FROM food_catalog WHERE key = ?', entry.key);
 
       if (row === null) {
         await db.runAsync(
@@ -1827,10 +1835,12 @@ export async function recordCatalogFoods(
       await db.runAsync(
         `UPDATE food_catalog SET
            name = ?, carbs_per_100g = ?, protein_per_100g = ?, fat_per_100g = ?,
-           fiber_per_100g = ?, kcal_per_100g = ?, times_seen = ?, last_seen_at = ?
+           fiber_per_100g = ?, kcal_per_100g = ?, times_seen = ?, last_seen_at = ?,
+           serving_grams = ?, serving_label = ?
          WHERE key = ?`,
         merged.name, merged.carbsPer100g, merged.proteinPer100g, merged.fatPer100g,
         merged.fiberPer100g, merged.kcalPer100g, merged.timesSeen, merged.lastSeenAt,
+        merged.servingGrams ?? null, merged.servingLabel ?? null,
         merged.key,
       );
     }
@@ -1838,6 +1848,134 @@ export async function recordCatalogFoods(
 }
 
 /** Borra un alimento del catálogo — la salida cuando una estimación quedó mal. */
+/**
+ * Lo que la pantalla de catálogo puede corregir de un alimento (Fase 18).
+ *
+ * `timesSeen` no está: es el contador de cuántas veces lo identificó la IA, o
+ * sea el peso que `blendCatalogEntry` le da a lo ya sabido. Dejarlo editable
+ * sería dejar editar cuánta inercia tiene un valor, que no es un dato de la
+ * comida sino del algoritmo.
+ */
+export interface CatalogFoodEdit {
+  name?: string;
+  carbsPer100g?: number;
+  proteinPer100g?: number;
+  fatPer100g?: number;
+  fiberPer100g?: number;
+  kcalPer100g?: number;
+  /** `null` borra la porción de referencia y vuelve al default de 100 g. */
+  servingGrams?: number | null;
+  servingLabel?: string | null;
+}
+
+/**
+ * Corrige un alimento del catálogo **en su lugar**, conservando su clave.
+ *
+ * Conservar la clave es lo que hace que la corrección alcance a todas las
+ * comidas futuras que lo reusen. Cambiar el nombre no cambia la clave a
+ * propósito: si cambiara, el alimento corregido sería uno nuevo y el viejo
+ * —con la estimación mala— seguiría ahí, que es justo lo que esta pantalla
+ * viene a resolver. Para un alimento realmente distinto está
+ * `createCatalogFoodVariant`.
+ *
+ * Rechaza una corrección físicamente imposible (`isPlausibleCatalogEntry`) en
+ * vez de fosilizarla: un valor absurdo guardado acá sugiere carbohidratos
+ * absurdos en cada comida que lo reuse.
+ */
+export async function updateCatalogFood(
+  db: SQLiteDatabase,
+  key: string,
+  edit: CatalogFoodEdit,
+): Promise<CatalogFood> {
+  const row = await db.getFirstAsync<FoodCatalogRow>('SELECT * FROM food_catalog WHERE key = ?', key);
+  if (row === null) throw new Error('Ese alimento ya no está en el catálogo.');
+  const existing = rowToCatalogFood(row);
+
+  const servingGrams = edit.servingGrams === undefined
+    ? existing.servingGrams
+    : (edit.servingGrams ?? undefined);
+  const servingLabel = edit.servingLabel === undefined
+    ? existing.servingLabel
+    : (edit.servingLabel ?? undefined);
+
+  // Los campos de porción se construyen desde cero, no con un spread de
+  // `existing`: con `exactOptionalPropertyTypes` un `undefined` explícito no
+  // es lo mismo que ausente, y "borré la porción" tiene que dejar la
+  // propiedad fuera del objeto, no puesta en `undefined`.
+  const next: CatalogFood = {
+    key: existing.key,
+    timesSeen: existing.timesSeen,
+    lastSeenAt: existing.lastSeenAt,
+    name: edit.name === undefined || edit.name.trim() === '' ? existing.name : edit.name.trim(),
+    carbsPer100g: edit.carbsPer100g ?? existing.carbsPer100g,
+    proteinPer100g: edit.proteinPer100g ?? existing.proteinPer100g,
+    fatPer100g: edit.fatPer100g ?? existing.fatPer100g,
+    fiberPer100g: edit.fiberPer100g ?? existing.fiberPer100g,
+    kcalPer100g: edit.kcalPer100g ?? existing.kcalPer100g,
+    ...(servingGrams === undefined ? {} : { servingGrams }),
+    ...(servingLabel === undefined ? {} : { servingLabel }),
+  };
+  if (!isPlausibleCatalogEntry(next)) {
+    throw new Error('Esos valores no son posibles por 100 g. Revisa los macros.');
+  }
+
+  await db.runAsync(
+    `UPDATE food_catalog SET
+       name = ?, carbs_per_100g = ?, protein_per_100g = ?, fat_per_100g = ?,
+       fiber_per_100g = ?, kcal_per_100g = ?, serving_grams = ?, serving_label = ?
+     WHERE key = ?`,
+    next.name, next.carbsPer100g, next.proteinPer100g, next.fatPer100g,
+    next.fiberPer100g, next.kcalPer100g,
+    next.servingGrams ?? null, next.servingLabel ?? null,
+    key,
+  );
+  return next;
+}
+
+/**
+ * Guarda una variante nueva a partir de otro alimento, dejando el original
+ * intacto.
+ *
+ * Es la segunda salida de la pregunta de tres de la Fase 18: "el arroz que
+ * comí hoy no es el arroz de siempre". Empieza con `timesSeen: 1` porque es
+ * una estimación nueva, no la acumulación del alimento del que salió —
+ * heredar el contador le daría una inercia que no se ganó.
+ *
+ * Si el nombre choca con un alimento existente, se le agrega un sufijo en vez
+ * de pisarlo: perder el alimento que la usuaria quiso conservar sería
+ * exactamente lo contrario de lo que pidió al elegir esta salida.
+ */
+export async function createCatalogFoodVariant(
+  db: SQLiteDatabase,
+  entry: Omit<CatalogFood, 'timesSeen' | 'key'> & { key?: string },
+): Promise<CatalogFood> {
+  const baseKey = foodKey(entry.name);
+  if (baseKey === '') throw new Error('La variante necesita un nombre.');
+
+  let key = baseKey;
+  let suffix = 2;
+  while (await db.getFirstAsync<{ key: string }>('SELECT key FROM food_catalog WHERE key = ?', key) !== null) {
+    key = `${baseKey} ${suffix}`;
+    suffix += 1;
+    if (suffix > 50) throw new Error('Demasiadas variantes con ese nombre.');
+  }
+
+  const created: CatalogFood = { ...entry, key, timesSeen: 1 };
+  if (!isPlausibleCatalogEntry(created)) {
+    throw new Error('Esos valores no son posibles por 100 g. Revisa los macros.');
+  }
+  await db.runAsync(
+    `INSERT INTO food_catalog
+       (key, name, carbs_per_100g, protein_per_100g, fat_per_100g, fiber_per_100g, kcal_per_100g, times_seen, last_seen_at, serving_grams, serving_label)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+    key, created.name,
+    created.carbsPer100g, created.proteinPer100g, created.fatPer100g,
+    created.fiberPer100g, created.kcalPer100g, created.lastSeenAt,
+    created.servingGrams ?? null, created.servingLabel ?? null,
+  );
+  return created;
+}
+
 export async function deleteCatalogFood(db: SQLiteDatabase, key: string): Promise<void> {
   await db.runAsync('DELETE FROM food_catalog WHERE key = ?', key);
 }
@@ -1846,6 +1984,7 @@ interface FoodCatalogRow {
   key: string; name: string; carbs_per_100g: number; protein_per_100g: number;
   fat_per_100g: number; fiber_per_100g: number; kcal_per_100g: number;
   times_seen: number; last_seen_at: string;
+  serving_grams: number | null; serving_label: string | null;
 }
 
 function rowToCatalogFood(row: FoodCatalogRow): CatalogFood {
@@ -1859,13 +1998,38 @@ function rowToCatalogFood(row: FoodCatalogRow): CatalogFood {
     kcalPer100g: row.kcal_per_100g,
     timesSeen: row.times_seen,
     lastSeenAt: row.last_seen_at,
+    ...(row.serving_grams === null ? {} : { servingGrams: row.serving_grams }),
+    ...(row.serving_label === null ? {} : { servingLabel: row.serving_label }),
   };
 }
 
 /** Alimentos del catálogo, los más usados primero. */
-export async function getCatalogFoods(db: SQLiteDatabase, limit = 60): Promise<CatalogFood[]> {
+/**
+ * Alimentos del catálogo, los más asentados primero.
+ *
+ * `search` filtra por la **clave** y no por el nombre: la clave ya viene
+ * normalizada (minúsculas, sin acentos, sin puntuación), así que buscar
+ * "platano" encuentra "Plátano" sin que haya que normalizar de nuevo acá ni
+ * pedirle a la usuaria que escriba los acentos.
+ */
+export async function getCatalogFoods(
+  db: SQLiteDatabase,
+  limit = 60,
+  search?: string,
+): Promise<CatalogFood[]> {
+  const term = search === undefined ? '' : foodKey(search);
+  if (term === '') {
+    const rows = await db.getAllAsync<FoodCatalogRow>(
+      'SELECT * FROM food_catalog ORDER BY times_seen DESC, last_seen_at DESC LIMIT ?',
+      limit,
+    );
+    return rows.map(rowToCatalogFood);
+  }
   const rows = await db.getAllAsync<FoodCatalogRow>(
-    'SELECT * FROM food_catalog ORDER BY times_seen DESC, last_seen_at DESC LIMIT ?',
+    `SELECT * FROM food_catalog WHERE key LIKE ? ESCAPE '\\'
+     ORDER BY times_seen DESC, last_seen_at DESC LIMIT ?`,
+    // Se escapan los comodines de SQL: sin esto, buscar "100%" listaría todo.
+    `%${term.replace(/[\\%_]/gu, (match) => `\\${match}`)}%`,
     limit,
   );
   return rows.map(rowToCatalogFood);

@@ -124,6 +124,47 @@ export async function editMealWithInstruction(input: {
   return MealAnalysisResultSchema.parse(payload);
 }
 
+/**
+ * Corrige un alimento del catálogo con una instrucción en lenguaje natural.
+ *
+ * **Reusa el mismo modo de `/v1/ai/meal-analysis` de la Fase 17**, no uno
+ * nuevo: un alimento del catálogo se le presenta al modelo como una comida de
+ * un solo ítem de 100 g, y la respuesta vuelve en la misma forma. Así la
+ * Fase 18 no agrega ninguna rama al backend — y por lo tanto no necesita otro
+ * redeploy más allá del que la Fase 17 ya dejó pendiente.
+ *
+ * Los macros van por 100 g porque es la base en la que vive todo el catálogo;
+ * quien llame se encarga de volver a normalizar la respuesta.
+ */
+export async function editCatalogFoodWithInstruction(input: {
+  instruction: string;
+  food: {
+    name: string;
+    carbsPer100g: number;
+    proteinPer100g: number;
+    fatPer100g: number;
+    fiberPer100g: number;
+    kcalPer100g: number;
+  };
+}): Promise<MealAnalysisResult> {
+  return editMealWithInstruction({
+    instruction: input.instruction,
+    current: {
+      note: 'Un solo alimento del catálogo, expresado por 100 g.',
+      foods: [{
+        name: input.food.name,
+        estimatedGrams: 100,
+        carbsG: input.food.carbsPer100g,
+        proteinG: input.food.proteinPer100g,
+        fatG: input.food.fatPer100g,
+        fiberG: input.food.fiberPer100g,
+        caloriesKcal: input.food.kcalPer100g,
+        confidence: 0.5,
+      }],
+    },
+  });
+}
+
 export async function fetchGlucoseInsight(metrics: MealEpisodeMetrics): Promise<GlucoseInsight> {
   const payload = await requestJson('/v1/ai/glucose-insight', {
     method: 'POST',

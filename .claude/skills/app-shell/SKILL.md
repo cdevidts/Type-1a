@@ -70,14 +70,55 @@ de los botones del sistema y es intocable.
 Se navega tanto tocando un botón como deslizando lateralmente.
 
 - El gesto usa el `PanResponder` de React Native, no una librería nueva.
+
+### Los dos errores que ya cometimos acá (2026-08-21)
+
+La primera versión del swipe **no navegaba a ninguna parte**, y pasó
+inadvertida una corrida entera porque `pnpm verify` y el bundle de Metro no
+dicen nada sobre si un gesto llega a dispararse. Los dos errores son fáciles
+de repetir:
+
+1. **Nunca pongas los `panHandlers` encima de un `ScrollView`.** Un
+   `ScrollView` es un componente nativo que maneja el arrastre él mismo; los
+   props del sistema de responders de JS puestos ahí no llegan a decidir
+   nada y el gesto no se dispara jamás. Van en un **`View` que envuelve** al
+   `ScrollView`, reclamando en **fase de captura**
+   (`onMoveShouldSetPanResponderCapture`), que es la forma documentada de que
+   un padre le gane un arrastre a un hijo que scrollea.
+2. **Un destino que no lleva a ninguna parte no va en el recorrido.** El
+   orden incluía `entry` (que abre un formulario) y `chat` (que era un aviso
+   de "todavía no está"), y son justo los vecinos de la pantalla principal:
+   aun con el gesto arreglado, deslizar nunca habría llegado a una sección
+   real. El recorrido del gesto **no tiene por qué ser idéntico al de la
+   barra**: salta lo que no es un destino navegable, y la pantalla principal
+   es una posición más (deslizar de vuelta al centro cierra el modal).
+
+### El resto de las reglas
+
 - **Un swipe horizontal no puede robarle el gesto a un `ScrollView`
   vertical ni a un gráfico que scrollea horizontalmente.** `GlucoseChart` es
-  precisamente un `ScrollView` horizontal: el reconocedor tiene que exigir
-  un desplazamiento horizontal claramente mayor que el vertical, y no
-  activarse si el toque empezó sobre el gráfico.
-- El orden del swipe es el mismo de la barra (izquierda ↔ derecha), para que
-  el gesto y la posición del botón cuenten la misma historia.
-- Respeta "Reduce Motion": si está activo, la transición es instantánea.
+  precisamente un `ScrollView` horizontal. Reclamar en captura le ganaría
+  también a él, así que hay un árbitro compartido (`src/swipeGuard.ts`): si el
+  toque empezó dentro de un scroller horizontal, el reconocedor no reclama
+  nada durante ese toque. Un scroller horizontal nuevo tiene que pegarse
+  `horizontalScrollerGuardHandlers`.
+- El orden del swipe respeta la izquierda/derecha de la barra, para que el
+  gesto y la posición del botón cuenten la misma historia.
+- **La lógica del recorrido va en un módulo puro y con test**
+  (`src/swipeOrder.ts`): un orden se verifica sin teléfono, y fue la mitad del
+  bug.
+- Los modales que son **destinos** reciben el gesto vía la prop
+  `swipeHandlers` de `ModalShell`. Los que son **formularios** (Ajustes, Nueva
+  entrada, editar comida) no: deslizar dentro de un formulario a medio llenar
+  y que la pantalla se vaya a otra sección sería perder lo escrito.
+- Respeta "Reduce Motion": `ModalShell` lee la preferencia y pasa
+  `animationType="none"` cuando está activa.
+
+### Antes de decir que un gesto quedó listo
+
+Un gesto **no se puede dar por entregado sin probarlo en el dispositivo**.
+Si la corrida no puede probarlo, dilo explícitamente al entregar en vez de
+darlo por hecho — eso fue lo que dejó pasar el bug una corrida entera.
 
 ## Antes de dar por terminado
 

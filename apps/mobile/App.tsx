@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
-import { buildReportRows, catalogEntriesFrom, latestLiveReading, type CatalogFood } from '@type1a/domain';
+import { buildReportRows, catalogEntriesFrom, catalogEntryFromPortion, latestLiveReading, type CatalogFood } from '@type1a/domain';
 import type {
   CGMProviderStatus,
   CGMReading,
@@ -35,6 +35,7 @@ import { EntryModal, type UnifiedEntryDraft } from './src/components/EntryModal'
 import { GlucoseCard } from './src/components/GlucoseCard';
 import { InsulinAssociationModal } from './src/components/InsulinAssociationModal';
 import type { MealEditResult } from './src/components/MealEditModal';
+import { CatalogModal, type CatalogEdit } from './src/components/CatalogModal';
 import { MealModal, type ConfirmedMealDraft } from './src/components/MealModal';
 import { NumericEntryModal } from './src/components/NumericEntryModal';
 import { SettingsModal } from './src/components/SettingsModal';
@@ -76,7 +77,10 @@ import {
   getHbA1cResults,
   getInsulinEvents,
   getMealAlarmOffsets,
+  createCatalogFoodVariant,
+  deleteCatalogFood,
   getCatalogFoods,
+  updateCatalogFood,
   getMealEvents,
   getNutritionProfile,
   recordCatalogFoods,
@@ -457,6 +461,52 @@ function Type1AApp() {
         : { aiEstimatedCarbsG: draft.catalogSuggestedCarbsG }),
     };
     const episodeId = await saveMealWithEpisode(db, meal);
+
+    // Respuesta a la pregunta de tres salidas (Fase 18). Va **después** de
+    // guardar la comida y en su propio try: el catálogo es una comodidad, y
+    // un fallo suyo no puede impedir que quede registrado lo que se comió.
+    if (draft.catalogWrite !== undefined) {
+      try {
+        const write = draft.catalogWrite;
+        const entry = catalogEntryFromPortion(write.food, {
+          grams: write.grams,
+          carbsG: write.carbsG,
+          proteinG: write.proteinG,
+          fatG: write.fatG,
+          fiberG: write.fiberG,
+          caloriesKcal: write.caloriesKcal,
+        }, timestamp);
+        if (entry === null) {
+          setNotice('La comida quedó guardada, pero esos valores no son posibles por 100 g y el catálogo no se tocó.');
+        } else if (write.mode === 'update') {
+          await updateCatalogFood(db, write.food.key, {
+            carbsPer100g: entry.carbsPer100g,
+            proteinPer100g: entry.proteinPer100g,
+            fatPer100g: entry.fatPer100g,
+            fiberPer100g: entry.fiberPer100g,
+            kcalPer100g: entry.kcalPer100g,
+          });
+        } else {
+          // `createCatalogFoodVariant` deriva su propia clave desde el nombre
+          // nuevo; la del alimento original no debe viajar, o la variante
+          // pisaría justamente al alimento que se quiso conservar.
+          await createCatalogFoodVariant(db, {
+            name: `${write.name} (variante)`,
+            carbsPer100g: entry.carbsPer100g,
+            proteinPer100g: entry.proteinPer100g,
+            fatPer100g: entry.fatPer100g,
+            fiberPer100g: entry.fiberPer100g,
+            kcalPer100g: entry.kcalPer100g,
+            lastSeenAt: entry.lastSeenAt,
+            ...(entry.servingGrams === undefined ? {} : { servingGrams: entry.servingGrams }),
+            ...(entry.servingLabel === undefined ? {} : { servingLabel: entry.servingLabel }),
+          });
+        }
+      } catch (error) {
+        logSaveError('App.catalogWrite', error);
+        setNotice('La comida quedó guardada. No se pudo actualizar el catálogo.');
+      }
+    }
     // El catálogo se alimenta de cada análisis, y nunca puede impedir que la
     // comida se guarde: es una comodidad, no parte del registro.
     if (draft.analysis !== undefined) {
@@ -771,11 +821,8 @@ function Type1AApp() {
     if (destination === 'nutrition') setNutritionOpen(true);
     else if (destination === 'summary') setSummaryOpen(true);
     else if (destination === 'entry') setEntryOpen(true);
-    else if (destination === 'catalog') {
-      // Fase 18. El botón existe desde ya para fijar el layout y no rehacer
-      // la barra después.
-      setNotice('El catálogo de comidas llega en la próxima versión.');
-    } else if (destination === 'chat') {
+    else if (destination === 'catalog') setCatalogOpen(true);
+    else if (destination === 'chat') {
       setNotice('El chat de IA todavía no está disponible.');
     }
   }
@@ -970,6 +1017,22 @@ function Type1AApp() {
         onClose={() => { setSummaryOpen(false); }}
         onLoadSummary={loadSummary}
         swipeHandlers={swipe.panHandlers}
+      />
+      <CatalogModal
+        visible={catalogOpen}
+        swipeHandlers={swipe.panHandlers}
+        onClose={() => { setCatalogOpen(false); }}
+        onLoad={(search) => getCatalogFoods(db, 60, search)}
+        onSaveFood={async (key, edit: CatalogEdit) => {
+          await updateCatalogFood(db, key, edit);
+          // El picker de `MealModal` lee de este estado, así que sin refrescar
+          // seguiría sugiriendo el valor que ella acaba de corregir.
+          setCatalogFoods(await getCatalogFoods(db));
+        }}
+        onDeleteFood={async (food) => {
+          await deleteCatalogFood(db, food.key);
+          setCatalogFoods(await getCatalogFoods(db));
+        }}
       />
       <NutritionModal
         visible={nutritionOpen}

@@ -3,7 +3,15 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { scaleCatalogFood, type CatalogFood } from '@type1a/domain';
+import {
+  MAX_SERVINGS,
+  MIN_SERVINGS,
+  isValidServings,
+  scaleCatalogFood,
+  scaleCatalogFoodByServings,
+  servingGramsOf,
+  type CatalogFood,
+} from '@type1a/domain';
 import type { MealAnalysisResult } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api';
@@ -11,6 +19,12 @@ import { parseNonNegativeNumber } from '../format';
 import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
 import { ModalShell } from './ModalShell';
+
+/**
+ * Cuánto puede alejarse un valor de lo que predijo el catálogo antes de que
+ * cuente como "corrigió el alimento". 10 % o 1 g, lo que sea mayor.
+ */
+const CATALOG_EDIT_TOLERANCE = 0.1;
 
 export interface ConfirmedMealDraft {
   imageUri?: string;
@@ -41,6 +55,26 @@ export interface ConfirmedMealDraft {
    * que el de una foto y no puede pasar por dato confirmado sin rastro.
    */
   catalogSuggestedCarbsG?: number;
+  /**
+   * Qué hacer con el alimento del catálogo del que salió esta comida
+   * (Fase 18), cuando la usuaria corrigió sus macros antes de guardar.
+   *
+   * Es la respuesta a la pregunta de tres salidas. Sin ella, corregir una
+   * comida puntual corrompería en silencio el alimento que se reutiliza en
+   * todas las demás — o, al revés, una corrección real no llegaría nunca al
+   * catálogo y habría que repetirla en cada comida.
+   */
+  catalogWrite?: {
+    mode: 'update' | 'variant';
+    food: CatalogFood;
+    grams: number;
+    name: string;
+    carbsG: number;
+    proteinG: number;
+    fatG: number;
+    fiberG: number;
+    caloriesKcal: number;
+  };
 }
 
 /**
@@ -74,7 +108,9 @@ function CatalogPicker({
             accessibilityLabel={`Reusar ${food.name}`}
           >
             <Text style={styles.catalogChipName}>{food.name}</Text>
-            <Text style={styles.catalogChipMeta}>{food.carbsPer100g.toFixed(0)} g carbos/100 g</Text>
+            <Text style={styles.catalogChipMeta}>
+              {food.carbsPer100g.toFixed(0)} g carbos/100 g · porción {servingGramsOf(food).toFixed(0)} g
+            </Text>
           </Pressable>
         ))}
       </View>
@@ -107,7 +143,21 @@ export function MealModal({
   const [aiMacros, setAiMacros] = useState<{ proteinG: number; fatG: number; fiberG: number } | null>(null);
   const [pendingFood, setPendingFood] = useState<CatalogFood | null>(null);
   const [portionInput, setPortionInput] = useState('');
+  /**
+   * En qué unidad se pide la porción. Pensar en "dos tazas" es más fácil que
+   * en "300 gramos", pero quien pesa en balanza no debería tener que dividir
+   * mentalmente — por eso las dos puertas quedan abiertas y no se elige una.
+   */
+  const [portionMode, setPortionMode] = useState<'servings' | 'grams'>('servings');
   const [catalogSuggestedCarbsG, setCatalogSuggestedCarbsG] = useState<number | null>(null);
+  /**
+   * El alimento del catálogo que se aplicó y con cuántos gramos, para poder
+   * detectar después si la usuaria corrigió sus macros — y en ese caso
+   * preguntarle qué hacer con el alimento (la pregunta de tres salidas).
+   */
+  const [appliedCatalog, setAppliedCatalog] = useState<{ food: CatalogFood; grams: number } | null>(null);
+  /** Datos de la comida esperando la respuesta a esa pregunta. */
+  const [catalogQuestion, setCatalogQuestion] = useState<ConfirmedMealDraft | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -130,7 +180,10 @@ export function MealModal({
     setMacrosOpen(false);
     setPendingFood(null);
     setPortionInput('');
+    setPortionMode('servings');
     setCatalogSuggestedCarbsG(null);
+    setAppliedCatalog(null);
+    setCatalogQuestion(null);
   }, [visible]);
 
   async function captureAndAnalyze(): Promise<void> {
@@ -211,12 +264,21 @@ export function MealModal({
    */
   function applyCatalogFood(): void {
     if (pendingFood === null) return;
-    const grams = Number(portionInput.trim().replace(',', '.'));
-    if (!Number.isFinite(grams) || grams <= 0) {
-      setMessage('Escribe cuántos gramos comiste.');
+    const typed = Number(portionInput.trim().replace(',', '.'));
+    if (!Number.isFinite(typed) || typed <= 0) {
+      setMessage(portionMode === 'servings'
+        ? `Escribe cuántas porciones comiste, entre ${MIN_SERVINGS} y ${MAX_SERVINGS}.`
+        : 'Escribe cuántos gramos comiste.');
       return;
     }
-    const scaled = scaleCatalogFood(pendingFood, grams);
+    if (portionMode === 'servings' && !isValidServings(typed)) {
+      setMessage(`Las porciones van de ${MIN_SERVINGS} a ${MAX_SERVINGS}.`);
+      return;
+    }
+    const grams = portionMode === 'servings' ? typed * servingGramsOf(pendingFood) : typed;
+    const scaled = portionMode === 'servings'
+      ? scaleCatalogFoodByServings(pendingFood, typed)
+      : scaleCatalogFood(pendingFood, grams);
     setProteinInput(String(scaled.proteinG));
     setFatInput(String(scaled.fatG));
     setFiberInput(String(scaled.fiberG));
@@ -228,8 +290,9 @@ export function MealModal({
     // de estimaciones de IA— se vuelve indistinguible de uno pesado en balanza,
     // tanto para ella como para el reporte al médico.
     setCatalogSuggestedCarbsG(scaled.carbsG);
+    setAppliedCatalog({ food: pendingFood, grams });
     setPendingFood(null);
-    setMessage(`${pendingFood.name}, ${grams} g: ≈ ${scaled.carbsG} g de carbohidratos. Escríbelos abajo si los confirmas.`);
+    setMessage(`${pendingFood.name}, ${grams.toFixed(0)} g: ≈ ${scaled.carbsG} g de carbohidratos. Escríbelos abajo si los confirmas.`);
   }
 
   async function analyzeFromDescription(): Promise<void> {
@@ -299,7 +362,7 @@ export function MealModal({
             ? 'ai'
             : 'mixed');
 
-      await onConfirm({
+      const draft: ConfirmedMealDraft = {
         confirmedCarbsG: parsed,
         ...(macrosSource === undefined ? {} : { macrosSource }),
         ...(clearedMacros ? { clearedMacros: true } : {}),
@@ -309,10 +372,92 @@ export function MealModal({
         ...(protein === undefined ? {} : { proteinG: protein }),
         ...(fat === undefined ? {} : { fatG: fat }),
         ...(fiber === undefined ? {} : { fiberG: fiber }),
-      });
+      };
+
+      // La pregunta de tres salidas (Fase 18). Solo se hace si la comida vino
+      // del catálogo Y ella cambió algo que describe al **alimento**, no a
+      // esta comida. Cambiar cuántas porciones comió no pregunta nada: eso es
+      // un dato de hoy, no del alimento.
+      if (appliedCatalog !== null && catalogMacrosEdited(protein, fat, fiber, parsed)) {
+        setCatalogQuestion(draft);
+        setBusy(false);
+        return;
+      }
+
+      await onConfirm(draft);
       onClose();
     } catch (error) {
       logSaveError('MealModal.confirm', error);
+      setMessage('No se pudo guardar la comida. Inténtalo otra vez.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * ¿Los valores que va a guardar difieren de lo que el catálogo predijo para
+   * esa porción?
+   *
+   * Se compara contra lo escalado, no contra los valores por 100 g: la
+   * usuaria ve y corrige gramos de **su plato**, no la base del catálogo.
+   */
+  function catalogMacrosEdited(
+    protein: number | undefined,
+    fat: number | undefined,
+    fiber: number | undefined,
+    carbs: number,
+  ): boolean {
+    if (appliedCatalog === null) return false;
+    const expected = scaleCatalogFood(appliedCatalog.food, appliedCatalog.grams);
+    // Un macro borrado ("no lo anoté") no es una corrección del alimento: es
+    // una afirmación sobre esta comida. Preguntar ahí sería pedirle que
+    // decida sobre el catálogo por haber dejado un campo vacío.
+    if (protein === undefined || fat === undefined || fiber === undefined) return false;
+    // Con tolerancia, no con `!==`. Redondear 42,5 g a 42 es lo que hace
+    // cualquiera al confirmar carbohidratos, y no significa que el alimento
+    // esté mal: sin margen, la pregunta de tres salidas saltaría en casi
+    // todas las comidas y se volvería un trámite que se responde sin leer —
+    // que es exactamente cómo se termina corrompiendo el catálogo.
+    const differs = (value: number, reference: number): boolean =>
+      Math.abs(value - reference) > Math.max(1, reference * CATALOG_EDIT_TOLERANCE);
+    return differs(protein, expected.proteinG)
+      || differs(fat, expected.fatG)
+      || differs(fiber, expected.fiberG)
+      || differs(carbs, expected.carbsG);
+  }
+
+  /** Resuelve la pregunta de tres salidas y guarda. */
+  async function answerCatalogQuestion(mode: 'update' | 'variant' | 'none'): Promise<void> {
+    const draft = catalogQuestion;
+    if (draft === null || appliedCatalog === null) return;
+    // Defensa: la pregunta solo aparece con los tres macros escritos
+    // (`catalogMacrosEdited` lo exige), pero si alguna vez dejara de ser así,
+    // escribir un macro ausente como 0 g en el catálogo lo corrompería con un
+    // dato que nadie anotó.
+    const macrosComplete = draft.proteinG !== undefined && draft.fatG !== undefined && draft.fiberG !== undefined;
+    const effectiveMode = macrosComplete ? mode : 'none';
+    setCatalogQuestion(null);
+    setBusy(true);
+    try {
+      await onConfirm(effectiveMode === 'none' ? draft : {
+        ...draft,
+        catalogWrite: {
+          mode: effectiveMode,
+          food: appliedCatalog.food,
+          grams: appliedCatalog.grams,
+          name: appliedCatalog.food.name,
+          carbsG: draft.confirmedCarbsG,
+          proteinG: draft.proteinG ?? 0,
+          fatG: draft.fatG ?? 0,
+          fiberG: draft.fiberG ?? 0,
+          // El catálogo guarda calorías; sin análisis propio no hay un valor
+          // medido, así que se escalan las que ya tenía para esa porción.
+          caloriesKcal: scaleCatalogFood(appliedCatalog.food, appliedCatalog.grams).caloriesKcal,
+        },
+      });
+      onClose();
+    } catch (error) {
+      logSaveError('MealModal.answerCatalogQuestion', error);
       setMessage('No se pudo guardar la comida. Inténtalo otra vez.');
     } finally {
       setBusy(false);
@@ -379,16 +524,38 @@ export function MealModal({
       ) : (
         <View style={styles.catalogBox}>
           <Text style={styles.catalogTitle}>{pendingFood.name}</Text>
-          <Text style={styles.catalogHint}>¿Cuántos gramos comiste? Se escala desde la estimación guardada.</Text>
+          <Text style={styles.catalogHint}>
+            {portionMode === 'servings'
+              ? `¿Cuántas porciones comiste? Una porción son ${servingGramsOf(pendingFood).toFixed(0)} g${pendingFood.servingLabel === undefined ? '' : ` (${pendingFood.servingLabel})`}.`
+              : '¿Cuántos gramos comiste? Se escala desde la estimación guardada.'}
+          </Text>
+          <View style={styles.unitToggle}>
+            <Pressable
+              style={[styles.unitOption, portionMode === 'servings' && styles.unitOptionActive]}
+              onPress={() => { setPortionMode('servings'); setPortionInput(''); }}
+              accessibilityRole="button"
+              accessibilityState={{ selected: portionMode === 'servings' }}
+            >
+              <Text style={[styles.unitOptionText, portionMode === 'servings' && styles.unitOptionTextActive]}>Porciones</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.unitOption, portionMode === 'grams' && styles.unitOptionActive]}
+              onPress={() => { setPortionMode('grams'); setPortionInput(''); }}
+              accessibilityRole="button"
+              accessibilityState={{ selected: portionMode === 'grams' }}
+            >
+              <Text style={[styles.unitOptionText, portionMode === 'grams' && styles.unitOptionTextActive]}>Gramos</Text>
+            </Pressable>
+          </View>
           <View style={styles.portionRow}>
             <TextInput
               value={portionInput}
               onChangeText={setPortionInput}
               keyboardType="decimal-pad"
               style={styles.portionInput}
-              placeholder="gramos"
+              placeholder={portionMode === 'servings' ? `${MIN_SERVINGS} a ${MAX_SERVINGS}` : 'gramos'}
               placeholderTextColor={colors.muted}
-              accessibilityLabel="Porción en gramos"
+              accessibilityLabel={portionMode === 'servings' ? 'Cuántas porciones' : 'Porción en gramos'}
             />
             <Pressable
               style={styles.portionButton}
@@ -453,6 +620,39 @@ export function MealModal({
         </View>
       ) : null}
 
+      {catalogQuestion === null || appliedCatalog === null ? null : (
+        <View style={styles.questionBox}>
+          <Text style={styles.questionTitle}>Cambiaste los valores de {appliedCatalog.food.name}</Text>
+          <Text style={styles.questionHint}>
+            Ese alimento se reutiliza en cada comida donde lo elijas. ¿Qué hacemos con él?
+          </Text>
+          <Pressable
+            style={styles.questionOption}
+            onPress={() => { void answerCatalogQuestion('update'); }}
+            accessibilityRole="button"
+          >
+            <Text style={styles.questionOptionTitle}>Corregir el alimento</Text>
+            <Text style={styles.questionOptionCopy}>Queda corregido para todas las comidas futuras que lo usen.</Text>
+          </Pressable>
+          <Pressable
+            style={styles.questionOption}
+            onPress={() => { void answerCatalogQuestion('variant'); }}
+            accessibilityRole="button"
+          >
+            <Text style={styles.questionOptionTitle}>Guardar como alimento nuevo</Text>
+            <Text style={styles.questionOptionCopy}>El original queda intacto y se agrega una variante.</Text>
+          </Pressable>
+          <Pressable
+            style={styles.questionOption}
+            onPress={() => { void answerCatalogQuestion('none'); }}
+            accessibilityRole="button"
+          >
+            <Text style={styles.questionOptionTitle}>Solo para esta comida</Text>
+            <Text style={styles.questionOptionCopy}>El catálogo no se toca.</Text>
+          </Pressable>
+        </View>
+      )}
+
       {message === null ? null : <Text style={styles.message}>{message}</Text>}
       <Pressable style={[styles.confirmButton, busy && styles.disabled]} disabled={busy} onPress={() => { void confirm(); }}>
         <Text style={styles.confirmButtonText}>{busy ? 'Guardando…' : 'Confirmar y crear episodio'}</Text>
@@ -501,6 +701,41 @@ const styles = StyleSheet.create({
   catalogChipName: { color: colors.ink, fontSize: 13, fontWeight: '700' },
   catalogChipMeta: { color: colors.muted, fontSize: 10, marginTop: 1 },
   portionRow: { flexDirection: 'row', gap: spacing.sm, alignItems: 'center' },
+  unitToggle: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  unitOption: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.surface,
+  },
+  unitOptionActive: { backgroundColor: colors.tealSoft, borderColor: colors.teal },
+  unitOptionText: { fontSize: 13, fontWeight: '600', color: colors.muted },
+  unitOptionTextActive: { color: colors.teal },
+  questionBox: {
+    backgroundColor: colors.warningSoft,
+    borderRadius: radius.md,
+    padding: spacing.lg,
+    marginTop: spacing.lg,
+  },
+  questionTitle: { fontSize: 15, fontWeight: '700', color: colors.warning },
+  questionHint: { fontSize: 13, color: colors.navy, marginTop: spacing.xs, marginBottom: spacing.md, lineHeight: 18 },
+  questionOption: {
+    minHeight: 44,
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: radius.sm,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  questionOptionTitle: { fontSize: 14, fontWeight: '700', color: colors.ink },
+  questionOptionCopy: { fontSize: 12, color: colors.muted, marginTop: 2, lineHeight: 16 },
   portionInput: {
     flex: 1, minHeight: 44, backgroundColor: colors.background, borderRadius: radius.sm,
     borderColor: colors.line, borderWidth: 1, color: colors.ink, fontSize: 15, paddingHorizontal: spacing.md,

@@ -1617,6 +1617,25 @@ escribirlo no impide guardar la comida.
 
 ## Fase 16 — Barra inferior, swipe y sistema de iconos ✅ (2026-08-20)
 
+> **Corrección 2026-08-21: el swipe de esta fase nunca funcionó.** Verónica lo
+> reportó al probarlo. Eran dos bugs independientes y cada uno bastaba:
+> (1) los `panHandlers` estaban puestos encima del `ScrollView` de la pantalla,
+> y un `ScrollView` es nativo — nunca le entrega la decisión al sistema de
+> responders de JS, así que el gesto no se disparaba jamás (por eso tampoco
+> "se rompía el gráfico": no había reconocedor compitiendo); (2) el orden del
+> gesto incluía `entry` y `chat`, que son justamente los vecinos de la
+> pantalla principal, así que ni con el gesto arreglado se habría llegado a
+> Nutrición o Resumen. Arreglado con el `PanResponder` en un `View` que
+> envuelve al `ScrollView` y reclama en fase de captura, un recorrido que
+> salta lo que no es destino navegable, y un árbitro compartido
+> (`src/swipeGuard.ts`) para no robarle el gesto al scroll horizontal del
+> gráfico. El recorrido quedó con test (`src/swipeOrder.test.ts`).
+>
+> **Lección para la próxima corrida de UI:** un gesto no se puede dar por
+> entregado sin probarlo en el teléfono. `pnpm verify` y el bundle de Metro no
+> dicen nada sobre si un `PanResponder` llega a dispararse.
+
+
 **Completada.** Lo construido: `BottomNav.tsx` (cinco destinos, el `+` central
 más grande, `insets.bottom` sumado), `useSwipeNavigation.ts` (gesto lateral con
 umbral direccional para no robarle el scroll al gráfico), `branding.ts`
@@ -1780,7 +1799,45 @@ Anotarlo en `docs/DEEPAGENT_REDEPLOY_PROMPT.md` cuando se construya.
 
 ---
 
-## Fase 18 — Catálogo de comidas editable y porciones (planificada 2026-08-20)
+## Fase 18 — Catálogo de comidas editable y porciones ✅ (2026-08-21)
+
+**Entregado.** Lo construido y las decisiones que no estaban en el plan:
+
+- `apps/mobile/src/components/CatalogModal.tsx` — listar, buscar, corregir a
+  mano, corregir con IA por texto, borrar. El botón "Catálogo" de la barra
+  inferior deja de ser un aviso.
+- **La edición con IA no agregó ninguna rama al backend**: presenta el
+  alimento como una comida de un solo ítem de 100 g y reusa el modo de
+  instrucción de la Fase 17. Hereda gratis su guardrail de entrada. Por eso
+  las dos fases comparten un único redeploy pendiente.
+- **Porción de referencia opcional** (`servingGrams`/`servingLabel`). Se
+  agregó con `ALTER TABLE ADD COLUMN`, nunca con un `CREATE` nuevo: hay datos
+  reales en el teléfono de Verónica. Ausente = 100 g, así que toda fila vieja
+  se comporta exactamente como antes. Al reusar un alimento se piden
+  **porciones (0,1 a 10)**, con los gramos como segunda puerta para quien pesa
+  en balanza.
+- **La pregunta de tres salidas**, con dos matices que aparecieron
+  construyéndola:
+  1. **Tiene tolerancia (10 % o 1 g).** Con `!==` habría saltado por redondear
+     42,5 g a 42 — es decir, en casi todas las comidas. Una pregunta que salta
+     siempre se responde sin leer, y así es como se corrompe el catálogo que
+     esta pregunta viene a proteger.
+  2. **Un macro borrado no la dispara.** Dejar un campo en blanco es "no lo
+     anoté", una afirmación sobre esa comida; pedirle que decida sobre el
+     alimento por eso sería malinterpretar el gesto.
+- `blendCatalogEntry` **conserva la porción que definió la usuaria**: un
+  análisis nuevo de la IA no trae ese campo, así que sin esto se lo borraba en
+  cada identificación.
+- Toda escritura al catálogo pasa por `isPlausibleCatalogEntry`. Un valor
+  imposible por 100 g guardado ahí sugeriría carbohidratos imposibles en cada
+  comida futura que reuse el alimento.
+
+**No requiere redeploy propio** ni cambios en los reportes: el catálogo es una
+comodidad de registro, no una métrica clínica; lo que sí llega al reporte —los
+macros de cada comida— ya viajaba desde la Fase 15.
+
+### Plan original (2026-08-20)
+
 
 ### Pantalla de catálogo
 

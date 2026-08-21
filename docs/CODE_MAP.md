@@ -167,6 +167,14 @@ docs/
   debajo de `MIN_SAMPLE_FOR_RATE` (3) devuelve `inTargetPct: undefined` en
   vez de un porcentaje — con 1-2 dosis el número sería ruido presentado como
   patrón. Excluye sintéticas.
+- `food-catalog.ts` — **2026-08-21 (Fase 18)**: porción de referencia
+  (`servingGrams`/`servingLabel`, ambos **opcionales**; ausente = 100 g, que
+  es como quedan todas las filas ya guardadas en el teléfono),
+  `scaleCatalogFoodByServings`, `isValidServings` (0,1 a 10) y
+  `catalogEntryFromPortion` (el camino de vuelta: de una porción corregida a
+  mano a la base por 100 g). `blendCatalogEntry` **conserva** la porción que
+  definió la usuaria: un análisis nuevo de la IA nunca trae ese campo, así que
+  sin eso se lo borraba en cada identificación.
 - `ai-safety.ts` — dos guardrails, uno en cada dirección. Son el respaldo
   técnico de la regla "Never let an LLM calculate, infer, or recommend
   insulin" de `AGENTS.md`. Si tocas cualquiera, agrega casos de test.
@@ -399,6 +407,18 @@ docs/
   la alimentación se revisa. Todo el cálculo vive en `packages/domain`.
   Paleta: `macroColors` en `theme.ts` (categórica, validada, **distinta de
   `glucoseBands`** que es de estado clínico).
+- `src/components/CatalogModal.tsx` — **catálogo de alimentos** (Fase 18,
+  2026-08-21). Lista, busca, corrige a mano, corrige con IA por texto y borra.
+  Antes el catálogo se llenaba solo y no había dónde verlo: un alimento mal
+  estimado quedaba mal para siempre y contaminaba cada comida que lo reusara
+  (`deleteCatalogFood` existía desde la Fase 15, sin ningún botón). La edición
+  con IA **reusa el modo de instrucción de la Fase 17** presentando el
+  alimento como una comida de un ítem de 100 g, así que no agrega ninguna
+  rama nueva al backend.
+- `src/swipeGuard.ts` + `src/swipeOrder.ts` — el árbitro del gesto lateral y
+  su recorrido (2026-08-21). El recorrido está aparte y **con test** porque la
+  mitad del bug del swipe de la Fase 16 no era de gestos sino de orden. Ver
+  `useSwipeNavigation.ts`, que documenta los dos bugs.
 - `src/components/MealEditModal.tsx` — **edición** de una comida ya guardada
   (Fase 17). Devuelve un `MealEditResult` en el mismo lenguaje que
   `MealEditPatch` de `db.ts`: `undefined` = no se tocó, `null` = borrar. No

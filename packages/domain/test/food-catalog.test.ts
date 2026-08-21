@@ -10,6 +10,11 @@ import {
   isPlausibleCatalogEntry,
   MAX_BLEND_WEIGHT,
   toCatalogEntry,
+  catalogEntryFromPortion,
+  DEFAULT_SERVING_GRAMS,
+  isValidServings,
+  scaleCatalogFoodByServings,
+  servingGramsOf,
   type CatalogFood,
 } from '../src/food-catalog';
 
@@ -194,5 +199,79 @@ describe('blendCatalogEntry', () => {
     expect(merged.name).toBe('Pan integral');
     expect(merged.lastSeenAt).toBe(incoming.lastSeenAt);
     expect(merged.key).toBe('pan');
+  });
+});
+
+describe('porciones de referencia (Fase 18)', () => {
+  const base: CatalogFood = {
+    key: 'arroz',
+    name: 'Arroz',
+    carbsPer100g: 28,
+    proteinPer100g: 2.7,
+    fatPer100g: 0.3,
+    fiberPer100g: 0.4,
+    kcalPer100g: 130,
+    timesSeen: 3,
+    lastSeenAt: '2026-08-21T12:00:00.000Z',
+  };
+
+  it('un alimento sin porción definida se comporta como antes: 100 g', () => {
+    // Las filas ya guardadas en el teléfono de Verónica no tienen el campo.
+    // Si esto cambia, una migración le rompió datos reales.
+    expect(servingGramsOf(base)).toBe(DEFAULT_SERVING_GRAMS);
+    expect(scaleCatalogFoodByServings(base, 1)).toEqual(scaleCatalogFood(base, 100));
+  });
+
+  it('escala por porciones usando el tamaño definido', () => {
+    const conPorcion: CatalogFood = { ...base, servingGrams: 150, servingLabel: 'taza' };
+    expect(scaleCatalogFoodByServings(conPorcion, 2)).toEqual(scaleCatalogFood(conPorcion, 300));
+  });
+
+  it('acepta el rango 0,1 a 10 y nada fuera de él', () => {
+    expect(isValidServings(0.1)).toBe(true);
+    expect(isValidServings(10)).toBe(true);
+    expect(isValidServings(0.09)).toBe(false);
+    expect(isValidServings(10.1)).toBe(false);
+    expect(isValidServings(0)).toBe(false);
+    expect(isValidServings(Number.NaN)).toBe(false);
+    expect(() => scaleCatalogFoodByServings(base, 0)).toThrow();
+  });
+
+  it('una identificación nueva de la IA no borra la porción que definió la usuaria', () => {
+    const conPorcion: CatalogFood = { ...base, servingGrams: 150, servingLabel: 'taza' };
+    const desdeIA = {
+      key: 'arroz',
+      name: 'Arroz blanco',
+      carbsPer100g: 30,
+      proteinPer100g: 2.5,
+      fatPer100g: 0.4,
+      fiberPer100g: 0.5,
+      kcalPer100g: 135,
+      lastSeenAt: '2026-08-22T12:00:00.000Z',
+    };
+    const merged = blendCatalogEntry(conPorcion, desdeIA);
+    expect(merged.servingGrams).toBe(150);
+    expect(merged.servingLabel).toBe('taza');
+  });
+
+  it('convierte una porción corregida a mano de vuelta a la base por 100 g', () => {
+    const entry = catalogEntryFromPortion(
+      base,
+      { grams: 200, carbsG: 50, proteinG: 6, fatG: 1, fiberG: 1, caloriesKcal: 240 },
+      '2026-08-21T13:00:00.000Z',
+    );
+    expect(entry?.carbsPer100g).toBe(25);
+    expect(entry?.kcalPer100g).toBe(120);
+  });
+
+  it('rechaza una corrección físicamente imposible en vez de fosilizarla', () => {
+    // 100 g de algo no pueden tener 150 g de carbohidratos. Sin este rechazo
+    // el error queda en el catálogo sugiriendo esa cifra para siempre.
+    const entry = catalogEntryFromPortion(
+      base,
+      { grams: 100, carbsG: 150, proteinG: 6, fatG: 1, fiberG: 1, caloriesKcal: 240 },
+      '2026-08-21T13:00:00.000Z',
+    );
+    expect(entry).toBeNull();
   });
 });

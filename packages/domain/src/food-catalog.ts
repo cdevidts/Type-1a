@@ -52,6 +52,19 @@ export interface CatalogFood {
   /** Cuántas veces se ha identificado. Más veces = estimación más asentada. */
   timesSeen: number;
   lastSeenAt: string;
+  /**
+   * Tamaño de la porción de referencia, en gramos (Fase 18).
+   *
+   * **Opcional a propósito.** Todo el catálogo se guarda por 100 g y así se
+   * seguirá guardando; esto solo dice en cuánto se piensa una porción de este
+   * alimento ("una taza son 150 g"). Ausente = 100 g, que es lo que había
+   * antes de la Fase 18 y lo que tienen todas las filas ya guardadas en el
+   * teléfono. Una migración que las invalidara sería inaceptable: son datos
+   * reales de Verónica.
+   */
+  servingGrams?: number;
+  /** Cómo se llama esa porción para la usuaria: "taza", "rebanada", "plato". */
+  servingLabel?: string;
 }
 
 /**
@@ -159,6 +172,11 @@ export function blendCatalogEntry(
   next: Omit<CatalogFood, 'timesSeen'>,
 ): CatalogFood {
   const weight = Math.min(existing.timesSeen, MAX_BLEND_WEIGHT);
+  // La porción de referencia la define la usuaria, no la IA. Sin conservarla,
+  // la próxima vez que la IA identifique este alimento borraría el "una taza
+  // son 150 g" que ella escribió: un análisis nuevo nunca trae este campo.
+  const servingGrams = next.servingGrams ?? existing.servingGrams;
+  const servingLabel = next.servingLabel ?? existing.servingLabel;
   const mix = (old: number, incoming: number): number =>
     Number(((old * weight + incoming) / (weight + 1)).toFixed(2));
   return {
@@ -171,7 +189,83 @@ export function blendCatalogEntry(
     kcalPer100g: mix(existing.kcalPer100g, next.kcalPer100g),
     timesSeen: existing.timesSeen + 1,
     lastSeenAt: next.lastSeenAt,
+    ...(servingGrams === undefined ? {} : { servingGrams }),
+    ...(servingLabel === undefined ? {} : { servingLabel }),
   };
+}
+
+/**
+ * Porción de referencia de un alimento, en gramos.
+ *
+ * El default de 100 g no es arbitrario: es la base en la que está guardado
+ * todo el catálogo, así que un alimento sin porción definida se comporta
+ * exactamente como antes de la Fase 18.
+ */
+export const DEFAULT_SERVING_GRAMS = 100;
+
+export function servingGramsOf(food: CatalogFood): number {
+  const grams = food.servingGrams;
+  return grams !== undefined && Number.isFinite(grams) && grams > 0 ? grams : DEFAULT_SERVING_GRAMS;
+}
+
+/**
+ * Cuántas porciones puede pedir la usuaria al reusar un alimento.
+ *
+ * El piso de 0,1 permite "un poquito" sin abrir la puerta a un 0 que después
+ * se guardaría como "comí 0 g de esto" — que no es un registro, es ruido. El
+ * techo de 10 es el límite que pidió Verónica.
+ */
+export const MIN_SERVINGS = 0.1;
+export const MAX_SERVINGS = 10;
+
+export function isValidServings(servings: number): boolean {
+  return Number.isFinite(servings) && servings >= MIN_SERVINGS && servings <= MAX_SERVINGS;
+}
+
+/**
+ * Escala un alimento del catálogo a un número de porciones.
+ *
+ * Es azúcar sobre `scaleCatalogFood`, pero es la que usa la interfaz: pensar
+ * en "dos tazas" es más fácil que en "300 gramos", y quien sí pesa en balanza
+ * sigue teniendo la otra puerta abierta.
+ */
+export function scaleCatalogFoodByServings(food: CatalogFood, servings: number): ReturnType<typeof scaleCatalogFood> {
+  if (!isValidServings(servings)) {
+    throw new Error(`Servings must be between ${MIN_SERVINGS} and ${MAX_SERVINGS}.`);
+  }
+  return scaleCatalogFood(food, servings * servingGramsOf(food));
+}
+
+/**
+ * Convierte los macros de **una porción** editados a mano a la base por 100 g
+ * del catálogo.
+ *
+ * Es el camino de vuelta de `scaleCatalogFoodByServings`, y el que se necesita
+ * cuando la usuaria corrige una comida que vino del catálogo y elige "editar
+ * el alimento del catálogo". Sin esto habría que hacer la regla de tres en un
+ * componente, que es exactamente donde `AGENTS.md` no quiere cálculos que
+ * terminan sugiriendo carbohidratos.
+ */
+export function catalogEntryFromPortion(
+  base: CatalogFood,
+  portion: { grams: number; carbsG: number; proteinG: number; fatG: number; fiberG: number; caloriesKcal: number },
+  seenAt: string,
+): Omit<CatalogFood, 'timesSeen'> | null {
+  if (!Number.isFinite(portion.grams) || portion.grams < MIN_CATALOG_GRAMS) return null;
+  const per100 = (value: number): number => Number(((value / portion.grams) * 100).toFixed(2));
+  const entry: Omit<CatalogFood, 'timesSeen'> = {
+    key: base.key,
+    name: base.name,
+    carbsPer100g: per100(portion.carbsG),
+    proteinPer100g: per100(portion.proteinG),
+    fatPer100g: per100(portion.fatG),
+    fiberPer100g: per100(portion.fiberG),
+    kcalPer100g: per100(portion.caloriesKcal),
+    lastSeenAt: seenAt,
+    ...(base.servingGrams === undefined ? {} : { servingGrams: base.servingGrams }),
+    ...(base.servingLabel === undefined ? {} : { servingLabel: base.servingLabel }),
+  };
+  return isPlausibleCatalogEntry(entry) ? entry : null;
 }
 
 /** Escala una entrada del catálogo a una porción concreta. */
