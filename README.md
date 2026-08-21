@@ -10,7 +10,14 @@ Type 1A is an Android-first, local-first diabetes type 1 companion MVP. It conne
 - explicit recent-insulin context without insulin-on-board estimation;
 - local SQLite timeline for rapid insulin, basal insulin, carbohydrates, meals, and cached CGM;
 - clearly labelled synthetic CGM provider for development;
-- Junction/LibreView EU connector behind the backend;
+- **real sensor connection: LibreLinkUp, on-device, per-installation** — each
+  install links its own follower account from the phone
+  (`apps/mobile/src/sensorConnection.ts`); the backend never sees another
+  user's glucose. See [docs/CONECTAR_SENSOR.md](docs/CONECTAR_SENSOR.md);
+- Junction/LibreView EU connector — implemented in `packages/cgm` and
+  `apps/api`, kept as an alternate backend-mediated path, **not the one in
+  active use** (see [docs/CGM_INTEGRATION_DECISION.md](docs/CGM_INTEGRATION_DECISION.md)
+  for why the original plan changed);
 - Abacus.AI RouteLLM meal vision and descriptive episode insight services;
 - offline manual logging and manual meal fallback;
 - deep-link-ready Quick Entry routes;
@@ -36,11 +43,16 @@ For a physical phone, set `EXPO_PUBLIC_API_BASE_URL` to the backend's LAN URL, f
 
 The backend remains functional without external credentials:
 
-- no Junction key: it uses a visibly labelled synthetic provider;
+- no `CGM_PROVIDER` credentials configured: it falls back to a visibly
+  labelled synthetic provider (this applies to Junction; the real path,
+  LibreLinkUp, doesn't need backend credentials at all — each user connects
+  their own account from the phone);
 - no Abacus key: meal analysis falls back to manual entry;
 - no internet: Quick Entry and the local timeline continue working.
 
-See [docs/CGM_INTEGRATION_DECISION.md](docs/CGM_INTEGRATION_DECISION.md) before enabling real FreeStyle data.
+See [docs/CGM_INTEGRATION_DECISION.md](docs/CGM_INTEGRATION_DECISION.md) — it
+records why the original plan (Junction) changed to what's actually running
+(LibreLinkUp) — before touching CGM connection code.
 
 Implementation references are recorded in [docs/RESEARCH_SOURCES.md](docs/RESEARCH_SOURCES.md).
 

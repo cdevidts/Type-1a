@@ -116,9 +116,17 @@ Reporta los cambios y espera aprobación antes del build.
   Falta el redeploy (ver `DEEPAGENT_REDEPLOY_PROMPT.md`, prompt consolidado
   con la Fase 17) y, después, la fase de `apps/mobile` que lo consuma —
   todavía sin número de fase asignado en el roadmap.
-- **Quitar `LIBRELINKUP_EMAIL`/`PASSWORD`** del entorno de Abacus cuando
-  Verónica confirme que su cuenta quedó conectada desde la app. Va como
-  addendum opcional del mismo prompt consolidado, no en el cuerpo principal.
+- **Quitar `LIBRELINKUP_EMAIL`/`PASSWORD`** del entorno de Abacus: Verónica
+  ya confirmó (2026-08-21) que su cuenta propia funciona, pero pidió
+  DIFERIRLO al día de producción real, no dispararlo ahora. No preguntar de
+  nuevo salvo que ella lo traiga; el addendum ya está escrito en
+  `DEEPAGENT_REDEPLOY_PROMPT.md` para cuando llegue el momento.
+- **Docs que describían Junction como la ruta real quedaron corregidas
+  (2026-08-21)**: `README.md`, `HANDOFF_ES.md`, `MVP_IMPLEMENTATION_BRIEF.md`.
+  El proveedor real es LibreLinkUp on-device; Junction sigue en el código
+  como alternativa sin uso activo. Si escribes un doc nuevo que mencione cómo
+  se conecta el sensor, parte de `CGM_INTEGRATION_DECISION.md`, no de
+  `MVP_IMPLEMENTATION_BRIEF.md` ni `HANDOFF_ES.md` (son registro histórico).
 - **Nada de gestos ni notificaciones se puede dar por verificado sin
   dispositivo.** El swipe de la Fase 16 pasó una corrida entera roto porque
   `pnpm verify` no dice nada al respecto.

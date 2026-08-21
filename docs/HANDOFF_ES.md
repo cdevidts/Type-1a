@@ -23,6 +23,15 @@ No se generó un APK firmado porque este entorno no tiene Android SDK, cuenta Ex
 
 ## Ruta FreeStyle seleccionada
 
+> **⚠️ Actualización 2026-08-21: esta sección describe la decisión original
+> (2026-08-12), NO lo que corre hoy.** El proveedor real en producción es
+> **LibreLinkUp**, conectado por cada usuaria desde su propio teléfono — no
+> Junction, y el punto 4 de abajo ("LibreLinkUp no se usa") quedó obsoleto.
+> Detalle completo de qué cambió y por qué:
+> [`CGM_INTEGRATION_DECISION.md`](CGM_INTEGRATION_DECISION.md). Guía de
+> usuaria vigente: [`CONECTAR_SENSOR.md`](CONECTAR_SENSOR.md). El resto de
+> este documento queda como registro histórico de la entrega del MVP.
+
 1. `freestyle_libre` de Junction en región EU mediante una práctica LibreView es la ruta de producción.
 2. Mock determinístico o FreeStyle sintético de Junction es la ruta de validación.
 3. Exportación CSV de LibreView queda como fallback histórico; el parser y sus pruebas están incluidos.

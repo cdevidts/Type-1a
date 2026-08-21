@@ -225,9 +225,10 @@ docs/
 ## `apps/api` — backend Fastify
 
 - `server.ts` — entry point.
-- `app.ts` — arma la app Fastify: wiring de CGM provider (mock vs Junction
-  según `CGM_PROVIDER`), servicios de AI, rutas HTTP, validación con
-  `MealEpisodeMetricsSchema` y schemas de `packages/schemas`.
+- `app.ts` — arma la app Fastify: wiring de CGM provider (`mock` /
+  `librelinkup` — el real en uso — / `junction`, según `CGM_PROVIDER`; ver
+  `docs/CGM_INTEGRATION_DECISION.md`), servicios de AI, rutas HTTP,
+  validación con `MealEpisodeMetricsSchema` y schemas de `packages/schemas`.
 - `config.ts` — `readConfig()` parsea `process.env` con Zod
   (`EnvironmentSchema`) — única fuente de verdad de variables de entorno.
 - `junction-link.ts` — flujo de conexión/link de cuenta Junction.

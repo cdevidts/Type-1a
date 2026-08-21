@@ -33,7 +33,7 @@ en vez de abrir la pregunta de nuevo.
 | 2026-08-19 | Registro de bugs de interfaz del Resumen encontrados en dispositivo (Fase 13, solo documentación) | No — solo `docs/ROADMAP_V0.2.md`. |
 | 2026-08-19 | Fase 13 Grupo A: bug de unidades mg/dL↔mmol/L (`meal.ts`, `GlucoseCard`, `GlucoseChart`, `CorrectionModal`, `EntryModal`, `notifications.ts`, `db.ts`) + fixes de layout del Resumen | 🟡 Matizado. `apps/api` en sí no se tocó, pero sí `packages/ai/src/prompts.ts` (`glucoseInsightSystemPrompt`), que `apps/api/src/app.ts` importa. El backend desplegado sigue corriendo con el prompt viejo hasta el redeploy — ver el punto "mg/dL" más abajo, sigue pendiente. |
 | 2026-08-19 | Fase 13 Grupo B: `SafeAreaView` de los modales, lectura tolerante de filas, `ErrorBoundary`, botón "Reintentar" del Resumen, onboarding, Ajustes en 4 pestañas | No. `apps/api` y `packages/ai` no se tocaron. |
-| 2026-08-19 | Fase 13 Grupo C: conexión al sensor por usuaria, cetonas, macronutrientes | No. `apps/api/src/app.ts` se tocó (inyecta `sha256Hex`), pero sin cambio de comportamiento. **Pendiente para el redeploy**: quitar `LIBRELINKUP_EMAIL`/`LIBRELINKUP_PASSWORD` del entorno — condicionado a que Verónica confirme su cuenta propia. Ver la nota al final del prompt consolidado. |
+| 2026-08-19 | Fase 13 Grupo C: conexión al sensor por usuaria, cetonas, macronutrientes | No. `apps/api/src/app.ts` se tocó (inyecta `sha256Hex`), pero sin cambio de comportamiento. **Diferido a propósito**: quitar `LIBRELINKUP_EMAIL`/`LIBRELINKUP_PASSWORD` del entorno — Verónica ya confirmó su cuenta propia (2026-08-21), pero pidió dejarlo para el día de producción real, no para este redeploy. Ver la nota al final del prompt consolidado. |
 | 2026-08-20 | Fase 14: pantalla de Nutrición | No — solo `packages/domain`, `packages/schemas`, `apps/mobile`. |
 | 2026-08-20 | Fase 15: catálogo de alimentos propio (local) + macros de la IA en el registro de comida | No para lo construido. |
 | 2026-08-20 | Fase 16: barra inferior, swipe, iconos Lucide, marcas de hora | No — solo `apps/mobile`. |
@@ -61,11 +61,12 @@ junta en el prompt consolidado de más abajo:
 3. **Sigue pendiente desde la Fase 13**: `glucoseInsightSystemPrompt` con la
    instrucción explícita de decir "mg/dL" (riesgo bajo: número correcto,
    posible palabra de unidad equivocada en la prosa).
-4. **Opcional, condicionado**: quitar `LIBRELINKUP_EMAIL`/`LIBRELINKUP_PASSWORD`
-   del entorno — solo si Verónica confirma que su cuenta propia funciona
-   conectada desde la app (Fase 13 Grupo C). Ver la nota al final del
-   prompt consolidado; no está incluido en el cuerpo principal porque es una
-   decisión suya, no algo que se pueda inferir del código.
+4. **Diferido a propósito, no pendiente de confirmación.** Quitar
+   `LIBRELINKUP_EMAIL`/`LIBRELINKUP_PASSWORD` del entorno — Verónica ya
+   confirmó (2026-08-21) que su cuenta propia funciona conectada desde la
+   app, pero pidió dejarlo para el día que se vaya a producción real, no
+   para este redeploy. Ver la nota al final del prompt consolidado. No
+   preguntar de nuevo salvo que ella lo traiga.
 
 Cómo verificar, contra el servidor real, qué tan atrás está el deploy:
 
@@ -152,12 +153,21 @@ anónima: solo nombres de alimentos y macros por 100 g, ningún dato de
 usuaria, glucosa, insulina ni fotos pasa nunca por esos dos endpoints.
 ```
 
-### Opcional — agregar SOLO si Verónica ya confirmó su propia conexión al sensor
+### Diferido a propósito — NO agregar todavía
+
+> **2026-08-21: Verónica confirmó que su cuenta LibreLinkUp ya está
+> conectada desde la app.** Aun así pidió explícitamente **dejar esto para
+> el día que se vaya a producción real**, no dispararlo en este redeploy.
+> No agregues el párrafo de abajo al prompt hasta que ella lo pida de nuevo.
+> Quitar la credencial no afecta a nadie más: cada instalación conecta su
+> propia cuenta desde el teléfono (`apps/mobile/src/sensorConnection.ts`),
+> así que esta variable del backend no es un requisito para que otra
+> persona pueda conectar su sensor — es una credencial heredada sin uso en
+> la ruta activa.
 
 Desde la Fase 13 Grupo C, cada instalación conecta su propio LibreLinkUp
-desde el teléfono; el backend ya no necesita una credencial global. Si
-Verónica ya confirmó que su cuenta quedó conectada desde la app, agregar al
-mismo prompt antes de enviarlo:
+desde el teléfono; el backend ya no necesita una credencial global. Cuando
+llegue el momento, agregar al mismo prompt antes de enviarlo:
 
 ```
 4. Además, quita LIBRELINKUP_EMAIL y LIBRELINKUP_PASSWORD del entorno: cada
