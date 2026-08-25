@@ -1,4 +1,4 @@
-# Prompt para la corrida siguiente — Fase 19
+# Prompt para la corrida siguiente — 3 fixes rápidos + Fase 19
 
 Copiar y pegar **todo lo que está dentro del bloque**. Está escrito para que la
 corrida no gaste tokens re-explorando: las decisiones ya están tomadas y los
@@ -9,14 +9,60 @@ archivos y constantes ya están localizados.
 > Es el punto 6 del checklist de `CLAUDE.md § Cierre de corrida`. Una corrida
 > que termina sin dejar este prompt apuntando a lo próximo no está cerrada.
 
+> **Añadido 2026-08-22**: Verónica identificó tres problemas nuevos al
+> revisar el roadmap. Ninguno de los tres necesita build nativo, así que se
+> agrupan ANTES de la Fase 19 (que sí lo necesita) para gastar un solo build
+> al final — mismo criterio que ya se usó para las Fases 16-18-21-22.
+
 ---
 
 ```
-Fase 19 del roadmap: notificaciones distinguibles entre sí. A diferencia de
-las Fases 16-18, esta SÍ toca configuración nativa y necesita su propio build.
+Corrida combinada: tres correcciones sin build nativo (partes A, B, C) más
+la Fase 19 del roadmap (parte D, notificaciones — SÍ necesita build). Un
+solo build al final, cuando las cuatro partes estén en verde.
 
-Lee primero docs/ROADMAP_V0.2.md § "Fase 19" — la investigación ya está hecha
-y la decisión ya está tomada, NO la re-derives. Invoca /iconography (disparo
+═══ PARTE A — "Nueva entrada" con foto no alimenta el catálogo ═══
+
+Lee docs/ROADMAP_V0.2.md § Fase 21, sub-sección "Bug chico y aparte,
+encontrado revisando esto". Ya está diagnosticado: en apps/mobile/App.tsx,
+saveEntry() no llama a recordCatalogFoods()/catalogEntriesFrom() cuando hay
+draft.analysis — confirmMeal() sí lo hace para el mismo caso (comida con
+foto). Agrega la misma llamada, mismo patrón que confirmMeal (try/catch:
+el catálogo es comodidad, un fallo suyo NUNCA debe impedir que la comida se
+guarde). Chico y aislado — no toques nada más de la Fase 21 (la unificación
+completa de tipos de entrada es aparte, no cabe en esta corrida).
+
+═══ PARTE B — Bug: un número de dos dígitos pierde el primero ═══
+
+Lee docs/ROADMAP_V0.2.md § Fase 25 COMPLETO antes de tocar código. Tiene la
+hipótesis (`selectTextOnFocus` + re-render en cada tecla, presente en casi
+todos los campos numéricos) y los pasos de investigación. REPRODUCE PRIMERO
+en el bundle/build, no asumas la causa. Si el patrón compartido es el
+culpable, corrígelo ahí (no campo por campo, o queda arreglado en tres
+modales y roto en un cuarto). Si no puedes confirmar la causa con certeza,
+DILO explícitamente al entregar en vez de aplicar un fix a ciegas — es un
+bug de foco/teclado, la clase de cosa que un test de JS puro no reproduce.
+
+═══ PARTE C — Episodio no reconoce insulina adicional dentro de la ventana ═══
+
+Lee docs/ROADMAP_V0.2.md § Fase 23 COMPLETO — ya identifica el punto exacto:
+getInsulinEventsForMeal (apps/mobile/src/db.ts:1370) busca insulina en una
+ventana de -90/+60 min desde la comida, pero el seguimiento del episodio
+dura hasta 3h (el mayor de mealAlarmOffsets) — una corrección a los 90-150
+min cae fuera de esa consulta y el episodio nunca la ve.
+Trabajo: ampliar la ventana de asociación al tamaño real del seguimiento del
+episodio; pasar TODAS las dosis dentro de esa ventana a MealEpisodeMetrics
+(hoy solo acepta una, rapidInsulin); actualizar glucoseInsightSystemPrompt
+para que pueda mencionarlas descriptivamente.
+FRONTERA DE SEGURIDAD: el insight puede decir "se registró una corrección de
+N U a las 2h" — NUNCA evaluar si fue acertada, ni sugerir si hacía falta una.
+containsTherapyRecommendation sigue filtrando toda salida. Esto SÍ necesita
+domain-safety-reviewer (tocas packages/domain y el prompt de packages/ai).
+
+═══ PARTE D — Fase 19: notificaciones distinguibles ═══
+
+Lee docs/ROADMAP_V0.2.md § "Fase 19" — la investigación ya está hecha y la
+decisión ya está tomada, NO la re-derives. Invoca /iconography (disparo
 automático: tocas cómo se ve una notificación).
 
 POR QUÉ IMPORTA: es seguridad, no estética. Con las tres alarmas
@@ -60,42 +106,62 @@ TRAMPAS YA VERIFICADAS EN EL CÓDIGO (no las re-investigues):
    silencioso y **nunca** debe sonar: se repone cada ~15 min.
 
 CIERRE OBLIGATORIO (CLAUDE.md § Cierre de corrida):
-- pnpm verify en verde.
+- pnpm verify en verde (las cuatro partes).
 - npx expo export:embed --eager --platform android --dev false desde
   apps/mobile, ANTES de gastar build. Metro NO reescribe .js→.ts en imports
   relativos: tsc y vitest pasan y el build muere. Ya pasó dos veces.
 - Iconos SIEMPRE por subpath (Metro no hace tree-shaking; medido 1.263 →
   3.088 módulos por el barrel, 1.325 hoy por subpath). Kebab-case.
     import Plus from 'lucide-react-native/icons/plus';   // ✅
-- domain-safety-reviewer: el texto de una alarma es superficie de seguridad
-  (habla de dosis y de corrección). OJO: el subagente puede fallar por límite
-  de gasto de la cuenta; si pasa, corre /safety-audit tú mismo y DILO
-  explícitamente al entregar, no lo des por hecho.
+- domain-safety-reviewer: obligatorio por la parte C (tocas packages/domain
+  y packages/ai) y por el texto de las alarmas de la parte D. OJO: el
+  subagente puede fallar por límite de gasto de la cuenta; si pasa, corre
+  /safety-audit tú mismo y DILO explícitamente al entregar, no lo des por
+  hecho.
 - docs/CODE_MAP.md y docs/AI_CHAT_ARCHITECTURE.md (§3: programar alarmas ya
-  está listado; actualiza la nota si cambia la forma).
-- docs/DEEPAGENT_REDEPLOY_PROMPT.md: si no tocas apps/api, anótalo en la tabla.
-  El redeploy de la Fase 17/18/catálogo compartido YA SE HIZO (2026-08-21).
-- docs/ROADMAP_V0.2.md: marca la Fase 19 completada.
-- Reescribe docs/PROMPT_SIGUIENTE_CORRIDA.md apuntando a la Fase 20.
+  está listado, actualízalo si cambia la forma; agrega la ampliación de
+  MealEpisodeMetrics con múltiples dosis si aplica a alguna fila existente).
+- docs/DEEPAGENT_REDEPLOY_PROMPT.md: la parte C SÍ toca packages/ai — si
+  cambia el prompt de insight, anótalo como pendiente de redeploy nuevo (no
+  lo dispares). Las partes A y B no tocan apps/api.
+- docs/ROADMAP_V0.2.md: marca 19, 23, y el bug de la parte A/25 (si se
+  resolvieron con certeza) como completados. NO toques la Fase 21 grande
+  (la unificación completa de tipos de entrada) ni la 24 (gráficos con
+  eventos) en esta corrida — la 21 necesita su propio diseño de datos y la
+  24 necesita conversarse con Verónica antes de construir nada.
+- Reescribe docs/PROMPT_SIGUIENTE_CORRIDA.md apuntando a la Fase 20 (o a lo
+  que haya quedado pendiente de esta corrida, si algo no se terminó).
 - Commit + push a claude/revision-build-prep-b6p20n.
 
 Y AVISA AL ENTREGAR: una notificación no se puede dar por verificada sin
-probarla en el teléfono, igual que un gesto. Di qué quedó sin probar.
+probarla en el teléfono, igual que un gesto, igual que el bug de la parte B.
+Di explícitamente qué quedó sin probar en cada una.
 
-Reporta los cambios y espera aprobación antes del build.
+Haz UN build al final, solo si las cuatro partes quedaron verdes. Reporta
+los cambios y espera aprobación antes de lanzarlo.
 ```
 
 ---
 
-## Por qué la Fase 19 y no la 20
+## Por qué esta combinación y no otra
 
-- **Las dos necesitan build propio**, así que ya no hay ruta "sin build" que
-  optimizar; se ordenan por valor.
-- **La 19 es seguridad**, la 20 es comodidad. Una alarma que se ignora por
-  fatiga es un riesgo clínico; un widget que falta es una molestia.
-- La 20 (widget 4×3) además arrastra una dependencia nueva con config plugin
-  (`react-native-android-widget` o `expo-widgets`), que conviene evaluar sin
-  apuro.
+- **A y B son baratas y no necesitan build** — tiene sentido meterlas en la
+  misma corrida que ya va a terminar en un build (la 19), en vez de gastar
+  un ciclo de "corrida sin build" solo para dos fixes chicos.
+- **C es más grande, pero tampoco necesita build**, y toca los mismos
+  archivos de dominio/IA que ya se van a revisar con `domain-safety-reviewer`
+  en esta corrida — agruparla evita pedirle una segunda revisión de
+  seguridad al `domain-safety-reviewer` en la corrida siguiente por algo que
+  se pudo hacer en esta.
+- **D (Fase 19) es la única que obliga a un build**, así que se hace al
+  final, después de que A/B/C ya estén verdes — si algo de A/B/C sale mal,
+  se puede parar antes de gastar el build.
+- **La Fase 21 grande (unificación de tipos de entrada) y la 24 (gráficos
+  con eventos) quedan afuera a propósito**: la 21 es un rediseño de datos
+  que merece su propia corrida dedicada, y la 24 explícitamente necesita
+  conversarse con Verónica antes de construir nada — meterlas acá sería
+  exactamente el tipo de corrida mal dimensionada que ya causó problemas
+  antes (Fases 17/18 juntas fue demasiado en una sola pasada).
 
 ## Estado de la ruta
 
@@ -104,8 +170,15 @@ Reporta los cambios y espera aprobación antes del build.
 | ~~16~~ | ~~Barra inferior, swipe, iconos, marcas de hora~~ | Hecho (`98acb218`) | No |
 | ~~17~~ | ~~Editar comida con IA~~ | Sin build aún | Hecho (2026-08-21) |
 | ~~18~~ | ~~Catálogo editable, porciones, pregunta de 3 salidas~~ | Sin build aún | Hecho (comparte el de la 17) |
-| **19** | Notificaciones distinguibles | **Sí, propio** | No |
+| **19** | Notificaciones distinguibles (parte D de la corrida siguiente) | **Sí, propio** | No |
+| — | Parte A: bug catálogo en "Nueva entrada" | No | No |
+| — | Parte B: bug del primer dígito | No | No |
+| **23** | Parte C: episodio no ve insulina adicional en la ventana | No | Posible (si cambia el prompt de insight) |
 | 20 | Widget 4×3 de pantalla de inicio | **Sí, propio** | No |
+| 21 | 🟡 Ampliada: un solo tipo de entrada unificado. Necesita diseño de datos propio, no cabe en una corrida más. | Por definir | Por definir |
+| 22 | Animación del swipe | Sin build (JS/Animated) | No |
+| 24 | Gráficos de reportes con eventos — **conversar enfoque con Verónica antes** | Sin build | No |
+| 25 | Bug del primer dígito, si no se resuelve en la parte B | No | No |
 
 ## Deuda conocida, para no re-descubrirla
 
@@ -130,14 +203,34 @@ Reporta los cambios y espera aprobación antes del build.
 - **Nada de gestos ni notificaciones se puede dar por verificado sin
   dispositivo.** El swipe de la Fase 16 pasó una corrida entera roto porque
   `pnpm verify` no dice nada al respecto.
-- **Fase 21 (nueva, 2026-08-21):** editar una lectura de glucosa automática o
-  una entrada empaquetada NO tiene el mismo poder que crearla (sin foto/IA,
-  sin macros, sin calculadora) — la Fase 17 solo lo resolvió para comidas
-  standalone. Ver `docs/ROADMAP_V0.2.md` § Fase 21 antes de asumir que ya
-  está.
+- **Fase 21 (2026-08-21, ampliada 2026-08-22):** ya no es solo "editar
+  glucosa/entrada con el poder de Nueva entrada" — Verónica pidió colapsar
+  TODOS los tipos de `TimelineItem` (`insulin`/`carbs`/`meal`/`glucose`/
+  `note`/`entry`) en un solo concepto de entrada, con el mismo menú editable
+  siempre. Es un rediseño de datos, no un fix de formulario — necesita su
+  propia corrida de diseño antes de estimarse. Incluye que el botón "Carbos"
+  deje de ser un número suelto. Ver `docs/ROADMAP_V0.2.md` § Fase 21.
 - **Fase 22 (nueva, 2026-08-21):** el swipe ya navega pero sin animación —
   salta de golpe al soltar en vez de seguir el dedo. Ver `docs/ROADMAP_V0.2.md`
   § Fase 22.
+- **Fase 23 (nueva, 2026-08-22):** el episodio post-comida no ve una
+  corrección dada dentro de la ventana de seguimiento (3h) — el insight de
+  IA puede describir una bajada sin saber que hubo una segunda dosis.
+  Diagnosticado con línea exacta (`db.ts:1370`). Va como parte C del próximo
+  prompt. Ver `docs/ROADMAP_V0.2.md` § Fase 23.
+- **Fase 24 (nueva, 2026-08-22):** los gráficos de reportes no muestran
+  eventos (comidas, insulina) sobre la curva de glucosa. **Conversar el
+  enfoque con Verónica antes de construir** — dos ideas sobre la mesa, sin
+  decidir. Ver `docs/ROADMAP_V0.2.md` § Fase 24.
+- **Fase 25 (nueva, 2026-08-22):** bug reportado en dispositivo — un número
+  de dos dígitos pierde el primero al escribirlo, en varios modales.
+  Hipótesis: `selectTextOnFocus` + re-render por tecla. Va como parte B del
+  próximo prompt; necesita reproducirse en dispositivo antes de asumir la
+  causa. Ver `docs/ROADMAP_V0.2.md` § Fase 25.
+- **Bug chico, va como parte A del próximo prompt:** `saveEntry` (App.tsx,
+  camino de "Nueva entrada" con foto) no llama a `recordCatalogFoods` —
+  `confirmMeal` sí. Dos formas de registrar una comida con foto, una
+  alimenta el catálogo y la otra no.
 - **2026-08-21**: el redeploy consolidado YA SE DISPARÓ y se verificó en
   vivo (modo de edición por instrucción + catálogo compartido, ambos 200).
   `apps/api` está al día con este repo.

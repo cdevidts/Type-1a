@@ -323,8 +323,11 @@ persistencia de datos de salud, o `packages/cgm`.
 | **18** | **Catálogo de comidas editable** (pantalla propia), porciones, y la pregunta de "¿editar la del catálogo o crear una nueva?". Ver detalle abajo. | 15, 17 |
 | **19** | **Notificaciones distinguibles**: un icono, un color y un título propios por tipo de alarma. **Necesita build nativo** (los iconos de notificación de Android son recursos drawable). Ver detalle abajo. | 16 (usa el sistema de iconos) |
 | **20** | **Widget de pantalla de inicio** 4×3. **Necesita build nativo** (config plugin). Ver detalle abajo. | 8 (para los accesos al chat), 16 |
-| **21** | **Editar CUALQUIER entrada con el mismo poder que "Nueva entrada"** (glucosa automática, entrada empaquetada): foto + IA, macros, calculadora de dosis. Es el alcance que la Fase 17 prometía en su título y no entregó — ver detalle abajo. | 17 |
+| **21** | 🟡 **Ampliada 2026-08-22.** Un solo tipo de entrada, editable con el mismo poder que crearla — colapsa `insulin`/`carbs`/`meal`/`glucose`/`note`/`entry` en un concepto: cualquier valor guardado es una entrada con el resto de campos vacíos. Incluye que el botón "Carbos" deje de ser un número suelto y abra la sección de comida. Ver detalle abajo. | 17 |
 | **22** | **Animación del swipe entre pantallas.** El gesto ya navega (corregido 2026-08-21); falta que la pantalla siguiente se vea aparecer mientras se desliza, en vez de saltar de golpe al soltar. Ver detalle abajo. | 16 |
+| **23** | **Episodio post-comida no reconoce insulina adicional dentro de la ventana** (ej. una corrección a los 90 min). El insight de IA describe la bajada sin saber que hubo una segunda dosis. Ver detalle abajo. | 12 |
+| **24** | **Los gráficos de reportes deben mostrar los eventos**, no solo la curva de glucosa. Enfoque **a conversar con Verónica antes de construir** — dos ideas sobre la mesa, ninguna decidida. Ver detalle abajo. | 9 |
+| **25** | **Bug: un número de dos dígitos pierde el primero al escribirlo**, en varios modales. Hipótesis: `selectTextOnFocus` + re-render en cada tecla. Necesita reproducirse en dispositivo. Ver detalle abajo. | — |
 
 No se numeró por prioridad de negocio sino por dependencia técnica — el
 orden de ejecución real se acuerda con Verónica fase por fase, no se asume.
@@ -2053,43 +2056,73 @@ de entregar el widget en una corrida "sin build".
   dosis por su cuenta.
 - Depende de la Fase 8 para las celdas de chat.
 
-## Fase 21 — Editar cualquier entrada con el mismo poder que "Nueva entrada" (planificada 2026-08-21)
+## Fase 21 — Un solo tipo de entrada, editable con el mismo poder que crearla (planificada 2026-08-21, ampliada 2026-08-22)
 
 **Es el alcance que la Fase 17 prometía en el título de la tabla y no
-entregó** (ver el aviso al principio de la Fase 17). Confirmado con
-Verónica el 2026-08-21: quiere que editar una lectura automática de glucosa,
-o una entrada empaquetada, tenga **el mismo formulario y el mismo poder que
-crear una "Nueva entrada"** (`EntryModal.tsx`, Fase 5) — no solo los campos
-sueltos que tiene hoy.
+entregó** (ver el aviso al principio de la Fase 17). Confirmado y **ampliado**
+por Verónica el 2026-08-22: no es solo que glucosa/entrada empaquetada deban
+editarse con el poder de "Nueva entrada" — es que **debería dejar de existir
+la diferencia**. Su pedido textual: "todas deben ser el mismo tipo de
+entrada con el mismo menú editable. Es decir que cualquier valor guardado de
+cualquier tipo es lo mismo que una nueva entrada pero con el resto de campos
+vacíos, así al editar siempre se pueden cambiar todos los campos."
 
-### Qué falta, concretamente
+Esto es más grande que un fix de formulario: hoy `TimelineItem` (`types.ts`)
+tiene **seis variantes distintas** (`insulin`, `carbs`, `meal`, `glucose`,
+`note`, `entry`), cada una con su propio schema, su propia fila de SQLite, y
+—salvo `entry`, que ya es el intento de unificación de la Fase 5— su propio
+camino de guardado y edición. El pedido es colapsar esa distinción: un
+registro de solo carbohidratos no es un "tipo" separado de una comida
+completa, es una entrada con la mayoría de sus campos vacíos.
 
-Hoy `TimelineEditPayload` (`apps/mobile/src/types.ts`) para `kind: 'glucose'`
-y `kind: 'entry'` solo acepta: glucosa (si es manual), un número plano de
-carbohidratos, descripción de texto libre, insulina rápida, insulina basal y
-nota. Comparado con lo que ya tiene `EntryModal.tsx` al crear:
+### Qué falta, concretamente (versión angosta, ya diagnosticada)
 
-- **Foto con estimación de IA** — falta al editar.
-- **Macros** (proteína, grasa, fibra) — falta al editar.
-- **Calculadora de dosis** (`calculateMealBolus`) — falta al editar.
+Hoy `TimelineEditPayload` para `kind: 'glucose'` y `kind: 'entry'` solo
+acepta: glucosa (si es manual), un número plano de carbohidratos, descripción
+de texto libre, insulina rápida, insulina basal y nota. Comparado con lo que
+ya tiene `EntryModal.tsx` al crear, falta al editar: **foto con estimación de
+IA**, **macros** (proteína, grasa, fibra), y la **calculadora de dosis**
+(`calculateMealBolus`).
+
+### Bug chico y aparte, encontrado revisando esto: "Nueva entrada" no alimenta el catálogo
+
+`saveEntry` (`App.tsx`, el camino de `EntryModal`/"Nueva entrada" con foto)
+**no llama a `recordCatalogFoods`** cuando hay análisis de IA — solo lo hace
+`confirmMeal` (el camino de `MealModal`, comida standalone). Dos formularios
+que hacen lo mismo (registrar una comida con foto) alimentan el catálogo de
+forma distinta: uno sí, el otro no. Es independiente de la unificación de
+arriba y barato de corregir (una llamada más, mismo patrón que ya existe en
+`confirmMeal`) — candidato a resolverse antes, no hace falta esperar al
+rediseño completo.
+
+### La consecuencia directa que Verónica señaló por separado: el botón "Carbos"
+
+El acceso rápido "Carbos" (`NumericEntryModal`, vía `registerNumeric`) hoy
+**solo** guarda un número — no hay foto, no hay IA, no hay opción de
+guardarlo en el catálogo. Con la unificación de arriba esto deja de ser un
+caso especial: "Carbos" pasaría a abrir la misma sección de "agregar una
+comida" que ya existe (con IA opcional y guardado a catálogo opcional), no
+un formulario propio y más pobre. No se construye dos veces.
 
 ### Cómo encararla, para no repetir dos veces el mismo trabajo
 
 `MealEditModal.tsx` (Fase 17) ya resolvió la parte difícil de este problema
 para comidas: los tres modos de IA, la confirmación campo por campo, y el
 guardrail estructural (`MealSnapshotSchema`) que impide que insulina o
-glucosa viajen a la IA. La forma más barata de hacer la Fase 21 es que el
-formulario de edición de `glucose`/`entry` **reuse esos mismos componentes**
-en vez de reconstruirlos — el trabajo nuevo real es conectar la foto/macros
-al `attachEntryToReading`/`updateUnifiedEntryGroup` de `db.ts`, no reinventar
-el modo de edición con IA.
+glucosa viajen a la IA. Reusar esos componentes es más barato que
+reconstruirlos. Pero la versión ampliada probablemente necesita empezar por
+el modelo de datos (¿un solo `UnifiedEntry` en SQLite que reemplace a
+`insulin_events`/`carb_events`/`meal_events`/`cgm_readings` manuales/`notes`
+como filas sueltas, con migración de las que ya existen?) antes de tocar
+ningún formulario — es una decisión de arquitectura, no una de UI, y merece
+su propio diseño antes de estimarla en una corrida.
 
 ### Frontera de seguridad (sin cambios respecto a la Fase 17)
 
 La IA puede proponer macros; **nunca** insulina. Si la entrada ya tiene una
 dosis registrada, ninguna edición asistida por IA la toca ni la ve —
 `MealSnapshotSchema` ya garantiza esto estructuralmente para comidas, y la
-misma regla aplica acá.
+misma regla debe valer para el tipo unificado.
 
 ---
 
@@ -2120,6 +2153,99 @@ test) — el problema es puramente de animación/transición, no de a dónde
 navega. Respetar "Reduce Motion" (`ModalShell` ya lee la preferencia): con
 la preferencia activa, la transición debe seguir siendo instantánea, no
 animada.
+
+## Fase 23 — Episodio post-comida no reconoce insulina adicional dentro de la ventana (identificada 2026-08-22)
+
+Reportado por Verónica: si se registra una corrección **durante** la ventana
+de seguimiento de un episodio (hasta 3h después de la comida), el episodio
+no lo sabe.
+
+### Confirmado contra el código, no supuesto
+
+- `calculateMealEpisodeMetrics` (`packages/domain/src/meal.ts`) recibe **como
+  mucho un** `InsulinEvent` (`rapidInsulin` — el bolo de la comida).
+- `getInsulinEventsForMeal` (`apps/mobile/src/db.ts:1370`) solo busca
+  insulina entre **-90 y +60 minutos** del timestamp de la comida — una
+  corrección a los 90 o 150 minutos, dentro de la misma ventana de
+  seguimiento de 3h, cae fuera de esa consulta y nunca se asocia al episodio.
+- Consecuencia concreta: el insight de IA post-comida
+  (`glucoseInsightSystemPrompt` sobre `MealEpisodeMetrics`) describe una
+  bajada de glucosa a las 3h sin saber que hubo una segunda dosis de por
+  medio — puede leerse como "la comida respondió bien" cuando en realidad
+  respondió una corrección adicional. Las métricas de glucosa en sí (`peak`,
+  `glucose60/120/180`) siguen siendo correctas —vienen del CGM, no de la
+  insulina— pero la interpretación que las acompaña no tiene el contexto
+  completo.
+
+### Alcance
+
+`MealEpisodeMetrics` necesita poder cargar **todas** las dosis de insulina
+registradas dentro de la ventana del episodio (no solo el bolo inicial), y
+el prompt de insight debe recibirlas y poder mencionarlas descriptivamente
+("se registró una corrección de N U a las 2h") — nunca evaluar si la
+corrección fue acertada ni sugerir si hacía falta. Mismo guardrail de
+siempre: `containsTherapyRecommendation` sigue filtrando la salida.
+
+---
+
+## Fase 24 — Los gráficos de reportes deben mostrar los eventos, no solo la glucosa (identificada 2026-08-22)
+
+Pedido de Verónica: un gráfico de glucosa en el reporte PDF/Excel no dice
+**qué pasó** en esos momentos — cuándo hubo una comida, una dosis, una nota.
+Sin eso, el equipo clínico ve la curva pero no el porqué.
+
+**Explícitamente pidió conversar el enfoque antes de construir nada** — no
+elegir por ella. Dos ideas que puso sobre la mesa, ninguna decidida:
+
+1. Gráfico como hoy + una tabla tipo Excel debajo, fila por evento en ese
+   tramo de tiempo.
+2. Gráficos más grandes, con espacio propio para marcar los eventos encima
+   de la curva (íconos o líneas verticales en el punto temporal).
+
+### Antes de decidir (para la conversación, no para adelantarse)
+
+- El reporte ya tiene toda la data cruda que haría falta (`ReportExport` trae
+  `insulin`/`carbs`/`meals` además de `readings`) — esto es una pregunta de
+  **presentación**, no de datos faltantes.
+- El PDF usa SVG inline (`reportExport.ts`) y el Excel usa SheetJS: la opción
+  1 es prácticamente gratis en Excel (ya es una hoja de cálculo) y both
+  requieren layout nuevo en el PDF; la opción 2 es más trabajo de SVG pero
+  más legible de un vistazo. Vale la pena decidir por separado para cada
+  formato en vez de forzar el mismo enfoque a los dos.
+- Con 30 días de historial la cantidad de eventos puede ser alta — cualquier
+  enfoque necesita pensar en densidad (agrupar, paginar, o filtrar por
+  importancia) antes de implementarse, no después.
+
+---
+
+## Fase 25 — Bug: al escribir un número de dos cifras, el primer dígito desaparece (reportado 2026-08-22)
+
+Reportado por Verónica en dispositivo, "en cualquier modal": al escribir un
+número de dos dígitos en un campo numérico, el primero queda reemplazado por
+el segundo (escribir "12" deja "2").
+
+### Hipótesis a verificar en dispositivo (no confirmada aún — no hay forma de reproducir un bug de foco/teclado con un test de JS puro)
+
+`selectTextOnFocus` aparece en prácticamente todos los campos numéricos de la
+app (`NumericEntryModal`, `CorrectionModal`, `MealEditModal`, campos de
+`TimelineDetailModal`, etc.) — es el sospechoso más probable: si el campo
+vuelve a "seleccionar todo" entre el primer y el segundo dígito (por un
+re-render que le hace perder y recuperar foco, en vez de mantenerse
+enfocado con el cursor al final), el segundo dígito escrito reemplaza al
+primero en vez de agregarse después. Encaja con "cualquier modal" — es una
+prop compartida, no un bug de un formulario puntual.
+
+### Cómo investigarlo la próxima corrida
+
+1. Reproducir en el dispositivo real (no en el simulador, puede no
+   reproducirse igual) apuntando a un campo con `selectTextOnFocus`.
+2. Si la hipótesis se confirma, revisar si el campo se re-renderiza con un
+   `value` recalculado en cada `onChangeText` (algo que fuerce al
+   `TextInput` a tratar el cambio como una edición externa en vez de una
+   escritura del usuario) — ese es el patrón que típicamente dispara la
+   re-selección.
+3. Corregir en el patrón compartido si es posible, no campo por campo —
+   evita que quede arreglado en tres modales y roto en un cuarto.
 
 ## Verificación por fase
 
