@@ -136,6 +136,39 @@ que el código compila y pasa tests.
 - No hardcodees claves de Abacus/Junction/firma en ningún archivo que se
   empaquete en `apps/mobile`.
 
+## Auditoría de cambios relacionados (pedido explícito de Verónica, 2026-08-22)
+
+Cuando un cambio de la corrida deja algo relacionado en mal estado —una
+función que debería actualizarse junto con la que tocaste, un dato que
+queda inconsistente, un patrón que ya no aplica en otro lugar del código—,
+clasifícalo en uno de tres niveles antes de decidir qué hacer. No se salta
+en silencio, y **siempre se reporta en texto al cierre de la corrida**, con
+los tres niveles separados — aunque alguno quede vacío, decirlo ("nivel 3:
+nada encontrado") en vez de omitirlo.
+
+1. **Corrección obligatoria — arréglala sin preguntar.** Cualquier cosa
+   donde "lo correcto" no depende de una preferencia de producto: rompe una
+   regla de `AGENTS.md`, corrompe o pierde un dato, deja un test o
+   `pnpm verify` en rojo, o es la consecuencia mecánica directa del cambio
+   que hiciste (una función que llamabas y ahora tiene otra firma, un tipo
+   que ya no cierra).
+2. **Con criterio, según qué tan claras tengas las expectativas de la app.**
+   Cambios de comportamiento relacionados que no rompen nada, pero donde la
+   respuesta correcta depende de una preferencia de producto. Autoevalúa tu
+   propia certeza contra lo ya escrito (`CLAUDE.md`, `AGENTS.md`, decisiones
+   ya tomadas en `docs/ROADMAP_V0.2.md`): si hay un patrón idéntico ya
+   resuelto en el repo o una decisión explícita que lo cubre, decide y
+   avanza — es tu nivel de autonomía. Si es ambiguo (dos caminos razonables,
+   sin precedente claro, o toca un flujo que Verónica diseñó a propósito),
+   NO lo implementes a ciegas: anótalo y pregúntalo **al cierre** de la
+   corrida, no a mitad de camino.
+3. **Para Verónica, siempre — nunca lo decidas tú.** Cualquier cosa que
+   amplíe el alcance de una fase ya aprobada, un cambio de arquitectura no
+   pedido, una decisión de UX que reemplaza un flujo que ella ya definió
+   explícitamente, o cualquier cosa marcada en el roadmap como "conversar
+   antes de construir" (ej. Fase 24). No implementes ninguna opción —
+   repórtalas con 2-3 alternativas concretas y sus tradeoffs.
+
 ## Cierre de corrida — checklist obligatorio
 
 Pedido explícito de Verónica (2026-08-18, ampliado 2026-08-19): la
@@ -143,7 +176,7 @@ documentación se mantiene **en la misma corrida** que el código, no después.
 Si se desactualiza, la corrida siguiente gasta tokens re-explorando lo que ya
 estaba resuelto, y el chat de IA futuro nace ciego a media app.
 
-Antes de dar por terminada cualquier corrida, repasa estos seis puntos. Los
+Antes de dar por terminada cualquier corrida, repasa estos siete puntos. Los
 que no apliquen, se saltan explícitamente — no en silencio.
 
 1. **`pnpm verify` en verde.** Sin excepciones.
@@ -180,6 +213,8 @@ que no apliquen, se saltan explícitamente — no en silencio.
    por subpath, qué necesita redeploy y qué necesita build). Una corrida que
    termina sin dejarlo actualizado no está cerrada: la siguiente arranca
    gastando tokens en re-descubrir lo que esta ya sabía.
+7. **Reporte de la § "Auditoría de cambios relacionados".** En texto, al
+   cierre, con los tres niveles separados — nunca se omite en silencio.
 
 Y si en el camino descubres que estas reglas o las skills del repo no
 alcanzaron para evitar un error, arregla la regla o la skill en la misma

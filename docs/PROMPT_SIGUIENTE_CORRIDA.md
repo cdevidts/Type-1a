@@ -14,6 +14,19 @@ archivos y constantes ya están localizados.
 > agrupan ANTES de la Fase 19 (que sí lo necesita) para gastar un solo build
 > al final — mismo criterio que ya se usó para las Fases 16-18-21-22.
 
+> **Corrección 2026-08-22 (importante, ya aplicada abajo):** Verónica
+> corrigió el alcance de la Parte C (no es solo insulina, es TODO evento
+> dentro de la ventana) y de la Fase 21 (no es unificar los seis tipos de
+> `TimelineItem` en una tabla — es el menú de edición uniforme + fusionar
+> "Carbos"/"Rápida" en "Comida"). La Fase 21 ya acotada no entra en esta
+> corrida por tamaño, pero queda lista como la siguiente.
+
+> **Nuevo, pedido explícito de Verónica (2026-08-22):** esta corrida aplica
+> `CLAUDE.md § "Auditoría de cambios relacionados"` — clasifica en 3 niveles
+> cualquier cosa relacionada que encuentre mal mientras trabaja, y reporta
+> los tres en texto al cierre. Ver el punto correspondiente en el CIERRE
+> OBLIGATORIO más abajo.
+
 ---
 
 ```
@@ -43,21 +56,34 @@ modales y roto en un cuarto). Si no puedes confirmar la causa con certeza,
 DILO explícitamente al entregar en vez de aplicar un fix a ciegas — es un
 bug de foco/teclado, la clase de cosa que un test de JS puro no reproduce.
 
-═══ PARTE C — Episodio no reconoce insulina adicional dentro de la ventana ═══
+═══ PARTE C — El episodio debe capturar TODO lo que pasa en su ventana ═══
 
-Lee docs/ROADMAP_V0.2.md § Fase 23 COMPLETO — ya identifica el punto exacto:
-getInsulinEventsForMeal (apps/mobile/src/db.ts:1370) busca insulina en una
-ventana de -90/+60 min desde la comida, pero el seguimiento del episodio
-dura hasta 3h (el mayor de mealAlarmOffsets) — una corrección a los 90-150
-min cae fuera de esa consulta y el episodio nunca la ve.
-Trabajo: ampliar la ventana de asociación al tamaño real del seguimiento del
-episodio; pasar TODAS las dosis dentro de esa ventana a MealEpisodeMetrics
-(hoy solo acepta una, rapidInsulin); actualizar glucoseInsightSystemPrompt
-para que pueda mencionarlas descriptivamente.
-FRONTERA DE SEGURIDAD: el insight puede decir "se registró una corrección de
-N U a las 2h" — NUNCA evaluar si fue acertada, ni sugerir si hacía falta una.
-containsTherapyRecommendation sigue filtrando toda salida. Esto SÍ necesita
-domain-safety-reviewer (tocas packages/domain y el prompt de packages/ai).
+Lee docs/ROADMAP_V0.2.md § Fase 23 COMPLETO (ampliada 2026-08-22) antes de
+escribir nada — el alcance NO es solo insulina, es cualquier evento dentro
+de la ventana. Ya identifica el punto exacto: getInsulinEventsForMeal
+(apps/mobile/src/db.ts:1370) busca insulina en una ventana de -90/+60 min
+desde la comida, pero el seguimiento del episodio dura hasta 3h — y ninguna
+otra clase de evento (carbohidratos, actividad, nota) entra jamás a
+calculateMealEpisodeMetrics.
+LA PARTE QUE MÁS IMPORTA, no te la saltes: packages/domain/src/macro-glucose.ts
+(buildMacroGlucoseComparison) y nutrition-insights.ts (buildNutritionInsights)
+HOY NO EXCLUYEN episodios confundidos por un evento dentro de su horizonte —
+una colación a las +2h puede leerse como "efecto tardío de grasa/proteína"
+de la comida original. Sin esto, el patrón que la app le muestra a Verónica
+puede estar hecho de ruido sin que nadie lo sepa.
+Trabajo: (1) ampliar la captura a TODOS los eventos dentro de la ventana de
+seguimiento del episodio (insulina de cualquier tipo, carbohidratos, activi-
+dad, notas), guardado como contexto descriptivo; (2) actualizar
+glucoseInsightSystemPrompt para que pueda mencionarlos descriptivamente;
+(3) hacer que buildMacroGlucoseComparison y buildNutritionInsights EXCLUYAN
+de sus promedios cualquier episodio con un evento confundente en su
+horizonte — esta parte (3) es la que arregla la correlación, las partes
+(1)-(2) sin ella son solo cosmética.
+FRONTERA DE SEGURIDAD: todo esto es descriptivo. El insight puede decir "se
+registró una corrección de N U a las 2h" — NUNCA evaluar si fue acertada, ni
+sugerir si hacía falta una. containsTherapyRecommendation sigue filtrando
+toda salida. Esto SÍ necesita domain-safety-reviewer (tocas packages/domain
+y el prompt de packages/ai).
 
 ═══ PARTE D — Fase 19: notificaciones distinguibles ═══
 
@@ -125,12 +151,20 @@ CIERRE OBLIGATORIO (CLAUDE.md § Cierre de corrida):
   cambia el prompt de insight, anótalo como pendiente de redeploy nuevo (no
   lo dispares). Las partes A y B no tocan apps/api.
 - docs/ROADMAP_V0.2.md: marca 19, 23, y el bug de la parte A/25 (si se
-  resolvieron con certeza) como completados. NO toques la Fase 21 grande
-  (la unificación completa de tipos de entrada) ni la 24 (gráficos con
-  eventos) en esta corrida — la 21 necesita su propio diseño de datos y la
-  24 necesita conversarse con Verónica antes de construir nada.
-- Reescribe docs/PROMPT_SIGUIENTE_CORRIDA.md apuntando a la Fase 20 (o a lo
-  que haya quedado pendiente de esta corrida, si algo no se terminó).
+  resolvieron con certeza) como completados. NO toques la Fase 21 (fusión
+  de "Carbos"/"Rápida" en "Comida" + menú de edición uniforme) ni la 24
+  (gráficos con eventos) en esta corrida — la 21 ya está acotada y lista
+  para construirse, pero es demasiado para sumarla a A+B+C+D en una sola
+  pasada; queda como la corrida siguiente a esta. La 24 sigue necesitando
+  conversarse con Verónica antes de construir nada.
+- **CLAUDE.md § "Auditoría de cambios relacionados"**: aplícala a las cuatro
+  partes de esta corrida. Repórtala en texto al cierre, con los tres
+  niveles separados (obligatorio arreglar / con criterio, pregunta al
+  cierre si hay duda / para Verónica siempre) — aunque algún nivel quede
+  vacío, dilo en vez de omitirlo.
+- Reescribe docs/PROMPT_SIGUIENTE_CORRIDA.md apuntando a la Fase 21 (ya
+  acotada, ver docs/ROADMAP_V0.2.md § Fase 21) — o a lo que haya quedado
+  pendiente de esta corrida, si algo no se terminó.
 - Commit + push a claude/revision-build-prep-b6p20n.
 
 Y AVISA AL ENTREGAR: una notificación no se puede dar por verificada sin
@@ -138,7 +172,8 @@ probarla en el teléfono, igual que un gesto, igual que el bug de la parte B.
 Di explícitamente qué quedó sin probar en cada una.
 
 Haz UN build al final, solo si las cuatro partes quedaron verdes. Reporta
-los cambios y espera aprobación antes de lanzarlo.
+los cambios, el reporte de la auditoría de cambios relacionados, y espera
+aprobación antes de lanzarlo.
 ```
 
 ---
@@ -156,12 +191,16 @@ los cambios y espera aprobación antes de lanzarlo.
 - **D (Fase 19) es la única que obliga a un build**, así que se hace al
   final, después de que A/B/C ya estén verdes — si algo de A/B/C sale mal,
   se puede parar antes de gastar el build.
-- **La Fase 21 grande (unificación de tipos de entrada) y la 24 (gráficos
-  con eventos) quedan afuera a propósito**: la 21 es un rediseño de datos
-  que merece su propia corrida dedicada, y la 24 explícitamente necesita
-  conversarse con Verónica antes de construir nada — meterlas acá sería
+- **La Fase 21 (fusión "Carbos"/"Rápida" → "Comida", menú de edición
+  uniforme) y la 24 (gráficos con eventos) quedan afuera a propósito.** La
+  21 ya no es un rediseño abierto —Verónica la acotó el 2026-08-22 a algo
+  concreto y buildable— pero sigue siendo comparable en tamaño a una fase
+  completa (nuevo flujo, UI con combinaciones independientes, reusar
+  MealEditModal, tocar registerNumeric/db.ts): sumarla a A+B+C+D sería
   exactamente el tipo de corrida mal dimensionada que ya causó problemas
-  antes (Fases 17/18 juntas fue demasiado en una sola pasada).
+  antes (Fases 17/18 juntas fue demasiado en una sola pasada). Queda como
+  la corrida siguiente a esta, ya lista para empezar sin re-derivar nada.
+  La 24 sigue necesitando conversarse con Verónica antes de construir nada.
 
 ## Estado de la ruta
 
@@ -175,7 +214,7 @@ los cambios y espera aprobación antes de lanzarlo.
 | — | Parte B: bug del primer dígito | No | No |
 | **23** | Parte C: episodio no ve insulina adicional en la ventana | No | Posible (si cambia el prompt de insight) |
 | 20 | Widget 4×3 de pantalla de inicio | **Sí, propio** | No |
-| 21 | 🟡 Ampliada: un solo tipo de entrada unificado. Necesita diseño de datos propio, no cabe en una corrida más. | Por definir | Por definir |
+| 21 | 🟡 Precisada 2026-08-22: fusiona "Carbos"/"Rápida" en "Comida", menú de edición uniforme. Ya acotada y lista — es la corrida siguiente a esta. | No | No |
 | 22 | Animación del swipe | Sin build (JS/Animated) | No |
 | 24 | Gráficos de reportes con eventos — **conversar enfoque con Verónica antes** | Sin build | No |
 | 25 | Bug del primer dígito, si no se resuelve en la parte B | No | No |
@@ -203,13 +242,15 @@ los cambios y espera aprobación antes de lanzarlo.
 - **Nada de gestos ni notificaciones se puede dar por verificado sin
   dispositivo.** El swipe de la Fase 16 pasó una corrida entera roto porque
   `pnpm verify` no dice nada al respecto.
-- **Fase 21 (2026-08-21, ampliada 2026-08-22):** ya no es solo "editar
-  glucosa/entrada con el poder de Nueva entrada" — Verónica pidió colapsar
-  TODOS los tipos de `TimelineItem` (`insulin`/`carbs`/`meal`/`glucose`/
-  `note`/`entry`) en un solo concepto de entrada, con el mismo menú editable
-  siempre. Es un rediseño de datos, no un fix de formulario — necesita su
-  propia corrida de diseño antes de estimarse. Incluye que el botón "Carbos"
-  deje de ser un número suelto. Ver `docs/ROADMAP_V0.2.md` § Fase 21.
+- **Fase 21 (2026-08-21, precisada 2026-08-22 — ES LA CORRIDA SIGUIENTE A
+  ESTA):** Verónica corrigió el alcance: los botones de acceso rápido NO
+  cambian a nivel de interfaz. Lo que se unifica es (a) el menú de EDICIÓN
+  de cualquier evento, completo sin importar qué botón lo creó, y (b) fusionar
+  "Carbos" y "Rápida" en un solo botón "Comida" (con IA, catálogo, calculadora
+  de bolo, y toggles independientes para catálogo/timeline/insulina) — corrige
+  el bug real de que insulina y carbos sueltos no comparten timestamp y la
+  asociación insulina↔comida falla. Ya está acotada y lista para construirse
+  sin re-derivar nada. Ver `docs/ROADMAP_V0.2.md` § Fase 21.
 - **Fase 22 (nueva, 2026-08-21):** el swipe ya navega pero sin animación —
   salta de golpe al soltar en vez de seguir el dedo. Ver `docs/ROADMAP_V0.2.md`
   § Fase 22.

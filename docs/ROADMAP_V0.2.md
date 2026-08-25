@@ -323,7 +323,7 @@ persistencia de datos de salud, o `packages/cgm`.
 | **18** | **Catálogo de comidas editable** (pantalla propia), porciones, y la pregunta de "¿editar la del catálogo o crear una nueva?". Ver detalle abajo. | 15, 17 |
 | **19** | **Notificaciones distinguibles**: un icono, un color y un título propios por tipo de alarma. **Necesita build nativo** (los iconos de notificación de Android son recursos drawable). Ver detalle abajo. | 16 (usa el sistema de iconos) |
 | **20** | **Widget de pantalla de inicio** 4×3. **Necesita build nativo** (config plugin). Ver detalle abajo. | 8 (para los accesos al chat), 16 |
-| **21** | 🟡 **Ampliada 2026-08-22.** Un solo tipo de entrada, editable con el mismo poder que crearla — colapsa `insulin`/`carbs`/`meal`/`glucose`/`note`/`entry` en un concepto: cualquier valor guardado es una entrada con el resto de campos vacíos. Incluye que el botón "Carbos" deje de ser un número suelto y abra la sección de comida. Ver detalle abajo. | 17 |
+| **21** | 🟡 **Precisada 2026-08-22.** Fusiona los accesos "Carbos" y "Rápida" en un solo botón "Comida" (con IA, catálogo y calculadora, y toggles independientes para catálogo/timeline/insulina) — corrige el bug real de que insulina y carbos sueltos no comparten timestamp y la app no logra emparejarlos. El menú de EDICIÓN de cualquier evento pasa a ser el mismo, completo, sin importar qué botón lo creó. Los accesos rápidos en sí NO cambian de interfaz. Ver detalle abajo. | 17 |
 | **22** | **Animación del swipe entre pantallas.** El gesto ya navega (corregido 2026-08-21); falta que la pantalla siguiente se vea aparecer mientras se desliza, en vez de saltar de golpe al soltar. Ver detalle abajo. | 16 |
 | **23** | **Episodio post-comida no reconoce insulina adicional dentro de la ventana** (ej. una corrección a los 90 min). El insight de IA describe la bajada sin saber que hubo una segunda dosis. Ver detalle abajo. | 12 |
 | **24** | **Los gráficos de reportes deben mostrar los eventos**, no solo la curva de glucosa. Enfoque **a conversar con Verónica antes de construir** — dos ideas sobre la mesa, ninguna decidida. Ver detalle abajo. | 9 |
@@ -2056,33 +2056,52 @@ de entregar el widget en una corrida "sin build".
   dosis por su cuenta.
 - Depende de la Fase 8 para las celdas de chat.
 
-## Fase 21 — Un solo tipo de entrada, editable con el mismo poder que crearla (planificada 2026-08-21, ampliada 2026-08-22)
+## Fase 21 — Menú de edición completo y uniforme, y fusión de "Carbos"/"Rápida" en "Comida" (planificada 2026-08-21, precisada 2026-08-22)
 
 **Es el alcance que la Fase 17 prometía en el título de la tabla y no
-entregó** (ver el aviso al principio de la Fase 17). Confirmado y **ampliado**
-por Verónica el 2026-08-22: no es solo que glucosa/entrada empaquetada deban
-editarse con el poder de "Nueva entrada" — es que **debería dejar de existir
-la diferencia**. Su pedido textual: "todas deben ser el mismo tipo de
-entrada con el mismo menú editable. Es decir que cualquier valor guardado de
-cualquier tipo es lo mismo que una nueva entrada pero con el resto de campos
-vacíos, así al editar siempre se pueden cambiar todos los campos."
+entregó** (ver el aviso al principio de la Fase 17). Verónica corrigió y
+**acotó** el alcance el 2026-08-22, después de que la primera versión de
+esta fase se fuera demasiado ancha (proponía colapsar los seis tipos de
+`TimelineItem` en un `UnifiedEntry` de SQLite). Su corrección, textual:
 
-Esto es más grande que un fix de formulario: hoy `TimelineItem` (`types.ts`)
-tiene **seis variantes distintas** (`insulin`, `carbs`, `meal`, `glucose`,
-`note`, `entry`), cada una con su propio schema, su propia fila de SQLite, y
-—salvo `entry`, que ya es el intento de unificación de la Fase 5— su propio
-camino de guardado y edición. El pedido es colapsar esa distinción: un
-registro de solo carbohidratos no es un "tipo" separado de una comida
-completa, es una entrada con la mayoría de sus campos vacíos.
+> "Me gusta que estén los botones de acceso rápido, y esos [...] a nivel de
+> interfaz están correctos. A lo que me refiero es que al momento de editar
+> cualquier evento, esté el mismo menú de edición y que sea lo más completo
+> posible [...] a nivel de datos no hay entradas diferentes, porque todas
+> deben tener la opción de guardar la misma cantidad de datos al momento de
+> ser editadas."
 
-### Qué falta, concretamente (versión angosta, ya diagnosticada)
+Es decir: **la interfaz de creación (los botones sueltos) no cambia.** Lo
+que tiene que ser uniforme es (a) qué tan completo es el menú al **editar**
+cualquier evento ya guardado, y (b) que el modelo de datos soporte ese
+mismo superconjunto de campos sin importar qué botón lo creó — no una
+migración a una tabla única.
 
-Hoy `TimelineEditPayload` para `kind: 'glucose'` y `kind: 'entry'` solo
-acepta: glucosa (si es manual), un número plano de carbohidratos, descripción
-de texto libre, insulina rápida, insulina basal y nota. Comparado con lo que
-ya tiene `EntryModal.tsx` al crear, falta al editar: **foto con estimación de
-IA**, **macros** (proteína, grasa, fibra), y la **calculadora de dosis**
-(`calculateMealBolus`).
+### El bug real que esto viene a resolver, no solo prolijidad
+
+Verónica señaló el síntoma: "cuando la app pregunta qué insulina
+correspondía a qué carbohidratos, muchas veces no encuentra el dato". Va la
+causa raíz, verificada en el código, no supuesta:
+
+```ts
+// App.tsx, registerNumeric() — lo que hacen HOY los botones "Carbos" y "Rápida"
+if (route === 'carbs') {
+  await saveCarbEvent(db, { ...timestamp, carbsG: value, source: 'manual' });
+} else {
+  await saveInsulinEvent(db, { ...timestamp, type: route, units: value, source: 'manual' });
+}
+```
+
+Cada botón guarda **su propia fila suelta, con su propio timestamp, sin
+relación con nada** — no se crea ni `meal_events` ni episodio. Si se tocan
+segundos o minutos aparte (lo normal: inyectar y después anotar los
+carbos, o al revés), sus timestamps no coinciden, y la ventana de -90/+60
+min que usa la app para emparejar insulina con una comida (`meal.ts` →
+`findRapidInsulinCandidates`) puede perder la dosis correcta por completo.
+El único camino que ya resuelve esto bien es "Nueva entrada"
+(`saveUnifiedEntry`), que guarda todo bajo **un mismo timestamp** — por
+diseño, desde la Fase 5. La fusión de abajo extiende esa misma solución al
+caso que hoy se le escapa.
 
 ### Bug chico y aparte, encontrado revisando esto: "Nueva entrada" no alimenta el catálogo
 
@@ -2090,39 +2109,41 @@ IA**, **macros** (proteína, grasa, fibra), y la **calculadora de dosis**
 **no llama a `recordCatalogFoods`** cuando hay análisis de IA — solo lo hace
 `confirmMeal` (el camino de `MealModal`, comida standalone). Dos formularios
 que hacen lo mismo (registrar una comida con foto) alimentan el catálogo de
-forma distinta: uno sí, el otro no. Es independiente de la unificación de
-arriba y barato de corregir (una llamada más, mismo patrón que ya existe en
-`confirmMeal`) — candidato a resolverse antes, no hace falta esperar al
-rediseño completo.
+forma distinta. Barato de corregir, independiente de todo lo demás de esta
+fase — candidato a resolverse antes, no hace falta esperar al resto.
 
-### La consecuencia directa que Verónica señaló por separado: el botón "Carbos"
+### Alcance, precisado
 
-El acceso rápido "Carbos" (`NumericEntryModal`, vía `registerNumeric`) hoy
-**solo** guarda un número — no hay foto, no hay IA, no hay opción de
-guardarlo en el catálogo. Con la unificación de arriba esto deja de ser un
-caso especial: "Carbos" pasaría a abrir la misma sección de "agregar una
-comida" que ya existe (con IA opcional y guardado a catálogo opcional), no
-un formulario propio y más pobre. No se construye dos veces.
-
-### Cómo encararla, para no repetir dos veces el mismo trabajo
-
-`MealEditModal.tsx` (Fase 17) ya resolvió la parte difícil de este problema
-para comidas: los tres modos de IA, la confirmación campo por campo, y el
-guardrail estructural (`MealSnapshotSchema`) que impide que insulina o
-glucosa viajen a la IA. Reusar esos componentes es más barato que
-reconstruirlos. Pero la versión ampliada probablemente necesita empezar por
-el modelo de datos (¿un solo `UnifiedEntry` en SQLite que reemplace a
-`insulin_events`/`carb_events`/`meal_events`/`cgm_readings` manuales/`notes`
-como filas sueltas, con migración de las que ya existen?) antes de tocar
-ningún formulario — es una decisión de arquitectura, no una de UI, y merece
-su propio diseño antes de estimarla en una corrida.
+1. **Fusionar los accesos rápidos "Carbos" y "Rápida"** (Corrección queda
+   aparte — es una acción clínica distinta, no ligada a una comida) en un
+   solo acceso **"Comida"**, que reuse `MealEditModal`/`MealModal` (Fase 17):
+   registrar con foto o texto vía IA, calcular el bolo por conteo
+   (`calculateMealBolus`), y guardar todo bajo **un mismo timestamp** — es
+   lo que elimina estructuralmente el problema de emparejamiento, no una
+   ventana de búsqueda más ancha.
+2. **Esa misma pantalla necesita una UI con combinaciones independientes**,
+   no un único camino obligatorio:
+   - Guardar el alimento **solo al catálogo**, sin registrarlo como comida
+     de hoy (para precargar el catálogo sin haber comido).
+   - Registrar la comida de hoy **con o sin** guardarla al catálogo.
+   - Registrar la comida de hoy **con o sin** insulina.
+   Estas tres decisiones son independientes entre sí — la UI tiene que
+   dejarlas combinar libremente, no forzar un único camino.
+3. **El menú de edición de cualquier evento ya guardado** (sea cual sea el
+   botón que lo creó) pasa a exponer el mismo superconjunto de campos:
+   glucosa, comida/foto/IA, macros, carbohidratos, insulina, y nota. Hoy
+   `TimelineEditPayload` para `kind: 'glucose'`/`'entry'` solo acepta un
+   número plano de carbohidratos, insulina, texto y nota — sin foto, IA,
+   macros ni calculadora (comparar contra lo que ya ofrece `EntryModal.tsx`
+   al crear). Reusar los componentes de `MealEditModal.tsx` es más barato
+   que reconstruirlos.
 
 ### Frontera de seguridad (sin cambios respecto a la Fase 17)
 
 La IA puede proponer macros; **nunca** insulina. Si la entrada ya tiene una
 dosis registrada, ninguna edición asistida por IA la toca ni la ve —
-`MealSnapshotSchema` ya garantiza esto estructuralmente para comidas, y la
-misma regla debe valer para el tipo unificado.
+`MealSnapshotSchema` ya lo garantiza estructuralmente, y la misma regla
+vale para el flujo fusionado.
 
 ---
 
@@ -2154,37 +2175,53 @@ navega. Respetar "Reduce Motion" (`ModalShell` ya lee la preferencia): con
 la preferencia activa, la transición debe seguir siendo instantánea, no
 animada.
 
-## Fase 23 — Episodio post-comida no reconoce insulina adicional dentro de la ventana (identificada 2026-08-22)
+## Fase 23 — El episodio debe capturar TODO lo que pasa en su ventana, no solo insulina (identificada 2026-08-22, ampliada 2026-08-22)
 
-Reportado por Verónica: si se registra una corrección **durante** la ventana
-de seguimiento de un episodio (hasta 3h después de la comida), el episodio
-no lo sabe.
+Reportado por Verónica, y **corregido su alcance por ella misma**: no es
+"¿hubo una corrección sí o no?" — es que el episodio necesita ver **todo lo
+que se registró** dentro de su ventana de seguimiento (hasta 3h). Su
+argumento es el que importa: sin eso, cualquier correlación que se calcule
+después sobre estos episodios es inútil, porque no hay forma de saber si lo
+que se está midiendo es la comida original o algo que pasó en el medio.
 
-### Confirmado contra el código, no supuesto
+### Confirmado contra el código, no solo el caso de insulina
 
 - `calculateMealEpisodeMetrics` (`packages/domain/src/meal.ts`) recibe **como
-  mucho un** `InsulinEvent` (`rapidInsulin` — el bolo de la comida).
+  mucho un** `InsulinEvent` (`rapidInsulin` — el bolo de la comida). Ninguna
+  otra clase de evento (carbohidratos, actividad, nota, otra comida) entra
+  jamás a esta función.
 - `getInsulinEventsForMeal` (`apps/mobile/src/db.ts:1370`) solo busca
   insulina entre **-90 y +60 minutos** del timestamp de la comida — una
   corrección a los 90 o 150 minutos, dentro de la misma ventana de
-  seguimiento de 3h, cae fuera de esa consulta y nunca se asocia al episodio.
-- Consecuencia concreta: el insight de IA post-comida
-  (`glucoseInsightSystemPrompt` sobre `MealEpisodeMetrics`) describe una
-  bajada de glucosa a las 3h sin saber que hubo una segunda dosis de por
-  medio — puede leerse como "la comida respondió bien" cuando en realidad
-  respondió una corrección adicional. Las métricas de glucosa en sí (`peak`,
-  `glucose60/120/180`) siguen siendo correctas —vienen del CGM, no de la
-  insulina— pero la interpretación que las acompaña no tiene el contexto
-  completo.
+  seguimiento de 3h, cae fuera de esa consulta.
+- **La prueba de que esto ya corrompe un análisis real, no es solo
+  hipotético:** `buildMacroGlucoseComparison`
+  (`packages/domain/src/macro-glucose.ts`) compara la glucosa a 2/3/4/5h
+  contra la carga de grasa/proteína de la comida, para describir la subida
+  tardía típica de esos macros. **No excluye ningún episodio donde se haya
+  comido algo más, o corregido, dentro de ese mismo horizonte.** Una
+  colación a las +2h puede ser la verdadera causa de una subida a las +3h, y
+  hoy se contaría igual como "efecto tardío de la grasa/proteína de la
+  primera comida". El mismo problema aplica, en menor medida, a
+  `buildNutritionInsights` (`nutrition-insights.ts`).
 
-### Alcance
+### Alcance (ampliado)
 
-`MealEpisodeMetrics` necesita poder cargar **todas** las dosis de insulina
-registradas dentro de la ventana del episodio (no solo el bolo inicial), y
-el prompt de insight debe recibirlas y poder mencionarlas descriptivamente
-("se registró una corrección de N U a las 2h") — nunca evaluar si la
-corrección fue acertada ni sugerir si hacía falta. Mismo guardrail de
-siempre: `containsTherapyRecommendation` sigue filtrando la salida.
+1. El episodio pasa a capturar **todos los eventos registrados** dentro de
+   su ventana de seguimiento — insulina de cualquier tipo/propósito,
+   carbohidratos adicionales, actividad, notas — no solo insulina. Se guarda
+   como contexto descriptivo del episodio (para que el insight de IA pueda
+   mencionarlos: "también se registró una colación de 15 g a las 2h").
+2. **Consecuencia para las correlaciones, la parte que de verdad importa**:
+   `buildMacroGlucoseComparison` y `buildNutritionInsights` deben **excluir**
+   de sus promedios cualquier episodio con un evento confundente dentro de
+   su horizonte — no promediarlo como si fuera una respuesta limpia a la
+   comida original. Sin esto, el "patrón" que la app le muestra a Verónica
+   puede estar hecho de ruido sin que nadie lo sepa.
+3. Frontera de seguridad sin cambios: todo esto es descriptivo. El insight
+   puede decir qué se registró; nunca evaluar si una corrección fue
+   acertada ni sugerir si hacía falta una. `containsTherapyRecommendation`
+   sigue filtrando toda salida.
 
 ---
 
