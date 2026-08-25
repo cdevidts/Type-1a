@@ -66,6 +66,15 @@ export interface ReportExport {
    * mientras no haya elegido: sin dato no se excluye por una suposición.
    */
   rapidLookbackMinutes?: number | undefined;
+  /**
+   * Qué insulinas usa, para el encabezado del reporte (2026-08-25). El
+   * equipo clínico necesita saberlo: la misma curva significa cosas
+   * distintas con Fiasp que con regular humana.
+   */
+  rapidInsulinId?: string | undefined;
+  basalInsulinId?: string | undefined;
+  rapidInsulinDurationHours?: number | undefined;
+  basalInsulinDurationHours?: number | undefined;
   /** Ver la nota homónima en `SummaryData`. El reporte lo declara al médico. */
   unreadableCount: number;
 }

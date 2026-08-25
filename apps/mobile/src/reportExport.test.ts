@@ -256,3 +256,51 @@ describe('procedencia de los macros en el reporte (Fase 15)', () => {
     expect(macroProvenanceNote([bare])).toBe('');
   });
 });
+
+describe('insulinas en el reporte (2026-08-25)', () => {
+  // El equipo clínico necesita saber con qué insulina se generaron los
+  // números: la misma curva significa cosas distintas con Fiasp que con
+  // regular humana, y con Lantus que con Tresiba.
+  const base: ReportExport = {
+    readings: [], rows: [], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 0,
+  };
+
+  it('declara la marca, el genérico y la duración considerada', () => {
+    const html = reportHtml({
+      ...base,
+      rapidInsulinId: 'fiasp',
+      rapidInsulinDurationHours: 5,
+      basalInsulinId: 'tresiba',
+      basalInsulinDurationHours: 42,
+    }, 'rango');
+    expect(html).toContain('Fiasp');
+    expect(html).toContain('Tresiba');
+    expect(html).toContain('42 h');
+  });
+
+  it('respeta una duración que la usuaria sobrescribió', () => {
+    const html = reportHtml({ ...base, rapidInsulinId: 'novorapid', rapidInsulinDurationHours: 4 }, 'rango');
+    expect(html).toContain('4 h');
+  });
+
+  it('nunca insinúa que la app estime insulina activa', () => {
+    // El texto es superficie de seguridad: "duración: 5 h" al lado de unas
+    // dosis se puede leer como IOB si no se aclara para qué se usa.
+    const html = reportHtml({ ...base, rapidInsulinId: 'fiasp', rapidInsulinDurationHours: 5 }, 'rango');
+    expect(html).toContain('no estima insulina activa');
+  });
+
+  it('sin insulinas registradas lo dice, y aclara qué implica', () => {
+    const html = reportHtml(base, 'rango');
+    expect(html).toContain('todavía no registró qué insulinas usa');
+  });
+
+  it('el Excel las lleva también', () => {
+    const bytes = reportWorkbookBytes({
+      ...base,
+      rapidInsulinId: 'humalog',
+      rapidInsulinDurationHours: 5,
+    });
+    expect(bytes.byteLength).toBeGreaterThan(0);
+  });
+});

@@ -3,6 +3,7 @@ import {
   buildMacroGlucoseComparison,
   buildNutritionInsights,
   convertGlucose,
+  findCatalogInsulin,
   HIGH_THRESHOLD,
   HYPOGLYCEMIA_THRESHOLD,
   MIN_SAMPLE_FOR_RATE,
@@ -416,6 +417,35 @@ function eventTableHtml(rows: ReportRow[]): string {
   </table>`;
 }
 
+/**
+ * Qué insulinas usa la persona, para el encabezado del reporte.
+ *
+ * Va al control médico porque **el equipo clínico necesita saber con qué
+ * insulina se generaron estos números** — la misma curva significa cosas
+ * distintas con Fiasp que con regular humana, y con Lantus que con Tresiba.
+ * Es un dato que la usuaria eligió, no uno que la app dedujo.
+ *
+ * Se declara además que la duración se usa solo para descartar tramos
+ * confundidos: sin esa frase, un médico podría leer "duración: 5 h" como si
+ * la app estuviera estimando insulina activa, que es justo lo que no hace.
+ */
+function insulinSectionHtml(data: ReportExport): string {
+  const rapid = findCatalogInsulin(data.rapidInsulinId);
+  const basal = findCatalogInsulin(data.basalInsulinId);
+  if (rapid === undefined && basal === undefined) {
+    return `<p class="muted">La usuaria todavía no registró qué insulinas usa. Los patrones de abajo se calcularon sin descartar los tramos en que una dosis anterior pudo seguir actuando.</p>`;
+  }
+  const row = (label: string, insulin: ReturnType<typeof findCatalogInsulin>, hours: number | undefined): string =>
+    insulin === undefined
+      ? `<tr><th>${escapeHtml(label)}</th><td class="muted">No registrada</td></tr>`
+      : `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(insulin.brand)} <span class="muted">(${escapeHtml(insulin.generic)})</span> · duración considerada: ${hours ?? insulin.durationHours} h</td></tr>`;
+  return `<table>
+    ${row('Rápida', rapid, data.rapidInsulinDurationHours)}
+    ${row('Basal', basal, data.basalInsulinDurationHours)}
+  </table>
+  <p class="muted">Dato declarado por la usuaria. La duración se usa únicamente para excluir de los promedios los tramos en que otra dosis pudo estar actuando; Type 1A no estima insulina activa ni calcula dosis.</p>`;
+}
+
 export function reportHtml(data: ReportExport, rangeLabel: string): string {
   const summary = summarizeGlucose(data.readings);
   const profile = buildAmbulatoryProfile(data.readings);
@@ -470,6 +500,8 @@ export function reportHtml(data: ReportExport, rangeLabel: string): string {
 <body>
   <h1>Type 1A — Reporte</h1>
   <p class="range">${escapeHtml(rangeLabel)} · generado ${escapeHtml(formatReportTimestamp(new Date().toISOString()))}</p>
+  <h2>Insulinas en uso</h2>
+  ${insulinSectionHtml(data)}
   <h2>Resumen clínico</h2>
   ${summaryHtml(summary, data.unreadableCount)}
   <h2>Día promedio (perfil ambulatorio)</h2>
@@ -519,6 +551,30 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
       [],
       ['* Estimación calculada por Type 1A a partir del promedio de glucosa (fórmula GMI). No reemplaza una medición de laboratorio.'],
     ];
+
+  // Las insulinas van en la MISMA hoja de resumen, arriba de todo: es lo
+  // primero que un equipo clínico necesita para interpretar el resto. Ver
+  // `insulinSectionHtml` para por qué se declara también la advertencia.
+  const rapidCatalog = findCatalogInsulin(data.rapidInsulinId);
+  const basalCatalog = findCatalogInsulin(data.basalInsulinId);
+  const insulinRows: (string | number)[][] = rapidCatalog === undefined && basalCatalog === undefined
+    ? [[], ['Insulinas en uso'], ['No registradas por la usuaria.']]
+    : [
+      [],
+      ['Insulinas en uso'],
+      [
+        'Rápida',
+        rapidCatalog === undefined ? 'No registrada' : `${rapidCatalog.brand} (${rapidCatalog.generic})`,
+        rapidCatalog === undefined ? '' : `Duración considerada: ${data.rapidInsulinDurationHours ?? rapidCatalog.durationHours} h`,
+      ],
+      [
+        'Basal',
+        basalCatalog === undefined ? 'No registrada' : `${basalCatalog.brand} (${basalCatalog.generic})`,
+        basalCatalog === undefined ? '' : `Duración considerada: ${data.basalInsulinDurationHours ?? basalCatalog.durationHours} h`,
+      ],
+      ['Dato declarado por la usuaria. La duración solo se usa para excluir de los promedios los tramos en que otra dosis pudo estar actuando; Type 1A no estima insulina activa ni calcula dosis.'],
+    ];
+  summarySheetData.push(...insulinRows);
 
   const reportSheetData = [
     ['Fecha', 'Tipo', 'Detalle', 'Origen'],

@@ -723,6 +723,11 @@ function Type1AApp() {
       patternActivity,
       readings,
       rapidLookbackMinutes: rapidInsulinLookbackMinutes(profile),
+      // Al control médico: con qué insulina se generaron estos números.
+      ...(profile.rapidInsulinId === undefined ? {} : { rapidInsulinId: profile.rapidInsulinId }),
+      ...(profile.basalInsulinId === undefined ? {} : { basalInsulinId: profile.basalInsulinId }),
+      ...(profile.rapidInsulinDurationHours === undefined ? {} : { rapidInsulinDurationHours: profile.rapidInsulinDurationHours }),
+      ...(profile.basalInsulinDurationHours === undefined ? {} : { basalInsulinDurationHours: profile.basalInsulinDurationHours }),
       unreadableCount: tally.unreadable,
     };
   }, [db, profile]);

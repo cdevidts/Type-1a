@@ -169,6 +169,32 @@ nada encontrado") en vez de omitirlo.
    antes de construir" (ej. Fase 24). No implementes ninguna opción —
    repórtalas con 2-3 alternativas concretas y sus tradeoffs.
 
+## Identificadores que ya salieron del repo (2026-08-25)
+
+Aprendido en la Fase 21, y va a volver a pasar (la Fase 20, el widget,
+consume las mismas rutas). **Antes de renombrar o angostar un tipo unión,
+pregúntate si alguno de sus valores ya cruzó una frontera de persistencia.**
+
+Un valor que salió del repo no se puede renombrar de un lado solo:
+
+- **Notificaciones ya posteadas.** Una notificación pegajosa en la bandeja
+  del teléfono fue creada por un build anterior y sigue emitiendo los ids de
+  acción viejos. Renombrar `ACTION_*` deja el botón muerto **sin ningún error
+  visible**.
+- **Deep links y accesos directos** que la usuaria ya tenga guardados.
+- **Payloads en SQLite**, que se leen con el esquema nuevo.
+- **Ids del catálogo** (ej. `INSULIN_CATALOG`), que se guardan en el perfil.
+
+La forma correcta: dejar los identificadores viejos **existiendo**, agregar
+una función de normalización explícita con nombre propio (`normalizeQuickRoute`)
+y un test que fije la traducción. Nunca un `as` silencioso: el `as` compila y
+el botón sigue sin hacer nada.
+
+Regla hermana, del mismo día: **al apretar un esquema Zod, revisa qué podría
+producir legítimamente el valor que estás excluyendo.** Un `.positive()`
+agregado por prolijidad rompió, una corrida después, el caso legítimo de un
+evento anterior al ancla.
+
 ## Cierre de corrida — checklist obligatorio
 
 Pedido explícito de Verónica (2026-08-18, ampliado 2026-08-19): la
