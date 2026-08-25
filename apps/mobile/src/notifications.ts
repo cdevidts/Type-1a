@@ -6,6 +6,7 @@ import type { CGMProviderStatus, CGMReading } from '@type1a/schemas';
 
 import { formatClock, trendArrow } from './format';
 import { colors } from './theme';
+import { normalizeQuickRoute } from './types';
 import type { QuickRoute, ReminderAlertStyle } from './types';
 
 export const QUICK_CATEGORY = 'type1a-quick-entry';
@@ -240,10 +241,11 @@ export async function configureNotifications(): Promise<void> {
       // without opening the app. Handled headlessly in backgroundSync.ts.
       options: { opensAppToForeground: false },
     },
-    { identifier: ACTION_CARBS, buttonTitle: '+ Carbos' },
     {
-      identifier: ACTION_RAPID,
-      buttonTitle: '+ Rápida',
+      // Un solo botón de comida desde la Fase 21. El id sigue siendo
+      // ACTION_CARBS por compatibilidad con las notificaciones ya posteadas.
+      identifier: ACTION_CARBS,
+      buttonTitle: '+ Comida',
       options: { isAuthenticationRequired: true, opensAppToForeground: true },
     },
     {
@@ -254,9 +256,15 @@ export async function configureNotifications(): Promise<void> {
   ]);
 }
 
+/**
+ * Los ids de acción `ACTION_CARBS`/`ACTION_RAPID` **no se renombran** aunque
+ * los dos botones se hayan fusionado en "Comida" (Fase 21): la notificación
+ * pegajosa que ya está en la bandeja del teléfono fue creada por un build
+ * anterior y sigue emitiendo esos identificadores. Renombrarlos habría dejado
+ * muerto un botón que la usuaria ya tiene a mano.
+ */
 export function quickRouteFromNotificationAction(identifier: string): QuickRoute | null {
-  if (identifier === ACTION_CARBS) return 'carbs';
-  if (identifier === ACTION_RAPID) return 'rapid';
+  if (identifier === ACTION_CARBS || identifier === ACTION_RAPID) return normalizeQuickRoute('carbs');
   if (identifier === ACTION_CORRECTION) return 'correction';
   return null;
 }

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
-import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import {
+  calculateMealBolus,
   catalogEntryFromPortion,
   MAX_SERVINGS,
   MIN_SERVINGS,
@@ -16,7 +17,7 @@ import {
 import type { MealAnalysisResult } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api';
-import { parseNonNegativeNumber } from '../format';
+import { parseNonNegativeNumber, parsePositiveNumber } from '../format';
 import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
 import { ModalShell } from './ModalShell';
@@ -28,6 +29,28 @@ import { ModalShell } from './ModalShell';
 const CATALOG_EDIT_TOLERANCE = 0.1;
 
 export interface ConfirmedMealDraft {
+  /**
+   * Las tres decisiones de la Fase 21, independientes entre sí a propósito
+   * (pedido explícito de Verónica, 2026-08-22): registrar o no la comida de
+   * hoy, guardarla o no al catálogo, y ponerle o no insulina. La UI las deja
+   * combinar libremente en vez de forzar un único camino.
+   */
+  /** `false` = solo al catálogo, sin tocar el timeline ni crear episodio. */
+  registerToTimeline?: boolean;
+  /** `false` = no alimentar el catálogo con los alimentos de esta comida. */
+  saveToCatalog?: boolean;
+  /**
+   * Insulina rápida que acompaña a esta comida, si la hubo.
+   *
+   * Se guarda **bajo el mismo timestamp que la comida**, y esa es toda la
+   * razón por la que este campo existe: el botón "Rápida" suelto escribía una
+   * fila con su propio timestamp, y por eso la app después no encontraba qué
+   * dosis correspondía a qué carbohidratos. Ver roadmap § Fase 21.
+   *
+   * Es un número que la usuaria confirma, nunca uno que la app decida por
+   * ella: la calculadora solo aplica su propio `carbRatio`.
+   */
+  rapidUnits?: number;
   imageUri?: string;
   analysis?: MealAnalysisResult;
   confirmedCarbsG: number;
@@ -124,12 +147,25 @@ export function MealModal({
   onClose,
   onConfirm,
   catalogFoods,
+  carbRatio,
+  targetGlucose,
+  correctionFactor,
+  doseIncrement,
 }: {
   visible: boolean;
   onClose: () => void;
   onConfirm: (draft: ConfirmedMealDraft) => Promise<void>;
   /** Alimentos ya conocidos, para reusar sin llamar a la IA (Fase 15). */
   catalogFoods: readonly CatalogFood[];
+  /**
+   * Parámetros de terapia de la usuaria, para la calculadora por conteo.
+   * `carbRatio` es opcional en el perfil: sin él la calculadora no aparece,
+   * y el campo de insulina sigue estando para escribirla a mano.
+   */
+  carbRatio?: number | undefined;
+  targetGlucose: number;
+  correctionFactor: number;
+  doseIncrement: number;
 }) {
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<MealAnalysisResult | null>(null);
@@ -137,6 +173,9 @@ export function MealModal({
   const [confirmedCarbs, setConfirmedCarbs] = useState('');
   const [busy, setBusy] = useState(false);
   const [macrosOpen, setMacrosOpen] = useState(false);
+  const [registerToTimeline, setRegisterToTimeline] = useState(true);
+  const [saveToCatalog, setSaveToCatalog] = useState(true);
+  const [rapidInput, setRapidInput] = useState('');
   const [proteinInput, setProteinInput] = useState('');
   const [fatInput, setFatInput] = useState('');
   const [fiberInput, setFiberInput] = useState('');
@@ -371,8 +410,17 @@ export function MealModal({
             ? 'ai'
             : 'mixed');
 
+      const rapidUnits = rapidInput.trim() === '' ? undefined : parsePositiveNumber(rapidInput);
+      if (rapidUnits === null || (rapidUnits !== undefined && rapidUnits > 100)) {
+        setMessage('Revisa la insulina: debe ser un número entre 0,1 y 100 U, o quedar en blanco.');
+        return;
+      }
+
       const draft: ConfirmedMealDraft = {
         confirmedCarbsG: parsed,
+        registerToTimeline,
+        saveToCatalog,
+        ...(rapidUnits === undefined || !registerToTimeline ? {} : { rapidUnits }),
         ...(macrosSource === undefined ? {} : { macrosSource }),
         ...(clearedMacros ? { clearedMacros: true } : {}),
         ...(catalogSuggestedCarbsG === null ? {} : { catalogSuggestedCarbsG }),
@@ -734,10 +782,124 @@ export function MealModal({
         </View>
       )}
 
+      {/*
+        Las tres decisiones de la Fase 21. Son independientes entre sí, así
+        que van como interruptores separados y no como un selector de modo:
+        "solo al catálogo", "comida sin insulina" y "comida con insulina" no
+        son tres caminos excluyentes, son combinaciones de dos preguntas.
+      */}
+      <Text style={styles.sectionLabel}>Qué hacer con esto</Text>
+      <View style={styles.choiceRow}>
+        <View style={styles.choiceCopy}>
+          <Text style={styles.choiceTitle}>Registrarla como comida de ahora</Text>
+          <Text style={styles.choiceFoot}>
+            {registerToTimeline
+              ? 'Queda en el timeline y empieza el seguimiento post-comida.'
+              : 'No se registra nada de hoy. Sirve para cargar el catálogo sin haber comido.'}
+          </Text>
+        </View>
+        <Switch
+          value={registerToTimeline}
+          onValueChange={setRegisterToTimeline}
+          trackColor={{ false: colors.line, true: colors.teal }}
+        />
+      </View>
+      <View style={styles.choiceRow}>
+        <View style={styles.choiceCopy}>
+          <Text style={styles.choiceTitle}>Guardarla en mi catálogo</Text>
+          <Text style={styles.choiceFoot}>
+            {saveToCatalog
+              ? 'Los alimentos quedan disponibles para reusar sin volver a llamar a la IA.'
+              : 'El catálogo no se toca.'}
+          </Text>
+        </View>
+        <Switch
+          value={saveToCatalog}
+          onValueChange={setSaveToCatalog}
+          trackColor={{ false: colors.line, true: colors.teal }}
+        />
+      </View>
+
+      {registerToTimeline ? (
+        <View style={styles.insulinBlock}>
+          <View style={styles.insulinRow}>
+            <View style={styles.choiceCopy}>
+              <Text style={styles.choiceTitle}>Insulina rápida (opcional)</Text>
+              <Text style={styles.choiceFoot}>
+                Se guarda con la misma hora que la comida, así queda claro qué dosis fue de qué plato.
+              </Text>
+            </View>
+            <View style={styles.insulinInputWrap}>
+              <TextInput
+                value={rapidInput}
+                onChangeText={setRapidInput}
+                keyboardType="decimal-pad"
+                style={styles.insulinInput}
+                placeholder="—"
+                placeholderTextColor={colors.muted}
+                accessibilityLabel="Unidades de insulina rápida"
+              />
+              <Text style={styles.insulinUnit}>U</Text>
+            </View>
+          </View>
+          {/*
+            La calculadora solo aparece si la usuaria ya cargó su ratio, y
+            solo aplica ESE valor suyo. La app no propone un ratio ni decide
+            una dosis: escribe un número en un campo que ella revisa y puede
+            sobrescribir antes de guardar (AGENTS.md).
+          */}
+          {carbRatio === undefined ? (
+            <Text style={styles.choiceFoot}>
+              Para calcularla por conteo, carga tus “carbs por unidad” en Ajustes → Terapia.
+            </Text>
+          ) : (
+            <Pressable
+              style={styles.calcButton}
+              accessibilityRole="button"
+              onPress={() => {
+                const carbsNow = confirmedCarbs.trim() === '' ? null : parseNonNegativeNumber(confirmedCarbs);
+                if (carbsNow === null) {
+                  setMessage('Escribe primero los carbohidratos confirmados.');
+                  return;
+                }
+                const result = calculateMealBolus({
+                  carbsG: carbsNow,
+                  carbRatio,
+                  targetGlucose,
+                  correctionFactor,
+                  doseIncrement,
+                });
+                setRapidInput(String(result.totalRoundedUnits));
+                setMessage(`Por conteo: ${result.mealFormula} = ${result.totalRoundedUnits} U. Revísalo antes de guardar.`);
+              }}
+            >
+              <Text style={styles.calcButtonText}>Calcular por conteo</Text>
+            </Pressable>
+          )}
+          <Text style={styles.insulinFoot}>
+            Type 1A no decide ni sugiere dosis: solo aplica los valores que cargaste. Confirma la cantidad antes
+            de guardar.
+          </Text>
+        </View>
+      ) : null}
+
       {message === null ? null : <Text style={styles.message}>{message}</Text>}
-      <Pressable style={[styles.confirmButton, busy && styles.disabled]} disabled={busy} onPress={() => { void confirm(); }}>
-        <Text style={styles.confirmButtonText}>{busy ? 'Guardando…' : 'Confirmar y crear episodio'}</Text>
+      <Pressable
+        style={[styles.confirmButton, (busy || (!registerToTimeline && !saveToCatalog)) && styles.disabled]}
+        disabled={busy || (!registerToTimeline && !saveToCatalog)}
+        onPress={() => { void confirm(); }}
+      >
+        <Text style={styles.confirmButtonText}>
+          {busy
+            ? 'Guardando…'
+            : !registerToTimeline
+              ? 'Guardar solo en el catálogo'
+              : 'Confirmar y crear episodio'}
+        </Text>
       </Pressable>
+      {!registerToTimeline && !saveToCatalog ? (
+        <Text style={styles.message}>Con las dos opciones apagadas no hay nada que guardar.</Text>
+      ) : null}
     </ModalShell>
   );
 }
@@ -771,6 +933,50 @@ function MacroField({
 }
 
 const styles = StyleSheet.create({
+  sectionLabel: { color: colors.navy, fontSize: 13, fontWeight: '800', letterSpacing: 0.5, marginTop: spacing.xl },
+  choiceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    minHeight: 44,
+    marginTop: spacing.md,
+  },
+  choiceCopy: { flex: 1 },
+  choiceTitle: { color: colors.ink, fontSize: 15, fontWeight: '700' },
+  choiceFoot: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: 2 },
+  insulinBlock: {
+    marginTop: spacing.lg,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.surface,
+  },
+  insulinRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, minHeight: 44 },
+  insulinInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 92,
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.blue,
+  },
+  insulinInput: { flex: 1, color: colors.ink, fontSize: 20, fontWeight: '800', textAlign: 'right' },
+  insulinUnit: { color: colors.muted, fontSize: 14, marginLeft: spacing.xs },
+  calcButton: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.blue,
+    marginTop: spacing.md,
+  },
+  calcButtonText: { color: colors.blue, fontSize: 14, fontWeight: '800' },
+  insulinFoot: { color: colors.warning, fontSize: 12, lineHeight: 17, marginTop: spacing.md },
   catalogBox: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.md },
   catalogTitle: { color: colors.ink, fontSize: 14, fontWeight: '800' },
   catalogHint: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: 2, marginBottom: spacing.sm },

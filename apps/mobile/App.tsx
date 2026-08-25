@@ -101,7 +101,6 @@ import {
   initializeDatabase,
   isTherapyConfigured,
   saveCapillaryReminderSettings,
-  saveCarbEvent,
   saveCorrectionReminderSettings,
   saveInsulinEvent,
   saveMealAlarmOffsets,
@@ -138,7 +137,8 @@ import {
 import { capillaryReminderTimes } from './src/format';
 import { colors, radius, spacing } from './src/theme';
 import type { NutritionProfile } from '@type1a/schemas';
-import type { NutritionDayData, PendingInsulinAssociation, QuickRoute, ReminderAlertStyle, ReportExport, SummaryData, TimelineEditPayload, TimelineItem } from './src/types';
+import { normalizeQuickRoute } from './src/types';
+import type { LegacyQuickRoute, NutritionDayData, PendingInsulinAssociation, QuickRoute, ReminderAlertStyle, ReportExport, SummaryData, TimelineEditPayload, TimelineItem } from './src/types';
 
 /** Flag de "ya vio la bienvenida"; vive en `settings`, no en el perfil de terapia. */
 const ONBOARDING_SEEN_KEY = 'onboardingSeenAt';
@@ -151,8 +151,12 @@ const EMPTY_PROFILE: TherapyProfile = {
 };
 
 function routeFromUrl(url: string): QuickRoute | null {
-  const match = /^type1a:\/\/quick\/(carbs|rapid|basal|correction)(?:[/?#]|$)/u.exec(url);
-  return (match?.[1] as QuickRoute | undefined) ?? null;
+  // `carbs` y `rapid` siguen aceptándose a propósito: un deep link viejo, o
+  // un acceso directo que la usuaria ya tenga, no puede dejar de funcionar
+  // porque adentro se hayan fusionado los botones (Fase 21).
+  const match = /^type1a:\/\/quick\/(meal|carbs|rapid|basal|correction)(?:[/?#]|$)/u.exec(url);
+  const route = match?.[1] as LegacyQuickRoute | undefined;
+  return route === undefined ? null : normalizeQuickRoute(route);
 }
 
 function Type1AApp() {
@@ -357,10 +361,20 @@ function Type1AApp() {
     return () => { appStateSubscription.remove(); };
   }, [db, refresh]);
 
+  /**
+   * Un solo punto de entrada para los destinos rápidos, vengan del botón, de
+   * un deep link o de la notificación. `'meal'` abre `MealModal` en vez de un
+   * modal numérico, así que no alcanza con `setQuickRoute` (Fase 21).
+   */
+  const openQuickRoute = useCallback((route: QuickRoute): void => {
+    if (route === 'meal') { setMealOpen(true); return; }
+    setQuickRoute(route);
+  }, []);
+
   useEffect(() => {
     function handleUrl(url: string): void {
       const nextRoute = routeFromUrl(url);
-      if (nextRoute !== null) setQuickRoute(nextRoute);
+      if (nextRoute !== null) openQuickRoute(nextRoute);
     }
     void Linking.getInitialURL().then((url) => { if (url !== null) handleUrl(url); });
     const urlSubscription = Linking.addEventListener('url', ({ url }) => { handleUrl(url); });
@@ -376,7 +390,7 @@ function Type1AApp() {
       }
       const actionRoute = quickRouteFromNotificationAction(response.actionIdentifier);
       if (actionRoute !== null) {
-        setQuickRoute(actionRoute);
+        openQuickRoute(actionRoute);
         return;
       }
       const url = response.notification.request.content.data?.url;
@@ -386,40 +400,53 @@ function Type1AApp() {
     void Notifications.getLastNotificationResponseAsync().then((response) => {
       if (response === null) return;
       const actionRoute = quickRouteFromNotificationAction(response.actionIdentifier);
-      if (actionRoute !== null) setQuickRoute(actionRoute);
+      if (actionRoute !== null) openQuickRoute(actionRoute);
     });
     return () => {
       urlSubscription.remove();
       notificationSubscription.remove();
     };
-  }, [refresh]);
+  }, [refresh, openQuickRoute]);
 
-  async function registerNumeric(route: 'carbs' | 'rapid' | 'basal', value: number): Promise<void> {
+  /**
+   * Solo basal desde la Fase 21. Carbohidratos e insulina rápida ya no entran
+   * por acá: iban como filas sueltas con timestamps independientes, que es la
+   * causa raíz de que la app no pudiera emparejar una dosis con su comida.
+   * Ahora los dos casos pasan por `MealModal`, bajo un mismo timestamp.
+   *
+   * La basal se queda: no pertenece a ninguna comida, así que una fila suelta
+   * es exactamente lo que es.
+   */
+  async function registerNumeric(route: 'basal', value: number): Promise<void> {
     const timestamp = new Date().toISOString();
-    if (route === 'carbs') {
-      await saveCarbEvent(db, {
-        id: Crypto.randomUUID(),
-        timestamp,
-        carbsG: value,
-        source: 'manual',
-        createdAt: timestamp,
-      });
-    } else {
-      await saveInsulinEvent(db, {
-        id: Crypto.randomUUID(),
-        timestamp,
-        type: route,
-        units: value,
-        source: 'manual',
-        createdAt: timestamp,
-      });
-    }
+    await saveInsulinEvent(db, {
+      id: Crypto.randomUUID(),
+      timestamp,
+      type: route,
+      units: value,
+      source: 'manual',
+      createdAt: timestamp,
+      ...(profile.basalInsulinName === undefined ? {} : { insulinName: profile.basalInsulinName }),
+    });
     await loadLocalState();
   }
 
   async function registerCorrection(units: number): Promise<void> {
     const timestamp = new Date().toISOString();
-    await registerNumeric('rapid', units);
+    // Una corrección SÍ es una fila suelta legítima: no pertenece a ninguna
+    // comida, y marcarla con `purpose: 'correction'` es justamente lo que
+    // permite después distinguirla del bolo de un plato.
+    await saveInsulinEvent(db, {
+      id: Crypto.randomUUID(),
+      timestamp,
+      type: 'rapid',
+      units,
+      source: 'manual',
+      createdAt: timestamp,
+      purpose: 'correction',
+      ...(profile.rapidInsulinName === undefined ? {} : { insulinName: profile.rapidInsulinName }),
+    });
+    await loadLocalState();
     if (correctionReminder.enabled) {
       await scheduleCorrectionReminder(timestamp, correctionReminder.offsetMinutes, reminderAlertStyle);
     }
@@ -467,7 +494,50 @@ function Type1AApp() {
         ? {}
         : { aiEstimatedCarbsG: draft.catalogSuggestedCarbsG }),
     };
+    // Fase 21: "solo al catálogo" corta acá. No se escribe `meal_events`, no
+    // se crea episodio y no se programan alarmas — es cargar un alimento sin
+    // haberlo comido. El catálogo se alimenta más abajo con el mismo camino
+    // de siempre.
+    if (draft.registerToTimeline === false) {
+      if (draft.analysis !== undefined && draft.saveToCatalog !== false) {
+        try {
+          await recordCatalogFoods(db, catalogEntriesFrom(draft.analysis.estimate.foods, timestamp));
+          setNotice('Guardado en tu catálogo. No se registró ninguna comida de hoy.');
+        } catch (error) {
+          logSaveError('App.recordCatalogFoods', error);
+          setNotice('No se pudo guardar en el catálogo.');
+        }
+      } else {
+        setNotice('No había nada que guardar en el catálogo: analiza la comida con foto o texto primero.');
+      }
+      await loadLocalState();
+      return;
+    }
+
     const episodeId = await saveMealWithEpisode(db, meal);
+
+    // La insulina de esta comida va con el MISMO timestamp que la comida.
+    // Es el arreglo estructural de la Fase 21: el botón "Rápida" suelto
+    // escribía una fila con su propia hora, y por eso el emparejamiento
+    // insulina↔comida fallaba. Va después de guardar la comida y en su propio
+    // try: si falla la dosis, lo comido ya quedó registrado.
+    if (draft.rapidUnits !== undefined) {
+      try {
+        await saveInsulinEvent(db, {
+          id: Crypto.randomUUID(),
+          timestamp,
+          type: 'rapid',
+          units: draft.rapidUnits,
+          source: 'manual',
+          createdAt: timestamp,
+          purpose: 'meal',
+          ...(profile.rapidInsulinName === undefined ? {} : { insulinName: profile.rapidInsulinName }),
+        });
+      } catch (error) {
+        logSaveError('App.confirmMealInsulin', error);
+        setNotice('La comida quedó guardada, pero no se pudo registrar la insulina.');
+      }
+    }
 
     // Respuesta a la pregunta de tres salidas (Fase 18). Va **después** de
     // guardar la comida y en su propio try: el catálogo es una comodidad, y
@@ -516,7 +586,7 @@ function Type1AApp() {
     }
     // El catálogo se alimenta de cada análisis, y nunca puede impedir que la
     // comida se guarde: es una comodidad, no parte del registro.
-    if (draft.analysis !== undefined) {
+    if (draft.analysis !== undefined && draft.saveToCatalog !== false) {
       try {
         await recordCatalogFoods(db, catalogEntriesFrom(draft.analysis.estimate.foods, timestamp));
       } catch (error) {
@@ -751,7 +821,8 @@ function Type1AApp() {
       await updateCarbEvent(db, item.id, payload.carbsG);
     } else if (payload.kind === 'glucose') {
       const hasAttachments = payload.carbsG !== undefined || payload.description !== undefined
-        || payload.rapidUnits !== undefined || payload.basalUnits !== undefined || payload.note !== undefined;
+        || payload.rapidUnits !== undefined || payload.basalUnits !== undefined || payload.note !== undefined
+        || payload.proteinG !== undefined || payload.fatG !== undefined || payload.fiberG !== undefined;
       if (hasAttachments) {
         // Turn the standalone reading into a packaged entry anchored on it.
         const outcome = await attachEntryToReading(db, item.id, {
@@ -759,6 +830,11 @@ function Type1AApp() {
           ...(payload.glucose === undefined ? {} : { manualGlucose: payload.glucose }),
           ...(payload.carbsG === undefined ? {} : { carbsG: payload.carbsG }),
           ...(payload.description === undefined ? {} : { description: payload.description }),
+          // Fase 21: los macros viajan igual que al crear. Sin esto, el
+          // formulario los pedía y el guardado los tiraba.
+          ...(payload.proteinG === undefined ? {} : { proteinG: payload.proteinG }),
+          ...(payload.fatG === undefined ? {} : { fatG: payload.fatG }),
+          ...(payload.fiberG === undefined ? {} : { fiberG: payload.fiberG }),
           ...(payload.rapidUnits === undefined ? {} : { rapidUnits: payload.rapidUnits }),
           ...(payload.basalUnits === undefined ? {} : { basalUnits: payload.basalUnits }),
           ...(payload.note === undefined ? {} : { note: payload.note }),
@@ -786,6 +862,9 @@ function Type1AApp() {
         ...(payload.manualGlucose === undefined ? {} : { manualGlucose: payload.manualGlucose }),
         ...(payload.carbsG === undefined ? {} : { carbsG: payload.carbsG }),
         ...(payload.description === undefined ? {} : { description: payload.description }),
+        ...(payload.proteinG === undefined ? {} : { proteinG: payload.proteinG }),
+        ...(payload.fatG === undefined ? {} : { fatG: payload.fatG }),
+        ...(payload.fiberG === undefined ? {} : { fiberG: payload.fiberG }),
         ...(payload.rapidUnits === undefined ? {} : { rapidUnits: payload.rapidUnits }),
         ...(payload.basalUnits === undefined ? {} : { basalUnits: payload.basalUnits }),
         ...(payload.note === undefined ? {} : { note: payload.note }),
@@ -850,7 +929,9 @@ function Type1AApp() {
     setNotice('Contexto de insulina confirmado; el episodio fue recalculado.');
   }
 
-  const numericRoute = quickRoute === 'correction' ? null : quickRoute;
+  // `NumericEntryModal` solo sirve a basal desde la Fase 21. `'meal'` abre
+  // `MealModal` y `'correction'` abre `CorrectionModal`.
+  const numericRoute = quickRoute === 'basal' ? 'basal' : null;
   const sourceLabel = useMemo(() => {
     if (status?.isSynthetic === true) return 'PRUEBA · DATOS SINTÉTICOS';
     if (status?.state === 'connected') return 'CGM CONECTADO';
@@ -960,8 +1041,13 @@ function Type1AApp() {
         </View>
 
         <View style={styles.quickGrid}>
-          <QuickButton label="Carbos" value="+ g" color={colors.orange} soft={colors.orangeSoft} onPress={() => { setQuickRoute('carbs'); }} />
-          <QuickButton label="Rápida" value="+ U" color={colors.blue} soft="#E5F1FA" onPress={() => { setQuickRoute('rapid'); }} />
+          {/*
+            Fase 21: "Carbos" y "Rápida" se fusionaron en "Comida". Los dos
+            escribían filas sueltas con timestamps propios, y por eso después
+            la app no encontraba qué dosis era de qué comida. Corrección queda
+            aparte: es una acción clínica distinta, no ligada a un plato.
+          */}
+          <QuickButton label="Comida" value="+" color={colors.orange} soft={colors.orangeSoft} onPress={() => { setMealOpen(true); }} />
           <QuickButton label="Basal" value="+ U" color={colors.navy} soft="#E7EDF2" onPress={() => { setQuickRoute('basal'); }} />
           <QuickButton label="Corrección" value="ƒ(x)" color={colors.teal} soft={colors.tealSoft} onPress={() => { setQuickRoute('correction'); }} />
           {/*
@@ -1019,7 +1105,16 @@ function Type1AApp() {
         onClose={() => { setEntryOpen(false); }}
         onSave={saveEntry}
       />
-      <MealModal visible={mealOpen} onClose={() => { setMealOpen(false); }} onConfirm={confirmMeal} catalogFoods={catalogFoods} />
+      <MealModal
+        visible={mealOpen}
+        onClose={() => { setMealOpen(false); }}
+        onConfirm={confirmMeal}
+        catalogFoods={catalogFoods}
+        carbRatio={profile.carbRatio}
+        targetGlucose={profile.targetGlucose}
+        correctionFactor={profile.correctionFactor}
+        doseIncrement={profile.doseIncrement}
+      />
       <SettingsModal
         visible={settingsOpen}
         onClose={() => { setSettingsOpen(false); }}

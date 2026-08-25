@@ -214,6 +214,12 @@ export function TimelineDetailModal({
   const [entryRapidUnits, setEntryRapidUnits] = useState('');
   const [entryBasalUnits, setEntryBasalUnits] = useState('');
   const [entryNote, setEntryNote] = useState('');
+  // Macros (Fase 21). Editar ofrecía menos campos que crear: `EntryModal` ya
+  // los tenía al registrar y este formulario no, así que una entrada con
+  // macros no se podía corregir sin rehacerla.
+  const [entryProteinG, setEntryProteinG] = useState('');
+  const [entryFatG, setEntryFatG] = useState('');
+  const [entryFiberG, setEntryFiberG] = useState('');
 
   // Re-seed the edit fields (and drop any in-progress edit/error) every time
   // a different item is opened. Keyed on the item's identity, not on
@@ -237,6 +243,9 @@ export function TimelineDetailModal({
       setEntryRapidUnits('');
       setEntryBasalUnits('');
       setEntryNote('');
+      setEntryProteinG('');
+      setEntryFatG('');
+      setEntryFiberG('');
     } else if (item.kind === 'note') {
       setNote(item.raw.text);
     } else if (item.kind === 'entry') {
@@ -246,8 +255,33 @@ export function TimelineDetailModal({
       setEntryRapidUnits(item.raw.rapidUnits === undefined ? '' : String(item.raw.rapidUnits));
       setEntryBasalUnits(item.raw.basalUnits === undefined ? '' : String(item.raw.basalUnits));
       setEntryNote(item.raw.note ?? '');
+      setEntryProteinG(item.raw.proteinG === undefined ? '' : String(item.raw.proteinG));
+      setEntryFatG(item.raw.fatG === undefined ? '' : String(item.raw.fatG));
+      setEntryFiberG(item.raw.fiberG === undefined ? '' : String(item.raw.fiberG));
     }
   }, [item]);
+
+  /**
+   * Los tres macros, o `null` si alguno no es un número válido.
+   *
+   * En blanco es `undefined` a propósito: significa "no lo anoté", que es una
+   * afirmación distinta de "0 g". Confundirlas hace que el reporte al médico
+   * muestre promedios de ceros que nadie midió.
+   */
+  function parseMacros(): { proteinG?: number; fatG?: number; fiberG?: number } | null {
+    const one = (input: string): number | null | undefined =>
+      input.trim() === '' ? undefined : parseNonNegativeNumber(input);
+    const proteinG = one(entryProteinG);
+    const fatG = one(entryFatG);
+    const fiberG = one(entryFiberG);
+    if (proteinG === null || fatG === null || fiberG === null) return null;
+    if ([proteinG, fatG, fiberG].some((value) => value !== undefined && value > 500)) return null;
+    return {
+      ...(proteinG === undefined ? {} : { proteinG }),
+      ...(fatG === undefined ? {} : { fatG }),
+      ...(fiberG === undefined ? {} : { fiberG }),
+    };
+  }
 
   async function handleSave(): Promise<void> {
     if (item === null) return;
@@ -310,11 +344,17 @@ export function TimelineDetailModal({
         setError('Agrega carbohidratos, insulina o una nota para adjuntar a esta lectura.');
         return;
       }
+      const macros = parseMacros();
+      if (macros === null) {
+        setError('Revisa proteína, grasa y fibra: deben ser números entre 0 y 500 g, o quedar en blanco.');
+        return;
+      }
       payload = {
         kind: 'glucose',
         ...(glucoseValue === undefined ? {} : { glucose: glucoseValue }),
         ...(carbsValue === undefined ? {} : { carbsG: carbsValue }),
         ...(entryDescription.trim() === '' ? {} : { description: entryDescription.trim() }),
+        ...macros,
         ...(rapidValue === undefined ? {} : { rapidUnits: rapidValue }),
         ...(basalValue === undefined ? {} : { basalUnits: basalValue }),
         ...(entryNote.trim() === '' ? {} : { note: entryNote.trim() }),
@@ -361,11 +401,17 @@ export function TimelineDetailModal({
         setError('Completa al menos un campo, o usa el botón de eliminar de abajo.');
         return;
       }
+      const macros = parseMacros();
+      if (macros === null) {
+        setError('Revisa proteína, grasa y fibra: deben ser números entre 0 y 500 g, o quedar en blanco.');
+        return;
+      }
       payload = {
         kind: 'entry',
         ...(glucoseValue === undefined ? {} : { manualGlucose: glucoseValue }),
         ...(carbsValue === undefined ? {} : { carbsG: carbsValue }),
         ...(entryDescription.trim() === '' ? {} : { description: entryDescription.trim() }),
+        ...macros,
         ...(rapidValue === undefined ? {} : { rapidUnits: rapidValue }),
         ...(basalValue === undefined ? {} : { basalUnits: basalValue }),
         ...(entryNote.trim() === '' ? {} : { note: entryNote.trim() }),
@@ -475,6 +521,36 @@ export function TimelineDetailModal({
                 placeholderTextColor={colors.muted}
                 multiline
               />
+              {/*
+                Fase 21: los macros también al editar. Antes solo se podían
+                cargar al crear la entrada, así que corregir una proteína
+                obligaba a borrar la entrada y rehacerla. En blanco = "no lo
+                anoté", nunca "0 g".
+              */}
+              <View style={styles.fieldRow}>
+                <View style={styles.fieldRowItem}>
+                  <Text style={styles.fieldLabel}>Proteína</Text>
+                  <View style={styles.inputWrap}>
+                    <TextInput value={entryProteinG} onChangeText={setEntryProteinG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
+                    <Text style={styles.inputUnit}>g</Text>
+                  </View>
+                </View>
+                <View style={styles.fieldRowItem}>
+                  <Text style={styles.fieldLabel}>Grasa</Text>
+                  <View style={styles.inputWrap}>
+                    <TextInput value={entryFatG} onChangeText={setEntryFatG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
+                    <Text style={styles.inputUnit}>g</Text>
+                  </View>
+                </View>
+                <View style={styles.fieldRowItem}>
+                  <Text style={styles.fieldLabel}>Fibra</Text>
+                  <View style={styles.inputWrap}>
+                    <TextInput value={entryFiberG} onChangeText={setEntryFiberG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
+                    <Text style={styles.inputUnit}>g</Text>
+                  </View>
+                </View>
+              </View>
+              <Text style={styles.hint}>Déjalos en blanco si no los anotaste. En blanco no es lo mismo que 0 g.</Text>
               <View style={styles.fieldRow}>
                 <View style={styles.fieldRowItem}>
                   <Text style={styles.fieldLabel}>Rápida</Text>
@@ -551,6 +627,36 @@ export function TimelineDetailModal({
                 placeholderTextColor={colors.muted}
                 multiline
               />
+              {/*
+                Fase 21: los macros también al editar. Antes solo se podían
+                cargar al crear la entrada, así que corregir una proteína
+                obligaba a borrar la entrada y rehacerla. En blanco = "no lo
+                anoté", nunca "0 g".
+              */}
+              <View style={styles.fieldRow}>
+                <View style={styles.fieldRowItem}>
+                  <Text style={styles.fieldLabel}>Proteína</Text>
+                  <View style={styles.inputWrap}>
+                    <TextInput value={entryProteinG} onChangeText={setEntryProteinG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
+                    <Text style={styles.inputUnit}>g</Text>
+                  </View>
+                </View>
+                <View style={styles.fieldRowItem}>
+                  <Text style={styles.fieldLabel}>Grasa</Text>
+                  <View style={styles.inputWrap}>
+                    <TextInput value={entryFatG} onChangeText={setEntryFatG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
+                    <Text style={styles.inputUnit}>g</Text>
+                  </View>
+                </View>
+                <View style={styles.fieldRowItem}>
+                  <Text style={styles.fieldLabel}>Fibra</Text>
+                  <View style={styles.inputWrap}>
+                    <TextInput value={entryFiberG} onChangeText={setEntryFiberG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
+                    <Text style={styles.inputUnit}>g</Text>
+                  </View>
+                </View>
+              </View>
+              <Text style={styles.hint}>Déjalos en blanco si no los anotaste. En blanco no es lo mismo que 0 g.</Text>
               <View style={styles.fieldRow}>
                 <View style={styles.fieldRowItem}>
                   <Text style={styles.fieldLabel}>Rápida</Text>

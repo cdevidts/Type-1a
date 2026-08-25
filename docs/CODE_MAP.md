@@ -198,6 +198,16 @@ docs/
   un evento anterior al ancla nunca confunde, limitación conocida y
   documentada (ver roadmap § Fase 23), porque resolverla exige asumir cuánto
   dura la insulina rápida, que es un parámetro de terapia.
+- `insulin-catalog.ts` — **2026-08-25 (Fase 23/21)**. Qué insulina usa la
+  persona y cuánto dura, según ficha técnica del fabricante. Rápidas
+  (NovoRapid, Fiasp, Humalog, Lyumjev, Apidra: 5 h; regular humana: 8 h) y
+  basales (Lantus/Basaglar/Semglee y Levemir: 24 h; Toujeo: 36 h; Tresiba:
+  42 h; NPH: 24 h). **NO es insulina activa (IOB)**: solo decide si había una
+  dosis dentro de la ventana de un episodio, para excluirlo de un promedio
+  descriptivo. Nunca se muestra, nunca se resta, nunca entra a una
+  calculadora — `AGENTS.md` prohíbe IOB en el MVP. `rapidInsulinLookbackMinutes`
+  devuelve `undefined` sin insulina elegida: **sin dato no se inventa un
+  default**. Fuentes en `docs/RESEARCH_SOURCES.md`.
 - `ai-safety.ts` — dos guardrails, uno en cada dirección. Son el respaldo
   técnico de la regla "Never let an LLM calculate, infer, or recommend
   insulin" de `AGENTS.md`. Si tocas cualquiera, agrega casos de test.
@@ -471,6 +481,15 @@ docs/
   tiene campo de insulina, y el `MealSnapshot` que le manda a la IA tampoco
   — la frontera de `AGENTS.md` es estructural, no una instrucción del prompt.
   `macrosSource` nunca queda en `user` tras una edición asistida.
+- `src/components/InsulinPicker.tsx` — **2026-08-25**. Elegir la insulina
+  rápida y la basal, con su duración. **Compartido entre `SettingsModal` y
+  `OnboardingModal` a propósito**: dos formularios separados para lo mismo se
+  van separando, que es exactamente lo que documenta la Fase 21 sobre
+  `EntryModal` vs. `MealEditModal`. Nada viene preseleccionado (`AGENTS.md`:
+  no inferir parámetros de terapia). `insulinProfileFields()` escribe los
+  cuatro campos **siempre, incluso en `undefined`**, porque quien llama hace
+  spread sobre el perfil y omitir la clave dejaría el valor viejo vivo — la
+  insulina no se podría quitar nunca.
 - `src/components/MealModal.tsx` — registro de comida. **2026-08-20 (Fase
   15)**: la IA precarga proteína/grasa/fibra (editables) desde su análisis, y
   `CatalogPicker` deja reusar un alimento ya conocido sin llamar a la IA

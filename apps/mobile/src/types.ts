@@ -101,7 +101,34 @@ export interface NutritionDayData {
   unreadableCount: number;
 }
 
-export type QuickRoute = 'carbs' | 'rapid' | 'basal' | 'correction';
+/**
+ * Destinos de los accesos rápidos.
+ *
+ * **`'meal'` reemplazó a `'carbs'` y `'rapid'` (Fase 21, 2026-08-25).** Los
+ * dos botones sueltos escribían filas independientes con timestamps propios,
+ * y por eso la app después no encontraba qué dosis correspondía a qué
+ * carbohidratos. Ahora los dos casos entran por `MealModal`, que guarda todo
+ * bajo un mismo timestamp.
+ *
+ * ⚠️ Los identificadores viejos **siguen existiendo** y no se pueden borrar:
+ * la notificación pegajosa que ya está en la bandeja del teléfono fue creada
+ * por un build anterior y sus botones siguen emitiendo `carbs`/`rapid`, igual
+ * que cualquier deep link viejo. `normalizeQuickRoute` los traduce.
+ */
+export type QuickRoute = 'meal' | 'basal' | 'correction';
+
+/** Lo que puede llegar desde una notificación vieja o un deep link viejo. */
+export type LegacyQuickRoute = QuickRoute | 'carbs' | 'rapid';
+
+/**
+ * Traduce un destino heredado al actual. Explícito y con nombre propio en vez
+ * de un `as`: si mañana se fusiona otro botón, el mapeo se agrega acá y no
+ * hay que buscarlo en tres archivos.
+ */
+export function normalizeQuickRoute(route: LegacyQuickRoute): QuickRoute {
+  if (route === 'carbs' || route === 'rapid') return 'meal';
+  return route;
+}
 
 /**
  * How a reminder notification alerts. Android fixes sound/vibration per
@@ -200,6 +227,16 @@ export interface TimelineEntryGroupRaw {
   description?: string;
   carbsG?: number;
   aiEstimatedCarbsG?: number;
+  /**
+   * Macros (Fase 21). Editar dejó de ser más pobre que crear: `EntryModal`
+   * ya los ofrecía al registrar, y el formulario de edición no. Un campo en
+   * blanco significa "no lo anoté", nunca "0 g".
+   */
+  proteinG?: number;
+  fatG?: number;
+  fiberG?: number;
+  /** Foto de la comida del grupo, si la tiene. Solo lectura en el editor. */
+  imageUri?: string;
   rapidUnits?: number;
   basalUnits?: number;
   note?: string;
@@ -244,6 +281,9 @@ export type TimelineEditPayload =
       glucose?: number;
       carbsG?: number;
       description?: string;
+      proteinG?: number;
+      fatG?: number;
+      fiberG?: number;
       rapidUnits?: number;
       basalUnits?: number;
       note?: string;
@@ -258,6 +298,9 @@ export type TimelineEditPayload =
       manualGlucose?: number;
       carbsG?: number;
       description?: string;
+      proteinG?: number;
+      fatG?: number;
+      fiberG?: number;
       rapidUnits?: number;
       basalUnits?: number;
       note?: string;

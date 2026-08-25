@@ -379,7 +379,23 @@ export async function deleteCarbEvent(db: SQLiteDatabase, id: string): Promise<v
 async function updateMealCarbsAndNoteRows(
   db: SQLiteDatabase,
   id: string,
-  updates: { confirmedCarbsG?: number | undefined; note?: string | undefined },
+  updates: {
+    confirmedCarbsG?: number | undefined;
+    note?: string | undefined;
+    /**
+     * Macros (Fase 21). Se escriben **siempre**, incluso en `undefined`: el
+     * formulario manda el estado completo, así que un campo vaciado tiene que
+     * borrarse y no quedarse con el valor viejo. Un macro en blanco significa
+     * "no lo anoté", que es distinto de "0 g" — la misma regla que rige en
+     * `MealModal`.
+     *
+     * Lo demás del payload (foto, `aiEstimatedCarbsG`, `aiAnalysisId`) NO se
+     * toca: sobrevive por el spread de `...existing`.
+     */
+    proteinG?: number | undefined;
+    fatG?: number | undefined;
+    fiberG?: number | undefined;
+  },
 ): Promise<void> {
   const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM meal_events WHERE id = ?', id);
   if (row === null) return;
@@ -388,6 +404,17 @@ async function updateMealCarbsAndNoteRows(
     ...existing,
     confirmedCarbsG: updates.confirmedCarbsG,
     note: updates.note,
+    proteinG: updates.proteinG,
+    fatG: updates.fatG,
+    fiberG: updates.fiberG,
+    // Si la usuaria escribió un macro a mano, la procedencia deja de ser
+    // "tal cual lo estimó la IA". No distinguir esto haría que el reporte
+    // presentara como estimación de IA algo que ella corrigió.
+    ...(updates.proteinG === existing.proteinG
+      && updates.fatG === existing.fatG
+      && updates.fiberG === existing.fiberG
+      ? {}
+      : { macrosSource: existing.macrosSource === undefined ? 'user' : 'mixed' }),
   });
   await db.runAsync('UPDATE meal_events SET payload = ? WHERE id = ?', JSON.stringify(next), id);
   await syncConfirmedCarbRow(db, existing, next.confirmedCarbsG);
@@ -904,11 +931,23 @@ export async function updateUnifiedEntryGroup(
           createdAt: timestamp,
           ...(input.carbsG === undefined ? {} : { confirmedCarbsG: input.carbsG }),
           ...(input.description === undefined ? {} : { note: input.description }),
+          // Fase 21: los macros también al crear la comida desde una edición.
+          // Sin esto, agregar carbohidratos y macros a una glucosa ya
+          // guardada perdía los macros en silencio.
+          ...(input.proteinG === undefined ? {} : { proteinG: input.proteinG }),
+          ...(input.fatG === undefined ? {} : { fatG: input.fatG }),
+          ...(input.fiberG === undefined ? {} : { fiberG: input.fiberG }),
+          ...(input.proteinG === undefined && input.fatG === undefined && input.fiberG === undefined
+            ? {}
+            : { macrosSource: 'user' as const }),
         }, entryGroupId);
       } else {
         await updateMealCarbsAndNoteRows(db, existingMeal.id, {
           confirmedCarbsG: input.carbsG,
           note: input.description,
+          proteinG: input.proteinG,
+          fatG: input.fatG,
+          fiberG: input.fiberG,
         });
       }
     } else if (existingMeal !== null) {
@@ -1758,6 +1797,12 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
         ...(group.meal?.note === undefined ? {} : { description: group.meal.note }),
         ...(group.meal?.confirmedCarbsG === undefined ? {} : { carbsG: group.meal.confirmedCarbsG }),
         ...(group.meal?.aiEstimatedCarbsG === undefined ? {} : { aiEstimatedCarbsG: group.meal.aiEstimatedCarbsG }),
+        // Fase 21: sin leerlos de vuelta, el formulario de edición abría con
+        // los macros en blanco y al guardar los borraba.
+        ...(group.meal?.proteinG === undefined ? {} : { proteinG: group.meal.proteinG }),
+        ...(group.meal?.fatG === undefined ? {} : { fatG: group.meal.fatG }),
+        ...(group.meal?.fiberG === undefined ? {} : { fiberG: group.meal.fiberG }),
+        ...(group.meal?.imageUri === undefined ? {} : { imageUri: group.meal.imageUri }),
         ...(group.rapid === undefined ? {} : { rapidUnits: group.rapid.units }),
         ...(group.basal === undefined ? {} : { basalUnits: group.basal.units }),
         ...(group.note === undefined ? {} : { note: group.note.text }),

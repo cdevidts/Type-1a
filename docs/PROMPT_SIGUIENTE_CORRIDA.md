@@ -1,4 +1,4 @@
-# Prompt para la corrida siguiente — Fase 21
+# Prompt para la corrida siguiente — Fase 22 (animación del swipe) + cierre de la Fase 21
 
 Copiar y pegar **todo lo que está dentro del bloque**. Está escrito para que la
 corrida no gaste tokens re-explorando: las decisiones ya están tomadas y los
@@ -9,141 +9,102 @@ archivos, líneas y constantes ya están localizados.
 > Es el punto 6 del checklist de `CLAUDE.md § Cierre de corrida`. Una corrida
 > que termina sin dejar este prompt apuntando a lo próximo no está cerrada.
 
-> **Estado al 2026-08-22 (cierre de la corrida A/B/C/D):** quedaron cerradas
-> la Fase 19 (notificaciones distinguibles), la Fase 23 (contexto del
-> episodio + exclusión de confundidos por horizonte) y el bug chico de
-> catálogo que vivía dentro de la Fase 21. La Fase 25 (dígito que
-> desaparece) quedó **investigada y deliberadamente sin corregir** — ver por
-> qué en el roadmap antes de intentar arreglarla.
-
-> **Build:** al cierre de esa corrida **no se gastó build**. Descubrimiento
-> que cambia la planificación: la Fase 19 resultó ser **100 % JavaScript**
-> (los canales de Android se crean en runtime, no en `app.json`), así que la
-> nota vieja "notificaciones ⇒ necesita build" era falsa. La Fase 21 tampoco
-> necesita build. Con eso, hay **dos fases enteras acumuladas sin entregar**
-> al teléfono; ver "Sobre el build" al final.
+> **Estado al 2026-08-25.** Quedaron cerradas la **Fase 21** (fusión de
+> "Carbos"/"Rápida" en "Comida", las tres decisiones independientes, y macros
+> al editar) y el **catálogo de insulinas** con su duración configurable, que
+> a su vez cerró la limitación de "la ventana mira solo hacia adelante" de la
+> Fase 23. Se gastó un build al final de esa corrida.
+>
+> **Lo único pendiente de la Fase 21**: editar una glucosa o una entrada
+> empaquetada todavía no ofrece **foto ni re-análisis de IA**. La capa de
+> datos ya lo aguanta (`UnifiedEntryInput` acepta `imageUri`, `aiAnalysisId`,
+> `aiEstimatedCarbsG`, y `saveUnifiedEntry` los escribe) — es trabajo de UI.
 
 ---
 
 ```
-Fase 21 del roadmap: menú de edición completo y uniforme, y fusión de los
-accesos rápidos "Carbos" y "Rápida" en uno solo, "Comida".
+Dos cosas, ninguna necesita build nativo:
 
-Antes de escribir código, lee docs/ROADMAP_V0.2.md § "Fase 21" completa. El
-alcance ya está precisado por Verónica y NO hay que re-decidirlo — en
-particular: la interfaz de creación (los botones sueltos de acceso rápido)
-NO se rediseña, y NO se migra a una tabla única de SQLite. Los dos intentos
-de ampliar el alcance más allá de eso ya fueron rechazados por ella.
+═══ PARTE 1 — Fase 22: animación del swipe entre pantallas ═══
 
-Esta corrida toca `.tsx` con JSX y `apps/mobile/src/components/`, así que
-invoca `/ui-screen` antes de escribir UI (tabla de disparo de CLAUDE.md).
-No toca `packages/domain` salvo que decidas mover cálculo ahí; si lo tocas,
-corre el subagente `domain-safety-reviewer`.
-
-═══ PARTE 1 — Fusionar "Carbos" + "Rápida" en un acceso "Comida" ═══
-
-El QUÉ y el POR QUÉ están en el roadmap (§ Fase 21, "El bug real que esto
-viene a resolver"): hoy cada botón guarda una fila suelta con su propio
-timestamp, y por eso el emparejamiento insulina↔comida falla. El camino
-correcto ya existe: `saveUnifiedEntry`, que guarda todo bajo UN mismo
-timestamp.
+Lee docs/ROADMAP_V0.2.md § "Fase 22". El gesto YA navega bien; lo que falta
+es la sensación: hoy al soltar el dedo la pantalla siguiente aparece de
+golpe. Verónica pidió que se vea entrar en tiempo real con el gesto, como un
+carrusel.
 
 Ubicaciones ya localizadas:
 
-- `apps/mobile/App.tsx:947-950` — la fila de cuatro `QuickButton`
-  ("Carbos", "Rápida", "Basal", "Corrección"). Quedan TRES: "Comida",
-  "Basal", "Corrección".
-- `apps/mobile/App.tsx:396` — `registerNumeric(route, value)`, el que hoy
-  escribe las filas sueltas.
-- `apps/mobile/src/components/NumericEntryModal.tsx` — NO se borra: sigue
-  sirviendo a "Basal". Su `NumericRoute = Exclude<QuickRoute,'correction'>`
-  (línea 16) pasa a ser solo `'basal'`.
+- `apps/mobile/src/useSwipeNavigation.ts` — decide a dónde ir recién en
+  `onPanResponderRelease`. Ahí es donde hoy se pierde el seguimiento del
+  dedo: para animarlo de verdad, la pantalla destino tiene que estar montada
+  (o pre-renderizada) y desplazarse en `onPanResponderMove` según
+  `gesture.dx`, con un resorte de vuelta si no llega al umbral.
+- `apps/mobile/src/swipeGuard.ts` — **NO tocar**. Es el árbitro que evita
+  robarle el gesto al scroll horizontal de `GlucoseChart`. Ya está resuelto.
+- `apps/mobile/src/swipeOrder.ts` — **NO tocar**. El recorrido ya tiene test.
+- `ModalShell` ya lee "Reduce Motion" del sistema: con la preferencia
+  activa la transición debe seguir siendo instantánea, no animada.
 
-⚠️ TRAMPA REAL, verificada: `QuickRoute` (`src/types.ts:84`) no lo consumen
-solo los botones. Tiene TRES consumidores más, y si renombras la unión sin
-tocarlos rompes caminos que hoy funcionan:
+Invoca `/app-shell` (toca el swipe entre secciones) y `/ui-screen`.
 
-1. `App.tsx:152` `routeFromUrl()` — deep link
-   `type1a://quick/(carbs|rapid|basal|correction)`.
-2. `src/notifications.ts:220` `quickRouteFromNotificationAction()` — los
-   botones "+ Carbos" y "+ Rápida" de la notificación pegajosa
-   (`ACTION_CARBS`, `ACTION_RAPID`, definidos ~línea 206).
-3. `NumericEntryModal` (arriba).
+═══ PARTE 2 — Cerrar la Fase 21: foto e IA al editar ═══
 
-Y lo que de verdad importa: **la notificación pegajosa que ya está en la
-bandeja de Verónica fue creada por un build anterior**, y sus botones siguen
-emitiendo `carbs`/`rapid`. Lo mismo cualquier deep link viejo. Así que el
-router tiene que **seguir aceptando los identificadores viejos** y
-redirigirlos al flujo "Comida" — no basta con renombrar la unión. Un mapeo
-de compatibilidad explícito y comentado, no un `as` silencioso.
+Hoy `TimelineDetailModal` deja editar glucosa, carbohidratos, comida
+(texto), macros, insulina y nota — pero no foto ni re-análisis de IA. Eso
+hace que editar siga siendo más pobre que crear, que es justo lo que la
+Fase 21 vino a arreglar.
 
-═══ PARTE 2 — La pantalla "Comida" con tres decisiones independientes ═══
+Lo que ya está hecho y NO hay que rehacer:
 
-Roadmap § Fase 21, alcance punto 2. Las tres decisiones son ortogonales y la
-UI tiene que dejarlas combinar libremente (esto es literal de Verónica, no
-interpretación):
+- `UnifiedEntryInput` (`apps/mobile/src/db.ts:666`) ya acepta `imageUri`,
+  `aiEstimatedCarbsG`, `aiAnalysisId`, `caloriesKcal` y los tres macros.
+- `saveUnifiedEntry` los escribe al `MealEvent`.
+- `updateUnifiedEntryGroup` ya persiste los macros; **falta que persista
+  `imageUri` y los campos de IA** — hoy sobreviven solo por el spread de
+  `...existing` en `updateMealCarbsAndNoteRows`, así que se conservan pero no
+  se pueden cambiar.
+- `TimelineEntryGroupRaw` ya trae `imageUri` de vuelta (se agregó el
+  2026-08-25 para poder mostrarla), pero el formulario todavía no la usa.
 
-- guardar el alimento SOLO al catálogo, sin registrar comida de hoy;
-- registrar la comida de hoy CON o SIN guardarla al catálogo;
-- registrar la comida de hoy CON o SIN insulina.
+Reusar los componentes de `MealEditModal.tsx`, que ya tiene cámara y los
+tres modos de IA, en vez de construir un segundo flujo. Ojo con el
+comentario de `types.ts` sobre por qué la comida NO tiene variante en
+`TimelineEditPayload`: la dirección correcta es que los otros `kind`
+lleguen al mismo componente, no que la comida vuelva al payload plano.
 
-Reusar `MealEditModal.tsx` / `MealModal.tsx` (Fase 17) en vez de construir un
-formulario nuevo: ya tienen foto, los tres modos de IA, macros, carbohidratos
-confirmados y `calculateMealBolus`. Lee `MealEditModal.tsx` antes de decidir
-la forma; la mitad del trabajo probablemente sea exponer props que ya existen.
+═══ FRONTERA DE SEGURIDAD ═══
 
-UI: la acción primaria tiene que ser visualmente única (UX_GUIDELINES). Tres
-casillas + un botón "Guardar" es más honesto que tres botones del mismo peso,
-pero decídelo contra el documento, no contra esta línea.
+La IA puede proponer macros; NUNCA insulina. `MealSnapshotSchema` lo
+garantiza estructuralmente (no tiene dónde poner una dosis) — no le agregues
+un campo de insulina "para que tenga contexto".
 
-═══ PARTE 3 — Menú de edición uniforme para cualquier evento guardado ═══
+Y la regla que la revisión de la Fase 23 dejó escrita con sangre: **cada vez
+que le des al modelo un dato nuevo, revisa si el filtro de salida cubre lo
+que ese dato le permite decir.** Al sumar la lista de dosis al prompt, se
+abrió la puerta a afirmar insulina activa sin que ningún patrón lo
+detectara.
 
-Roadmap § Fase 21, alcance punto 3. Hoy `TimelineEditPayload`
-(`src/types.ts:209-232`) es asimétrico: `kind: 'glucose'` y `kind: 'entry'`
-aceptan números planos de carbos/insulina, texto y nota — pero NO foto, NO
-IA, NO macros, NO calculadora, todo lo cual `EntryModal.tsx` sí ofrece al
-CREAR. Editar es hoy estrictamente más pobre que crear, y ese es el bug.
-
-Ojo con el comentario que ya está en `types.ts:212-216`: la comida NO tiene
-variante en este payload a propósito (desde la Fase 17 se edita en
-`MealEditModal`). No lo revientes — la dirección correcta es que los otros
-`kind` lleguen al mismo componente, no que la comida vuelva al payload
-plano.
-
-Campos del superconjunto: glucosa, comida/foto/IA, macros, carbohidratos,
-insulina, nota.
-
-═══ FRONTERA DE SEGURIDAD (no negociable) ═══
-
-La IA puede proponer macros; NUNCA insulina. Si la entrada ya tiene una
-dosis registrada, ninguna edición asistida por IA la toca ni la ve —
-`MealSnapshotSchema` lo garantiza estructuralmente (no tiene dónde poner una
-dosis) y el flujo fusionado hereda esa garantía. No agregues un campo de
-insulina a ese esquema "para que la IA tenga contexto".
-
-Todo texto visible que hable de dosis es superficie de seguridad, no
-decoración: si escribes o mueves uno, corre `domain-safety-reviewer`.
+**Nada puede estimar insulina activa (IOB).** El catálogo de insulinas
+guarda duraciones, y es tentador multiplicarlas por unas unidades: eso ya
+sería IOB y `AGENTS.md` lo prohíbe en el MVP. Su único uso legítimo es
+decidir sí/no si un episodio entra a un promedio.
 
 ═══ CIERRE OBLIGATORIO ═══
 
-1. `pnpm verify` en verde (18/18) — sin excepciones.
-2. Reproducir el conteo de módulos del bundle de Metro y compararlo con el
-   de la corrida anterior (**1326**). Un salto grande = alguien importó un
-   barrel; ver la trampa de Lucide abajo.
-3. `/ui-screen` invocada (toca componentes), y `dataviz` si tocas un gráfico.
-4. `domain-safety-reviewer` si tocaste `packages/domain`, `packages/ai`,
+1. `pnpm verify` en verde — sin excepciones.
+2. Reproducir el conteo de módulos de Metro y compararlo con el de la
+   corrida anterior (**1329**). Un salto grande = alguien importó un barrel.
+3. `/ui-screen` y `/app-shell` invocadas; `dataviz` si tocas un gráfico.
+4. `domain-safety-reviewer` si tocas `packages/domain`, `packages/ai`,
    `packages/cgm`, `.env`, o texto visible sobre dosis.
-5. `docs/CODE_MAP.md` y `docs/AI_CHAT_ARCHITECTURE.md` (§3, catálogo R/W) si
-   agregas o cambias una capacidad.
-6. `docs/ROADMAP_V0.2.md`: marca la Fase 21 y escribe su sección de
-   resultado, con las decisiones que valga la pena no re-discutir.
-7. `docs/DEEPAGENT_REDEPLOY_PROMPT.md`: si NO tocaste `apps/api` —
-   probablemente no lo hagas— anótalo en la tabla de "corridas que NO
-   requirieron redeploy", para que la corrida siguiente no se lo pregunte.
+5. `docs/CODE_MAP.md` y `docs/AI_CHAT_ARCHITECTURE.md` (§3, catálogo R/W).
+6. `docs/ROADMAP_V0.2.md`: marca la Fase 22 y escribe su sección de
+   resultado.
+7. `docs/DEEPAGENT_REDEPLOY_PROMPT.md`: si NO tocaste `apps/api`, anótalo en
+   la tabla de "corridas que NO requirieron redeploy".
 8. Reescribe ESTE archivo apuntando a la corrida siguiente.
-9. `CLAUDE.md § "Auditoría de cambios relacionados"`: aplícala y repórtala
-   en texto al cierre, con los tres niveles separados (los del nivel 3 con
-   opciones, para que Verónica decida).
+9. `CLAUDE.md § "Auditoría de cambios relacionados"`: aplícala y repórtala en
+   texto al cierre, con los tres niveles separados.
 ```
 
 ---
@@ -182,7 +143,19 @@ decoración: si escribes o mueves uno, corre `domain-safety-reviewer`.
 
 ## Sobre el build
 
-Al 2026-08-22 hay **dos fases completas sin llegar al teléfono** (19 y 23,
+Al 2026-08-25 se gastó un build con las Fases 19, 21, 23 y el catálogo de
+insulinas dentro. Lo que queda sin entregar al teléfono es lo que se
+construya de acá en adelante.
+
+La Fase 22 (animación del swipe) es **JS puro**: no necesita build. La
+Fase 20 (widget de pantalla de inicio) **sí lo necesita**, porque exige un
+config plugin. El criterio de siempre: agrupar y gastar un build solo cuando
+haya algo que realmente obligue a compilar.
+
+<details>
+<summary>Nota anterior (2026-08-22), ya resuelta</summary>
+
+Al 2026-08-22 había **dos fases completas sin llegar al teléfono** (19 y 23,
 más los fixes de catálogo), ninguna de las cuales necesitó build nativo — o
 sea, son entregables por OTA. La Fase 21 tampoco necesita build.
 
@@ -192,3 +165,5 @@ pequeño por tipo de notificación, descartado; y la Fase 20, el widget, que
 sí lo exige). Si la Fase 21 sale limpia, lo natural es cerrar también la
 Fase 22 (animación del swipe, también JS) y recién entonces evaluar si el
 próximo build se junta con la Fase 20.
+
+</details>

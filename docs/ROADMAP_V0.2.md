@@ -2097,7 +2097,7 @@ de entregar el widget en una corrida "sin build".
   dosis por su cuenta.
 - Depende de la Fase 8 para las celdas de chat.
 
-## Fase 21 — Menú de edición completo y uniforme, y fusión de "Carbos"/"Rápida" en "Comida" (planificada 2026-08-21, precisada 2026-08-22)
+## Fase 21 — Menú de edición completo y uniforme, y fusión de "Carbos"/"Rápida" en "Comida" ✅ (2026-08-25)
 
 **Es el alcance que la Fase 17 prometía en el título de la tabla y no
 entregó** (ver el aviso al principio de la Fase 17). Verónica corrigió y
@@ -2192,6 +2192,66 @@ La IA puede proponer macros; **nunca** insulina. Si la entrada ya tiene una
 dosis registrada, ninguna edición asistida por IA la toca ni la ve —
 `MealSnapshotSchema` ya lo garantiza estructuralmente, y la misma regla
 vale para el flujo fusionado.
+
+### Resultado (2026-08-25)
+
+**1. Fusión.** La fila de accesos rápidos pasó de cuatro botones a tres:
+**Comida**, Basal, Corrección. "Comida" abre `MealModal`, que ahora guarda
+la comida **y su insulina bajo el mismo timestamp** — que es el arreglo
+estructural del bug de emparejamiento, no una ventana de búsqueda más ancha.
+
+Corrección y Basal se quedan como filas sueltas **a propósito, y eso no es
+una excepción sino la regla bien aplicada**: una corrección no pertenece a
+ninguna comida, y una basal tampoco. Una fila suelta es exactamente lo que
+son. La corrección además se marca `purpose: 'correction'`, que es lo que
+después permite distinguirla del bolo de un plato.
+
+⚠️ **Trampa que costaría un botón muerto si se olvida:** `QuickRoute` tiene
+tres consumidores además del botón — el deep link `type1a://quick/...`, los
+ids de acción de la notificación pegajosa (`ACTION_CARBS`/`ACTION_RAPID`) y
+`NumericEntryModal`. **La notificación que ya está en la bandeja del teléfono
+fue creada por un build anterior y sigue emitiendo `carbs`/`rapid`.** Por eso
+los ids de acción **no se renombraron** y existe `normalizeQuickRoute`, con
+test propio (`apps/mobile/src/quickRoute.test.ts`): renombrar la unión sin
+mapear los viejos habría dejado sin efecto un botón que Verónica ya tiene a
+mano, sin ningún error visible.
+
+**2. Las tres decisiones independientes.** `MealModal` ganó dos interruptores
+—"Registrarla como comida de ahora" y "Guardarla en mi catálogo"— más el
+campo de insulina, que es la tercera. Son interruptores y no un selector de
+modo porque no son tres caminos excluyentes: son combinaciones de dos
+preguntas. Con "registrar" apagado, `confirmMeal` corta antes de escribir
+`meal_events`, no crea episodio y no programa alarmas — es cargar un
+alimento sin haberlo comido. Con las dos apagadas el botón se deshabilita y
+lo dice, en vez de "guardar" nada.
+
+La calculadora "Calcular por conteo" solo aparece si la usuaria ya cargó su
+`carbRatio`, y solo aplica **sus** valores. Escribe el número en un campo que
+ella puede sobrescribir antes de guardar: la app no decide ni sugiere una
+dosis, aplica la aritmética de los parámetros que ella cargó. Sin ratio, el
+campo de insulina sigue estando para escribirla a mano.
+
+**3. Menú de edición.** Los macros (proteína, grasa, fibra) ya se podían
+cargar al **crear** una entrada y no al **editarla**, así que corregir una
+proteína obligaba a borrar la entrada y rehacerla. Ahora están en los dos
+formularios (`kind: 'entry'` y `kind: 'glucose'`), viajan por
+`TimelineEditPayload`, se leen de vuelta en `TimelineEntryGroupRaw` —sin eso
+el formulario abría en blanco y al guardar los borraba— y se persisten en
+`updateUnifiedEntryGroup`, tanto al actualizar una comida existente como al
+crear una nueva desde la edición.
+
+Un macro en blanco sigue significando **"no lo anoté"** y no "0 g", y editar
+uno a mano cambia `macrosSource` a `user`/`mixed`, para que el reporte no
+presente como estimación de IA algo que ella corrigió.
+
+**Lo que NO entró, y por qué se dice en vez de dejarlo a medias:** editar una
+glucosa o una entrada empaquetada todavía **no ofrece foto ni re-análisis de
+IA**. La capa de datos ya lo aguanta (`UnifiedEntryInput` acepta `imageUri`,
+`aiAnalysisId` y `aiEstimatedCarbsG`, y `saveUnifiedEntry` los escribe), así
+que es trabajo de UI, no de arquitectura. Se dejó fuera porque agregar
+cámara + los tres modos de IA a ese formulario es una superficie grande, y
+`MealEditModal` ya cubre foto e IA para las comidas de verdad. Queda como lo
+único pendiente de la Fase 21.
 
 ---
 
@@ -2381,9 +2441,25 @@ lo exige y no se había cumplido): `nutrition-insights`, `meal.ts` y
 prompt y, de paso, que el propio texto del prompt no dispare el filtro de
 salida.
 
-### Limitación conocida, sin resolver a propósito
+### Limitación conocida — ✅ **cerrada el 2026-08-25**
 
-**La ventana mira solo hacia adelante.** Un evento anterior al ancla nunca
+Se resolvió como decía abajo que había que resolverla: **preguntándole a
+Verónica**. Ella pidió que la duración dependiera de la insulina que se usa,
+que fuera configurable en Ajustes y que formara parte del alta de un usuario
+nuevo. Eso es ahora `packages/domain/src/insulin-catalog.ts` +
+`InsulinPicker`, y `hasConfoundingEvent` acepta `lookbackMinutes`.
+
+Lo importante de cómo quedó: **sin insulina elegida no se supone ninguna
+duración** (`rapidInsulinLookbackMinutes` devuelve `undefined` y la ventana
+se queda como estaba). Un default silencioso habría excluido episodios por
+una suposición que nadie confirmó, y el resultado se lee como patrón. El
+lookback además aplica **solo a insulina**: para comida, carbohidratos y
+actividad no hay un número de ficha técnica equivalente, así que no se
+inventa uno.
+
+El texto original, que sigue explicando por qué no se resolvió a ojo:
+
+**La ventana miraba solo hacia adelante.** Un evento anterior al ancla nunca
 confunde, aunque siga actuando: una dosis rápida 45 min *antes* de la que se
 está midiendo contamina su curva igual que una posterior, y hoy no se
 excluye. Mirar hacia atrás obliga a asumir **cuánto dura una insulina rápida

@@ -7,13 +7,22 @@ import { colors, radius, spacing } from '../theme';
 import type { QuickRoute } from '../types';
 import { ModalShell } from './ModalShell';
 
+/**
+ * Solo basal desde la Fase 21.
+ *
+ * "Carbos" e "insulina rápida" salieron de acá a propósito: cada uno escribía
+ * una fila suelta con su propio timestamp, y por eso la app después no
+ * lograba emparejar una dosis con su comida. Los dos casos pasaron a
+ * `MealModal`, que guarda todo bajo una misma hora.
+ *
+ * La basal se queda porque no pertenece a ninguna comida: una fila suelta es
+ * exactamente lo que es.
+ */
 const contentByRoute = {
-  carbs: { title: 'Registrar carbohidratos', unit: 'g', defaultValue: '15', step: 5, color: colors.orange },
-  rapid: { title: 'Registrar insulina rápida', unit: 'U', defaultValue: '1', step: 0.5, color: colors.blue },
   basal: { title: 'Registrar insulina basal', unit: 'U', defaultValue: '10', step: 1, color: colors.navy },
 } as const;
 
-type NumericRoute = Exclude<QuickRoute, 'correction'>;
+type NumericRoute = Extract<QuickRoute, 'basal'>;
 
 export function NumericEntryModal({
   route,
@@ -24,7 +33,7 @@ export function NumericEntryModal({
   onClose: () => void;
   onSubmit: (route: NumericRoute, value: number) => Promise<void>;
 }) {
-  const config = route === null ? contentByRoute.carbs : contentByRoute[route];
+  const config = contentByRoute.basal;
   const [value, setValue] = useState<string>(config.defaultValue);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -44,8 +53,8 @@ export function NumericEntryModal({
   async function submit(): Promise<void> {
     if (route === null) return;
     const parsed = parsePositiveNumber(value);
-    if (parsed === null || (route === 'carbs' ? parsed > 500 : parsed > 100)) {
-      setError(route === 'carbs' ? 'Ingresa entre 0,1 y 500 g.' : 'Ingresa entre 0,1 y 100 U.');
+    if (parsed === null || parsed > 100) {
+      setError('Ingresa entre 0,1 y 100 U.');
       return;
     }
     setBusy(true);
@@ -84,11 +93,9 @@ export function NumericEntryModal({
         </Pressable>
       </View>
       <Text style={styles.timestamp}>Se guardará con la hora actual. Podrás verlo inmediatamente en el timeline.</Text>
-      {route !== 'carbs' ? (
-        <View style={styles.safetyBox}>
-          <Text style={styles.safetyText}>Confirma la cantidad antes de guardar. Type 1A registra el evento, pero no administra insulina.</Text>
-        </View>
-      ) : null}
+      <View style={styles.safetyBox}>
+        <Text style={styles.safetyText}>Confirma la cantidad antes de guardar. Type 1A registra el evento, pero no administra insulina.</Text>
+      </View>
       {error === null ? null : <Text style={styles.error}>{error}</Text>}
       <Pressable
         style={[styles.primaryButton, { backgroundColor: config.color }, busy && styles.disabled]}
