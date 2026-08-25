@@ -42,14 +42,14 @@ describe('reportHtml', () => {
       reading({ id: 'real-1', origin: 'real', glucose: 110 }),
       reading({ id: 'synthetic-1', origin: 'synthetic', glucose: 250 }),
     ];
-    const data: ReportExport = { readings, rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 0 };
+    const data: ReportExport = { readings, rows: [], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 0 };
     const html = reportHtml(data, '7 días');
     expect(circleCount(html)).toBe(1);
     expect(html).toContain('Se excluyeron 1 lectura(s) sintética(s)');
   });
 
   it('shows the empty-summary message when every reading is synthetic', () => {
-    const data: ReportExport = { readings: [reading({ origin: 'synthetic' })], rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 0 };
+    const data: ReportExport = { readings: [reading({ origin: 'synthetic' })], rows: [], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 0 };
     const html = reportHtml(data, '7 días');
     expect(html).toContain('no se puede calcular un resumen');
     expect(circleCount(html)).toBe(0);
@@ -62,7 +62,7 @@ describe('reportHtml', () => {
       reading({ id: 'imported-2', origin: 'imported', sourceTimestamp: '2026-08-18T10:00:00.000Z' }),
       reading({ id: 'manual-1', origin: 'manual', sourceTimestamp: '2026-08-18T11:00:00.000Z' }),
     ];
-    const html = reportHtml({ readings, rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 0 }, '7 días');
+    const html = reportHtml({ readings, rows: [], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 0 }, '7 días');
     // El punto importado se dibuja hueco (relleno blanco + borde), y su
     // tramo de línea va punteado — no puede verse igual que uno del sensor.
     expect(html).toContain('fill="#FFFFFF"');
@@ -72,7 +72,7 @@ describe('reportHtml', () => {
 
   it('labels the estimated HbA1c distinctly from a lab HbA1c result', () => {
     const readings: CGMReading[] = [reading({})];
-    const html = reportHtml({ readings, rows: [labRow()], insulin: [], carbs: [], meals: [], unreadableCount: 0 }, '7 días');
+    const html = reportHtml({ readings, rows: [labRow()], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 0 }, '7 días');
     expect(html).toContain('HbA1c estimada (GMI)');
     expect(html).toContain('HbA1c (laboratorio)');
     expect(html).toContain('No reemplaza una medición de laboratorio');
@@ -93,14 +93,14 @@ describe('reportHtml', () => {
         createdAt: '2026-08-18T12:00:00.000Z',
       },
     ];
-    const html = reportHtml({ readings, rows: [], insulin, carbs: [], meals: [], unreadableCount: 0 }, '7 días');
+    const html = reportHtml({ readings, rows: [], insulin, carbs: [], meals: [], activity: [], unreadableCount: 0 }, '7 días');
     expect(html).toContain('Día promedio (perfil ambulatorio)');
     expect(html).toContain('Patrones por franja horaria');
     expect(html).toContain('Type 1A nunca decide ni sugiere una dosis por su cuenta');
   });
 
   it('falls back to an empty-state line when there is no food or insulin', () => {
-    const html = reportHtml({ readings: [], rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 0 }, '7 días');
+    const html = reportHtml({ readings: [], rows: [], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 0 }, '7 días');
     expect(html).toContain('Sin comidas ni insulina registradas en este rango.');
   });
 
@@ -112,7 +112,7 @@ describe('reportHtml', () => {
       detail: '120 mg/dL',
       provenance: 'Sensor',
     };
-    const html = reportHtml({ readings: [], rows: [glucoseRow, labRow()], insulin: [], carbs: [], meals: [], unreadableCount: 0 }, '7 días');
+    const html = reportHtml({ readings: [], rows: [glucoseRow, labRow()], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 0 }, '7 días');
     expect(html).not.toContain('120 mg/dL');
     expect(html).toContain('7.1%');
   });
@@ -124,7 +124,7 @@ describe('reportWorkbookBytes', () => {
       reading({ id: 'real-1', origin: 'real', glucose: 110 }),
       reading({ id: 'synthetic-1', origin: 'synthetic', glucose: 250 }),
     ];
-    const bytes = reportWorkbookBytes({ readings, rows: [labRow()], insulin: [], carbs: [], meals: [], unreadableCount: 0 });
+    const bytes = reportWorkbookBytes({ readings, rows: [labRow()], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 0 });
     const workbook = XLSX.read(bytes, { type: 'array' });
     expect(workbook.SheetNames).toEqual(['Resumen', 'Patrones', 'Grasa y proteína', 'Reporte']);
 
@@ -139,7 +139,7 @@ describe('reportWorkbookBytes', () => {
   });
 
   it('carries the descriptive-only caveat into the Patrones sheet', () => {
-    const bytes = reportWorkbookBytes({ readings: [], rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 0 });
+    const bytes = reportWorkbookBytes({ readings: [], rows: [], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 0 });
     const workbook = XLSX.read(bytes, { type: 'array' });
     const text = XLSX.utils
       .sheet_to_json<string[]>(workbook.Sheets.Patrones!, { header: 1 })
@@ -150,7 +150,7 @@ describe('reportWorkbookBytes', () => {
   });
 
   it('notes when there is no glucose to summarize', () => {
-    const bytes = reportWorkbookBytes({ readings: [reading({ origin: 'synthetic' })], rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 0 });
+    const bytes = reportWorkbookBytes({ readings: [reading({ origin: 'synthetic' })], rows: [], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 0 });
     const workbook = XLSX.read(bytes, { type: 'array' });
     const resumenRows = XLSX.utils.sheet_to_json<string[]>(workbook.Sheets.Resumen!, { header: 1 });
     expect(resumenRows.flat().join(' | ')).toContain('Sin lecturas de glucosa');
@@ -161,13 +161,13 @@ describe('declaración de registros ilegibles (integridad del reporte)', () => {
   const readings = [reading({ id: 'a', glucose: 120 })];
 
   it('el PDF declara los registros ilegibles cuando los hay', () => {
-    const html = reportHtml({ readings, rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 3 }, '7 días');
+    const html = reportHtml({ readings, rows: [], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 3 }, '7 días');
     expect(html).toContain('3 registro(s)');
     expect(html).toContain('no se pudieron leer');
   });
 
   it('el PDF no dice nada cuando no hubo descartes', () => {
-    const html = reportHtml({ readings, rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 0 }, '7 días');
+    const html = reportHtml({ readings, rows: [], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 0 }, '7 días');
     expect(html).not.toContain('no se pudieron leer');
   });
 
@@ -175,13 +175,13 @@ describe('declaración de registros ilegibles (integridad del reporte)', () => {
     // Si las lecturas del rango eran justamente las corruptas, un reporte que
     // solo diga "sin lecturas" le hace concluir al médico que la paciente no
     // midió.
-    const html = reportHtml({ readings: [], rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 5 }, '7 días');
+    const html = reportHtml({ readings: [], rows: [], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 5 }, '7 días');
     expect(html).toContain('5 registro(s)');
   });
 
   it('el Excel declara los registros ilegibles, con y sin resumen', () => {
     const withSummary = XLSX.read(
-      reportWorkbookBytes({ readings, rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 2 }),
+      reportWorkbookBytes({ readings, rows: [], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 2 }),
       { type: 'array' },
     );
     const withSummaryText = XLSX.utils.sheet_to_csv(withSummary.Sheets[withSummary.SheetNames[0]!]!);
@@ -189,7 +189,7 @@ describe('declaración de registros ilegibles (integridad del reporte)', () => {
     expect(withSummaryText).toContain('2');
 
     const withoutSummary = XLSX.read(
-      reportWorkbookBytes({ readings: [], rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 4 }),
+      reportWorkbookBytes({ readings: [], rows: [], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 4 }),
       { type: 'array' },
     );
     const withoutSummaryText = XLSX.utils.sheet_to_csv(withoutSummary.Sheets[withoutSummary.SheetNames[0]!]!);
@@ -205,7 +205,7 @@ describe('sección de grasa/proteína en el reporte (Fase 14)', () => {
   }
 
   it('no aparece la sección con datos insuficientes, pero lo dice', () => {
-    const html = reportHtml({ readings: [], rows: [], insulin: [], carbs: [], meals: [], unreadableCount: 0 }, '7 días');
+    const html = reportHtml({ readings: [], rows: [], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 0 }, '7 días');
     expect(html).toContain('Grasa y proteína frente a la glucosa tardía');
     expect(html).toContain('Todavía no hay suficientes comidas');
   });
@@ -216,7 +216,7 @@ describe('sección de grasa/proteína en el reporte (Fase 14)', () => {
       mealAt(3, 60, 60), mealAt(4, 60, 60), mealAt(5, 60, 60),
     ];
     const html = reportHtml(
-      { readings: [], rows: [], insulin: [], carbs: [], meals, unreadableCount: 0 },
+      { readings: [], rows: [], insulin: [], carbs: [], meals, activity: [], unreadableCount: 0 },
       '30 días',
     );
     const section = html.slice(html.indexOf('Grasa y proteína frente a la glucosa tardía'));

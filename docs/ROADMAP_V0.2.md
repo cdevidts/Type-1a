@@ -321,13 +321,13 @@ persistencia de datos de salud, o `packages/cgm`.
 | **16** | ✅ **Completada (2026-08-20).** Barra inferior, swipe y sistema de iconos. Reorganiza la navegación entera y reemplaza los glifos Unicode por iconos SVG reales. **Todo JS: no necesita build nativo.** Ver detalle abajo. | 14, 15 |
 | **17** | 🟡 **Solo comidas, construido.** Editar entradas con la misma potencia que crearlas, incluida la IA en modo edición (foto, texto, y "explícale el cambio"). Ver detalle abajo — el alcance completo (glucosa automática, entrada empaquetada) quedó en la **Fase 21**. | 15 |
 | **18** | **Catálogo de comidas editable** (pantalla propia), porciones, y la pregunta de "¿editar la del catálogo o crear una nueva?". Ver detalle abajo. | 15, 17 |
-| **19** | **Notificaciones distinguibles**: un icono, un color y un título propios por tipo de alarma. **Necesita build nativo** (los iconos de notificación de Android son recursos drawable). Ver detalle abajo. | 16 (usa el sistema de iconos) |
+| **19** | ✅ **Completada (2026-08-22).** Notificaciones distinguibles: emoji, color y título propios por tipo, y **un canal de Android por tipo** (no por estilo). De paso, el handler de primer plano dejó de silenciar todo. **NO necesitó build nativo** — resultó ser todo JS. Ver detalle abajo. | 16 (usa el sistema de iconos) |
 | **20** | **Widget de pantalla de inicio** 4×3. **Necesita build nativo** (config plugin). Ver detalle abajo. | 8 (para los accesos al chat), 16 |
 | **21** | 🟡 **Precisada 2026-08-22.** Fusiona los accesos "Carbos" y "Rápida" en un solo botón "Comida" (con IA, catálogo y calculadora, y toggles independientes para catálogo/timeline/insulina) — corrige el bug real de que insulina y carbos sueltos no comparten timestamp y la app no logra emparejarlos. El menú de EDICIÓN de cualquier evento pasa a ser el mismo, completo, sin importar qué botón lo creó. Los accesos rápidos en sí NO cambian de interfaz. Ver detalle abajo. | 17 |
 | **22** | **Animación del swipe entre pantallas.** El gesto ya navega (corregido 2026-08-21); falta que la pantalla siguiente se vea aparecer mientras se desliza, en vez de saltar de golpe al soltar. Ver detalle abajo. | 16 |
-| **23** | **Episodio post-comida no reconoce insulina adicional dentro de la ventana** (ej. una corrección a los 90 min). El insight de IA describe la bajada sin saber que hubo una segunda dosis. Ver detalle abajo. | 12 |
+| **23** | ✅ **Completada (2026-08-22).** El episodio captura TODO lo de su ventana, y —lo que de verdad importaba— `buildMacroGlucoseComparison`/`buildNutritionInsights` excluyen por horizonte los episodios confundidos. Ver detalle abajo. | 12 |
 | **24** | **Los gráficos de reportes deben mostrar los eventos**, no solo la curva de glucosa. Enfoque **a conversar con Verónica antes de construir** — dos ideas sobre la mesa, ninguna decidida. Ver detalle abajo. | 9 |
-| **25** | **Bug: un número de dos dígitos pierde el primero al escribirlo**, en varios modales. Hipótesis: `selectTextOnFocus` + re-render en cada tecla. Necesita reproducirse en dispositivo. Ver detalle abajo. | — |
+| **25** | 🟡 **Investigada 2026-08-22, sin corregir a propósito.** Tres hipótesis descartadas con evidencia; la causa no se puede confirmar sin dispositivo. Hay un test A/B de 30 segundos para que Verónica la fije. Ver detalle abajo. | — |
 
 No se numeró por prioridad de negocio sino por dependencia técnica — el
 orden de ejecución real se acuerda con Verónica fase por fase, no se asume.
@@ -1931,7 +1931,7 @@ alimento que se reutiliza en todas las demás.
 
 ---
 
-## Fase 19 — Notificaciones distinguibles (planificada 2026-08-20)
+## Fase 19 — Notificaciones distinguibles ✅ (2026-08-22)
 
 **Es un problema de seguridad, no de estética.** Con las tres alarmas
 (post-comida, corrección, capilar) llegando con el mismo símbolo y color, se
@@ -2023,6 +2023,47 @@ y el drawable se fijan en configuración nativa. Y ojo con lo de siempre —
 Android congela las propiedades de un canal al crearlo, así que los canales
 por tipo tienen que nacer con ids nuevos.
 
+### Resultado (2026-08-22) — y la suposición de build que resultó falsa
+
+Implementado en `apps/mobile/src/notifications.ts`. Lo entregado:
+
+- `ReminderKind = 'meal' | 'correction' | 'capillary'`, y una tabla
+  `REMINDER_PRESENTATION` que fija emoji, `color` (desde `theme.ts`, ningún
+  hex suelto) y nombre de canal por tipo. Una sola fuente de verdad: agregar
+  un cuarto tipo de alarma es agregar una fila.
+- **Los canales pasaron a ser por tipo, no por estilo.** Antes había 4
+  canales (`reminders-sound`, `reminders-vibrate`, …) para 3 tipos de
+  alarma; ahora hay 3 canales vivos, con id `${kind}-${style}`. Eso le da a
+  Verónica **un interruptor por tipo de alarma en los ajustes de Android** —
+  puede silenciar "corrección" sin perder "capilar", que era el punto de
+  toda la fase.
+- `ensureReminderChannels(style)` crea los tres del estilo activo y
+  **borra con `deleteNotificationChannelAsync` los de los otros estilos**.
+  Sin eso, cambiar de estilo dejaba canales huérfanos acumulándose en los
+  ajustes del sistema, cada uno con su interruptor inútil.
+- **Bug de primer plano corregido de paso**: el handler devolvía
+  `shouldPlaySound: false` siempre, así que con la app abierta ninguna
+  alarma sonaba aunque el estilo elegido fuera "sonido". Ahora devuelve
+  `shouldPlaySound: audible`, salvo para las notificaciones de datos
+  (`SILENT_DATA_FLAG`), que siguen mudas a propósito.
+
+**Corrección a la planificación: esta fase NO necesitaba build nativo.** La
+sección de arriba decía "sigue necesitando build", y es falso para lo que
+efectivamente se construyó. El razonamiento estaba anclado al **icono
+pequeño por tipo** (que sí exige drawables compilados) — pero ese se
+descartó explícitamente en esta misma fase. Lo que quedó — emoji en el
+título, `content.color`, título propio, canales creados en runtime — es
+**todo JavaScript**: `setNotificationChannelAsync` crea canales en tiempo de
+ejecución, no en `app.json`. La Fase 19 llega al teléfono de Verónica con un
+OTA update, sin gastar un build.
+
+**Lección para planificar**: "toca notificaciones ⇒ necesita build" es un
+atajo equivocado. El corte real es **drawables/`app.json` vs. API de
+runtime**. Canales, sonido, vibración, color, título y prioridad son
+runtime. Solo el icono pequeño (y cualquier config plugin) obliga a
+compilar. La regla en `.claude/skills/iconography/SKILL.md` ya dice esto
+correctamente — lo que falló fue la nota de esta fase, no la skill.
+
 ---
 
 ## Fase 20 — Widget de pantalla de inicio (planificada 2026-08-20)
@@ -2103,7 +2144,7 @@ El único camino que ya resuelve esto bien es "Nueva entrada"
 diseño, desde la Fase 5. La fusión de abajo extiende esa misma solución al
 caso que hoy se le escapa.
 
-### Bug chico y aparte, encontrado revisando esto: "Nueva entrada" no alimenta el catálogo
+### ✅ Bug chico y aparte, encontrado revisando esto: "Nueva entrada" no alimenta el catálogo — **corregido 2026-08-22**
 
 `saveEntry` (`App.tsx`, el camino de `EntryModal`/"Nueva entrada" con foto)
 **no llama a `recordCatalogFoods`** cuando hay análisis de IA — solo lo hace
@@ -2111,6 +2152,13 @@ caso que hoy se le escapa.
 que hacen lo mismo (registrar una comida con foto) alimentan el catálogo de
 forma distinta. Barato de corregir, independiente de todo lo demás de esta
 fase — candidato a resolverse antes, no hace falta esperar al resto.
+
+**Resuelto el 2026-08-22** (se adelantó, como decía la nota): `saveEntry`
+ahora llama a `recordCatalogFoods` con el mismo criterio que `confirmMeal`,
+así que los dos caminos que registran una comida con foto alimentan el
+catálogo igual. **Lo que ya queda hecho de la Fase 21**, entonces, es este
+punto; el resto (fusión de accesos y menú de edición uniforme) sigue
+pendiente.
 
 ### Alcance, precisado
 
@@ -2175,7 +2223,7 @@ navega. Respetar "Reduce Motion" (`ModalShell` ya lee la preferencia): con
 la preferencia activa, la transición debe seguir siendo instantánea, no
 animada.
 
-## Fase 23 — El episodio debe capturar TODO lo que pasa en su ventana, no solo insulina (identificada 2026-08-22, ampliada 2026-08-22)
+## Fase 23 — El episodio debe capturar TODO lo que pasa en su ventana, no solo insulina ✅ (2026-08-22)
 
 Reportado por Verónica, y **corregido su alcance por ella misma**: no es
 "¿hubo una corrección sí o no?" — es que el episodio necesita ver **todo lo
@@ -2223,6 +2271,127 @@ que se está midiendo es la comida original o algo que pasó en el medio.
    acertada ni sugerir si hacía falta una. `containsTherapyRecommendation`
    sigue filtrando toda salida.
 
+### Resultado (2026-08-22)
+
+Módulo nuevo: **`packages/domain/src/episode-context.ts`** (puro, con test
+propio en `packages/domain/test/episode-context.test.ts`).
+
+```ts
+export const EPISODE_GRACE_MINUTES = 15;
+export function collectEpisodeContext(input): EpisodeContextEvent[]
+export function hasConfoundingEvent(input): boolean
+```
+
+Cuatro decisiones que valen más que el código y que conviene no re-discutir:
+
+1. **La gracia de 15 min existe porque guardar una comida escribe varias
+   filas casi simultáneas** (el `CarbEvent` espejo, el bolo, a veces una
+   nota). Sin gracia, *toda* comida sería su propio confusor y ningún
+   episodio quedaría limpio jamás — la exclusión habría vaciado los
+   análisis en vez de limpiarlos. Además `ignoreIds` deja fuera las filas
+   que el episodio ya reconoce como suyas.
+2. **Una nota NO confunde.** Está deliberadamente fuera de
+   `CONFOUNDING_KINDS`: es texto, no mueve la glucosa. Excluir episodios por
+   haber escrito una nota tiraría datos buenos.
+3. **`EpisodeContextEvent` no tiene campo de texto, y es una frontera de
+   seguridad estructural, no una omisión.** El objeto viaja al servicio de
+   IA dentro de `MealEpisodeMetrics`; `AGENTS.md` manda enviar el mínimo
+   necesario. Un esquema sin campo `text` **no puede** filtrar el contenido
+   de una nota — vale más que acordarse de borrarlo. Hay un test que lo
+   fija (`expect(JSON.stringify(events)).not.toContain('jefe')`).
+4. **La exclusión es por horizonte, no por episodio.** Ésta es la parte que
+   de verdad importaba. Una colación a las +4h **no** invalida lo que se
+   midió a las +2h, así que `buildMacroGlucoseComparison` evalúa
+   `confoundedWithin(horizonHours)` **dentro** de cada grupo de horizonte en
+   vez de descartar la comida entera. Excluir por episodio habría tirado
+   datos tempranos limpios. El efecto sale a la vista sin UI nueva: el
+   `sampleSize` que ya se muestra por horizonte baja donde corresponde.
+
+También:
+
+- `buildNutritionInsights` aplica el mismo salto por horizonte, con
+  `DOSE_OWN_MEAL_MINUTES = 60` — el mismo ancho que
+  `findRapidInsulinCandidates`, para que **el pre-bolo estándar no se cuente
+  como corrección ajena** y arrase con la muestra.
+- Prompt del insight a **`glucose-insight.v3`**: describe los
+  `contextEvents` en llano y tiene prohibido juzgar si el evento
+  correspondía o hacía falta. Ausencia de eventos ≠ "no pasó nada" (puede
+  ser simplemente que no se registró), y el prompt lo dice.
+- **`contextEvents` se muestra en `TimelineDetailModal`.** Deliberado: la
+  Fase 15 ya dejó documentado el error de agregar un campo que se escribe y
+  nunca se lee. Un dato que solo existe en la base no le sirve a nadie.
+
+### La revisión de seguridad encontró cuatro errores reales en lo de arriba
+
+`domain-safety-reviewer` corrió sobre el diff **antes** de cerrar la corrida
+y encontró cuatro cosas que estaban mal en el código que se acaba de
+describir. Vale la pena dejarlas escritas porque las cuatro son del mismo
+género —**una exclusión demasiado generosa deja pasar justo lo que venía a
+filtrar**— y es un error fácil de repetir en la Fase 24.
+
+1. **La gracia larga silenciaba las correcciones (grave).** El punto 3 de
+   arriba decía "60 min para que el pre-bolo no arrase con la muestra", y se
+   implementó como una gracia única para **todas** las clases de evento. O
+   sea que una corrección real a los 45 minutos quedaba tratada como "parte
+   de la comida" y no confundía nada. Peor: con horizonte de 1 h,
+   `grace === window` dejaba el intervalo vacío **por construcción**, así que
+   esa hora no podía marcarse confundida jamás. Corregido separando
+   `graceMinutes` (base, corta, todas las clases) de `mealGraceMinutes`
+   (larga, **solo** `meal`/`carbs`). Insulina y actividad nunca reciben la
+   gracia larga: son exactamente el confusor que se busca.
+2. **`ownIds` se comía todas las dosis, no solo el bolo (grave).** En
+   `macro-glucose.ts` se ignoraban los `candidateIds` de
+   `findRapidInsulinCandidates` — que son **todas** las dosis rápidas de la
+   ventana -90/+60, por eso la propia función marca `requiresConfirmation`
+   cuando hay más de una. Resultado: una corrección 40 min después de comer
+   contaba como "el bolo de esta comida" y no confundía nada, subestimando
+   justo la subida tardía que la comparación existe para describir. Ahora usa
+   `recommendedId`, que es lo que `episodes.ts` ya usaba — las dos
+   definiciones coinciden.
+3. **La fila espejo se contaba dos veces.** `writeMealWithEpisode` escribe el
+   `MealEvent` y un `CarbEvent` con el mismo timestamp;
+   `collectEpisodeContext` los tomaba como dos eventos. Una colación de 30 g
+   se mostraba como "Otra comida 30 g" **y** "Carbohidratos 30 g", y al
+   modelo le llegaban 60 g donde se comieron 30. De-duplicado por timestamp,
+   como `buildNutritionInsights` ya hacía.
+4. **El prompt v3 abría la puerta a afirmar insulina activa.** Al pasarle al
+   modelo la lista de dosis con unidades y minutos, por primera vez tenía
+   material para decir "la segunda dosis se solapó con la primera, que
+   todavía estaba activa". Eso **no es una recomendación** —los cuatro
+   patrones de `containsTherapyRecommendation` no lo tocaban— pero sí es una
+   estimación de **insulina activa**, que `AGENTS.md` prohíbe en el MVP igual
+   que prohíbe recomendar dosis. Se cerró en las dos capas: el prompt pasó a
+   **v4** con la prohibición explícita, y el filtro de salida ganó patrones
+   de IOB, de juicio de suficiencia y de "la próxima vez". **La lección
+   general: cuando crece lo que el modelo puede decir, tiene que crecer el
+   filtro — si no, la frontera se angosta sola.**
+
+También se corrigió una **regresión de la Fase 19** que la misma revisión
+encontró: `ensureReminderChannels` borraba los canales de los otros estilos,
+y Android **no entrega una notificación cuyo canal ya no existe**. Cambiar el
+estilo de alerta mataba en silencio los check-ins de un episodio en curso y
+el recordatorio post-corrección. Ahora un canal no se borra si todavía tiene
+algo programado encima, y si no se puede saber, no se borra. Contrapartida
+asumida: un recordatorio programado antes del cambio se entrega con el
+estilo viejo.
+
+Y se cerró el hueco de tests que la revisión marcó (`AGENTS.md` § Completion
+lo exige y no se había cumplido): `nutrition-insights`, `meal.ts` y
+`packages/ai/test/prompts.test.ts` — este último fija las prohibiciones del
+prompt y, de paso, que el propio texto del prompt no dispare el filtro de
+salida.
+
+### Limitación conocida, sin resolver a propósito
+
+**La ventana mira solo hacia adelante.** Un evento anterior al ancla nunca
+confunde, aunque siga actuando: una dosis rápida 45 min *antes* de la que se
+está midiendo contamina su curva igual que una posterior, y hoy no se
+excluye. Mirar hacia atrás obliga a asumir **cuánto dura una insulina rápida
+en esta persona**, que es un parámetro de terapia — y `AGENTS.md` prohíbe que
+la app infiera uno. Queda como decisión para Verónica, no como algo a elegir
+a ojo. Está fijado en un test (`nutrition-insights.test.ts`) para que la
+próxima corrida no lo confunda con un bug.
+
 ---
 
 ## Fase 24 — Los gráficos de reportes deben mostrar los eventos, no solo la glucosa (identificada 2026-08-22)
@@ -2255,7 +2424,7 @@ elegir por ella. Dos ideas que puso sobre la mesa, ninguna decidida:
 
 ---
 
-## Fase 25 — Bug: al escribir un número de dos cifras, el primer dígito desaparece (reportado 2026-08-22)
+## Fase 25 — Bug: al escribir un número de dos cifras, el primer dígito desaparece 🟡 (investigada 2026-08-22, sin corregir a propósito)
 
 Reportado por Verónica en dispositivo, "en cualquier modal": al escribir un
 número de dos dígitos en un campo numérico, el primero queda reemplazado por
@@ -2283,6 +2452,60 @@ prop compartida, no un bug de un formulario puntual.
    re-selección.
 3. Corregir en el patrón compartido si es posible, no campo por campo —
    evita que quede arreglado en tres modales y roto en un cuarto.
+
+### Investigación 2026-08-22 — tres hipótesis descartadas con evidencia
+
+Se leyó el código real en vez de suponer. Las tres explicaciones "de manual"
+para este síntoma **no aplican a este repo**:
+
+1. **"El `value` se recalcula/normaliza en cada `onChangeText`"** —
+   descartada. `NumericEntryModal.tsx:75` pasa `setValue` **directo** a
+   `onChangeText`: el estado guarda el string crudo tal cual se tecleó, sin
+   parseo, sin `toFixed`, sin reformateo. El mismo patrón en
+   `TimelineDetailModal` (`setUnits`, `setCarbsG`, `setGlucose`…). No hay
+   ningún punto donde el componente le devuelva al `TextInput` un texto
+   distinto del que el usuario escribió.
+2. **"El campo se remonta entre teclas"** — descartada. El único `useEffect`
+   que reescribe `value` (`NumericEntryModal.tsx:32`) depende de `[route]`,
+   y `route` no puede cambiar mientras se teclea (cambiarlo implica cerrar y
+   abrir otro modal). No hay `key` dinámica en ningún campo numérico.
+3. **"Algo re-renderiza el árbol periódicamente y le roba el foco"** —
+   descartada. **No existe ni un solo `setInterval` en toda la app**
+   (`apps/mobile/src` + `App.tsx`, verificado por búsqueda). No hay reloj,
+   ni polling de CGM en el cliente, que pueda pisar el foco a mitad de una
+   escritura.
+
+Corolario sobre el sospechoso original: **`selectTextOnFocus` por sí solo no
+puede causarlo.** Se dispara al *recibir foco*, no en cada tecla; sin una de
+las tres causas de arriba, el campo no pierde ni recupera foco entre el "1" y
+el "2". Sigue siendo el amplificador probable —convierte un re-foco invisible
+en "se borró lo anterior"— pero no es el gatillo.
+
+**Lo que queda como candidato vivo** es la carrera clásica de un `TextInput`
+**controlado** en Android: cuando el estado de JS va más lento que el IME, RN
+puede reaplicar un `value` viejo sobre lo ya tecleado. Es dependiente de
+dispositivo, versión de teclado y timing — **no se puede reproducir ni fijar
+con un test de JS puro**, que es todo lo que hay disponible sin el teléfono.
+
+### Por qué NO se corrigió a ciegas (decisión, no omisión)
+
+El arreglo estándar de esa carrera es dejar de controlar el input
+(`defaultValue` + `ref`) o desacoplar el estado con un buffer local. Ambos
+cambian el comportamiento de **todos los campos numéricos de la app** — y esa
+lista incluye **unidades de insulina** (`entryRapidUnits`, `entryBasalUnits`,
+`CorrectionModal`, el bolo en `MealEditModal`). Un "arreglo" que en algún
+camino haga que el campo muestre un número y guarde otro es
+**estrictamente peor que el bug actual**: hoy Verónica *ve* que falta el
+dígito y lo corrige; un input desincronizado guardaría una dosis equivocada
+en silencio.
+
+Con el bug sin poder reproducirse en esta corrida, cambiar el patrón
+compartido de entrada numérica sería empujar un cambio no verificado a la
+superficie más sensible de la app. Queda pendiente, y **necesita el
+dispositivo**: la próxima corrida debería empezar por confirmar en qué modal
+exacto y con qué campo pasa (¿solo `decimal-pad`?, ¿solo el primer campo
+tocado al abrir?, ¿pasa también escribiendo lento?), porque esas respuestas
+distinguen entre la carrera del IME y un re-foco, que se arreglan distinto.
 
 ## Verificación por fase
 

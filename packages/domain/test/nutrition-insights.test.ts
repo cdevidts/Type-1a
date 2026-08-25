@@ -283,3 +283,106 @@ describe('macronutrientes por franja (Fase 13, ítem 7)', () => {
     expect(midday!.fiberSampleSize).toBe(1);
   });
 });
+
+describe('exclusión de dosis confundidas (Fase 23)', () => {
+  // Serie de lecturas cada 15 min alrededor de cada dosis, para que
+  // `readingNear` siempre encuentre punto y el `n` refleje solo la exclusión.
+  function seriesAround(day: number, hour: number, mgDl: number): CGMReading[] {
+    const out: CGMReading[] = [];
+    for (let minutes = 0; minutes <= 240; minutes += 15) {
+      out.push(reading(atLocal(day, hour, minutes), mgDl));
+    }
+    return out;
+  }
+
+  it('una corrección DENTRO de la primera hora sí confunde: la gracia larga es solo para la comida', () => {
+    // Éste es el bug que encontró la revisión de seguridad del 2026-08-22.
+    // `DOSE_OWN_MEAL_MINUTES` (60) se aplicaba a TODAS las clases, así que
+    // una segunda dosis a los 45 min quedaba tratada como "parte de la
+    // comida" y no confundía nada — ni siquiera a 2 h o 3 h.
+    const doseAt = atLocal(18, 13);
+    const input: NutritionInsightsInput = {
+      ...EMPTY,
+      readings: seriesAround(18, 13, 140),
+      insulin: [rapid(doseAt, 6), rapid(atLocal(18, 13, 45), 2)],
+    };
+    const midday = windowNamed(buildNutritionInsights(input), 'mediodía');
+    // La primera dosis queda excluida en todos los horizontes: la segunda cae
+    // dentro de su ventana. Antes del arreglo, la gracia de 60 min la tapaba
+    // y la primera dosis entraba al promedio como si fuera limpia.
+    //
+    // ⚠️ La SEGUNDA dosis sigue contándose (por eso 1 y no 0). La ventana es
+    // hacia adelante: `collectEpisodeContext` mira qué pasó DESPUÉS del ancla,
+    // nunca antes. Una dosis 45 min ANTERIOR sigue actuando y también
+    // contamina, pero mirarlo hacia atrás exige asumir cuánto dura una
+    // insulina rápida — una suposición clínica que esta app no toma sola.
+    // Queda como limitación conocida y documentada, no como descuido.
+    expect(midday.outcomes.every((outcome) => outcome.sampleSize === 1)).toBe(true);
+  });
+
+  it('el horizonte de 1 h puede marcarse confundido (antes era imposible)', () => {
+    // Con grace = window = 60 min el intervalo (anchor+60, anchor+60] era
+    // vacío por construcción: el horizonte de 1 h NUNCA podía excluir nada.
+    // Con dos dosis, la primera se excluye y la segunda no (ventana hacia
+    // adelante, ver el test anterior), así que n baja de 2 a 1 — antes del
+    // arreglo eran 2, porque a 1 h no se podía excluir nada nunca.
+    const oneHour = buildNutritionInsights({
+      ...EMPTY,
+      readings: seriesAround(18, 13, 140),
+      insulin: [rapid(atLocal(18, 13), 6), rapid(atLocal(18, 13, 30), 2)],
+    }).find((w) => w.key === 'mediodía')!.outcomes.find((o) => o.horizonHours === 1);
+    expect(oneHour!.sampleSize).toBe(1);
+  });
+
+  it('la comida de la propia dosis NO confunde, aunque se registre 45 min después', () => {
+    // El otro lado de la moneda: pre-bolear y registrar la comida más tarde
+    // es normal. Si esto confundiera, el patrón se quedaría sin muestra.
+    const midday = windowNamed(
+      buildNutritionInsights({
+        ...EMPTY,
+        readings: seriesAround(18, 13, 140),
+        insulin: [rapid(atLocal(18, 13), 6)],
+        meals: [meal(atLocal(18, 13, 45), { confirmedCarbsG: 40 })],
+        carbs: [carb(atLocal(18, 13, 45), 40)],
+      }),
+      'mediodía',
+    );
+    expect(midday.outcomes.every((outcome) => outcome.sampleSize === 1)).toBe(true);
+  });
+
+  it('una actividad a los 30 min confunde, igual que una dosis', () => {
+    const midday = windowNamed(
+      buildNutritionInsights({
+        ...EMPTY,
+        readings: seriesAround(18, 13, 140),
+        insulin: [rapid(atLocal(18, 13), 6)],
+        activity: [{
+          id: 'a1',
+          timestamp: atLocal(18, 13, 30),
+          durationMinutes: 40,
+          source: 'manual',
+          createdAt: atLocal(18, 13, 30),
+        }],
+      }),
+      'mediodía',
+    );
+    expect(midday.outcomes.every((outcome) => outcome.sampleSize === 0)).toBe(true);
+  });
+
+  it('la exclusión nunca publica un porcentaje bajo el mínimo de muestra', () => {
+    // Aunque la exclusión deje 1 sola dosis limpia, `MIN_SAMPLE_FOR_RATE`
+    // sigue mandando: el número que se lee como patrón no puede nacer de n=1.
+    const midday = windowNamed(
+      buildNutritionInsights({
+        ...EMPTY,
+        readings: seriesAround(18, 13, 140),
+        insulin: [rapid(atLocal(18, 13), 6)],
+      }),
+      'mediodía',
+    );
+    for (const outcome of midday.outcomes) {
+      expect(outcome.sampleSize).toBeLessThan(MIN_SAMPLE_FOR_RATE);
+      expect(outcome.inTargetPct).toBeUndefined();
+    }
+  });
+});

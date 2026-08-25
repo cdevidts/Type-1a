@@ -289,6 +289,35 @@ export const MealEventSchema = z.object({
 export type MealEvent = z.infer<typeof MealEventSchema>;
 
 /**
+ * Algo que se registró **mientras el episodio se estaba midiendo** (Fase 23).
+ *
+ * Un episodio dura hasta 3-4 h, y en ese rato puede pasar cualquier cosa: una
+ * corrección, una colación, una caminata. Sin esto, el análisis post-comida
+ * describía la curva como si solo hubiera existido la comida original.
+ *
+ * **No hay campo de texto, y es a propósito.** Este objeto viaja dentro de
+ * `MealEpisodeMetrics` al servicio de IA. El texto de una nota o la
+ * descripción de una actividad son datos personales que `AGENTS.md` manda no
+ * mandar afuera ("send the minimum necessary data to external AI services").
+ * Lo que el modelo necesita para describir el contexto es **qué clase de
+ * evento fue, cuándo, y de qué tamaño** — nada más. Que el tipo no tenga
+ * dónde poner el texto es la frontera; no una instrucción del prompt que se
+ * pueda ignorar. Mismo patrón que `MealSnapshotSchema` con la insulina.
+ */
+export const EpisodeContextEventSchema = z.object({
+  kind: z.enum(['rapid_insulin', 'basal_insulin', 'carbs', 'meal', 'activity', 'note']),
+  timestamp: IsoTimestampSchema,
+  // `.positive()` y no solo `.int()`: `collectEpisodeContext` solo puede
+  // emitir valores posteriores al ancla, y dejar la invariante en el esquema
+  // la vuelve estructural en vez de incidental. Un negativo se renderizaría
+  // como "-1 h -30 min después" (ver `contextEventLabel`).
+  minutesAfterAnchor: z.number().int().finite().positive(),
+  /** Unidades, gramos o minutos según `kind`. Descriptivo, nunca evaluado. */
+  amount: z.number().nonnegative().finite().optional(),
+});
+export type EpisodeContextEvent = z.infer<typeof EpisodeContextEventSchema>;
+
+/**
  * Todos los campos de glucosa acá (`startingGlucose`, `glucose60/120/180`,
  * `peakGlucose`, `minGlucose`, `peakDelta`) están **siempre en mg/dL**,
  * sin importar en qué unidad venía la `CGMReading` de origen —
@@ -317,6 +346,12 @@ export const MealEpisodeMetricsSchema = z.object({
   proteinG: z.number().nonnegative().finite().optional(),
   fatG: z.number().nonnegative().finite().optional(),
   insulinToMealMinutes: z.number().finite().optional(),
+  /**
+   * Lo demás que se registró durante la ventana del episodio (Fase 23).
+   * Ausente en episodios calculados antes de este campo — ausencia significa
+   * "no se capturó", **nunca** "no pasó nada".
+   */
+  contextEvents: z.array(EpisodeContextEventSchema).max(50).optional(),
   readingCount: z.number().int().nonnegative(),
 });
 export type MealEpisodeMetrics = z.infer<typeof MealEpisodeMetricsSchema>;

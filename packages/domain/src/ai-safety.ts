@@ -1,8 +1,41 @@
+/**
+ * Cuidado al editar: **`\b` en JavaScript es ASCII**. Después de una vocal
+ * acentuada no hay frontera de palabra, así que `solapó\b` no matchea nunca.
+ * Donde una alternativa puede terminar en acento va `(?![a-záéíóúñ])`, que es
+ * el mismo arreglo que ya se aplicó en `INSULIN_REQUEST_PATTERNS`.
+ */
 const THERAPY_PATTERNS = [
   /\b(?:ponte|iny[eé]ctate|admin[ií]strate|usa|aumenta|reduce|ajusta)\b.{0,45}\b(?:u|unidad(?:es)?|insulina|basal|bolo)\b/iu,
   /\b(?:cambia|modifica|ajusta)\b.{0,35}\b(?:ratio|factor|dosis|terapia)\b/iu,
   /\b(?:deber[ií]as?|te recomiendo)\b.{0,45}\b(?:insulina|dosis|bolo|basal)\b/iu,
   /\b\d+(?:[.,]\d+)?\s*(?:u|unidad(?:es)?)\s+(?:m[aá]s|menos)\b/iu,
+
+  // ── Insulina activa (IOB) ────────────────────────────────────────────────
+  // Agregados 2026-08-22 tras la revisión de seguridad de la Fase 23. El
+  // prompt v3 le pasa al modelo la lista de dosis de la ventana con sus
+  // unidades y minutos, así que por primera vez tiene material para afirmar
+  // superposición: "la segunda dosis se solapó con la primera, que todavía
+  // estaba activa". Eso NO es una recomendación —los cuatro patrones de
+  // arriba no lo tocan— pero sí es una estimación de insulina activa
+  // presentada a la usuaria, y `AGENTS.md` prohíbe IOB en el MVP tanto como
+  // prohíbe recomendar dosis. Al crecer lo que el modelo puede decir, tiene
+  // que crecer el filtro.
+  /\binsulina\s+activa(?![a-záéíóúñ])/iu,
+  /\b(?:dosis|bolo|insulina|correcci[oó]n|unidades?)\b.{0,60}\b(?:todav[ií]a|a[uú]n|segu[ií]a|sigue|seguía)\b.{0,25}\b(?:activ[ao]s?|actuando|haciendo efecto)/iu,
+  /\bse\s+solap(?:o|ó|aba|aban|aron|an)(?![a-záéíóúñ]).{0,50}\b(?:dosis|bolo|insulina|correcci[oó]n)/iu,
+  /\b(?:dosis|bolo|insulina|correcci[oó]n)\b.{0,50}\bse\s+solap(?:o|ó|aba|aban|aron|an)(?![a-záéíóúñ])/iu,
+
+  // ── Juicio de suficiencia sobre una dosis ────────────────────────────────
+  // "fue insuficiente" / "se quedó corta" / "hizo falta más insulina" son
+  // evaluaciones de una dosis, que es lo que el prompt prohíbe en palabras y
+  // esto respalda en estructura.
+  /\b(?:dosis|bolo|insulina|correcci[oó]n)\b.{0,50}\b(?:insuficiente|excesiv[ao]s?|de m[aá]s|de menos|se qued[oó] cort[ao]|no alcanz(?:o|ó)(?![a-záéíóúñ]))/iu,
+  /\b(?:hizo falta|habr[ií]a hecho falta|falt(?:o|ó)(?![a-záéíóúñ])).{0,45}\b(?:insulina|dosis|bolo|basal|correcci[oó]n|unidades?)\b/iu,
+
+  // ── Sugerencia para la próxima vez ───────────────────────────────────────
+  // Solo cuando va pegada a vocabulario de dosis: "la próxima vez que haya
+  // más lecturas" es una limitación legítima y no debe suprimir el insight.
+  /\b(?:la pr[oó]xima vez|para la pr[oó]xima)\b.{0,60}\b(?:insulina|dosis|bolo|basal|correcci[oó]n|unidades?|pre-?bolo|bolear)\b/iu,
 ];
 
 export function containsTherapyRecommendation(value: unknown): boolean {

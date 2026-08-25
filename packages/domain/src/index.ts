@@ -2,6 +2,7 @@ export * from './agp';
 export * from './ai-safety';
 export * from './bolus';
 export * from './correction';
+export * from './episode-context';
 export * from './freshness';
 export * from './glucose-metrics';
 export * from './glucose-thresholds';

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import type { MealEvent } from '@type1a/schemas';
+import type { EpisodeContextEvent, MealEvent } from '@type1a/schemas';
 
 import { formatDayTime, parseNonNegativeNumber, parsePositiveNumber, trendArrow } from '../format';
 import { colors, radius, spacing } from '../theme';
@@ -20,6 +20,34 @@ const sourceLabel: Record<string, string> = {
   imported: 'Importado desde CSV',
   meal_confirmed: 'Confirmado desde una comida',
 };
+
+/**
+ * Etiqueta de un evento que ocurrió durante el episodio (Fase 23).
+ *
+ * Descriptivo y nada más: dice **qué** se registró y **cuándo**, nunca si
+ * correspondía. Una nota se nombra sin su texto — el contexto guardado no lo
+ * lleva, justamente para que no salga del teléfono.
+ */
+function contextEventLabel(event: EpisodeContextEvent): string {
+  const hours = Math.floor(event.minutesAfterAnchor / 60);
+  const minutes = event.minutesAfterAnchor % 60;
+  const when = hours === 0 ? `${minutes} min` : minutes === 0 ? `${hours} h` : `${hours} h ${minutes} min`;
+  const amount = event.amount;
+  switch (event.kind) {
+    case 'rapid_insulin':
+      return `Insulina rápida${amount === undefined ? '' : ` ${amount} U`} · ${when} después`;
+    case 'basal_insulin':
+      return `Insulina basal${amount === undefined ? '' : ` ${amount} U`} · ${when} después`;
+    case 'carbs':
+      return `Carbohidratos${amount === undefined ? '' : ` ${amount} g`} · ${when} después`;
+    case 'meal':
+      return `Otra comida${amount === undefined ? '' : ` (${amount} g)`} · ${when} después`;
+    case 'activity':
+      return `Actividad física${amount === undefined ? '' : ` ${amount} min`} · ${when} después`;
+    case 'note':
+      return `Nota registrada · ${when} después`;
+  }
+}
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
@@ -559,6 +587,20 @@ export function TimelineDetailModal({
           {rowsFor(item).map((row) => (
             <Row key={row.label} label={row.label} value={row.value} />
           ))}
+          {item.kind === 'episode' && (item.metrics?.contextEvents?.length ?? 0) > 0 ? (
+            <View style={styles.contextBox}>
+              <Text style={styles.contextTitle}>Durante este seguimiento también se registró</Text>
+              {item.metrics!.contextEvents!.map((event) => (
+                <Text key={`${event.kind}:${event.timestamp}`} style={styles.contextItem}>
+                  • {contextEventLabel(event)}
+                </Text>
+              ))}
+              <Text style={styles.contextFoot}>
+                Se muestra para leer la curva con contexto: parte de lo que pasó después puede
+                deberse a esto y no solo a la comida. La app no evalúa si correspondía.
+              </Text>
+            </View>
+          ) : null}
           {item.kind === 'episode' && item.insight !== undefined ? (
             <View style={styles.insightBox}>
               <Text style={styles.insightTitle}>Análisis post-comida</Text>
@@ -610,6 +652,15 @@ const styles = StyleSheet.create({
   },
   rowLabel: { color: colors.muted, fontSize: 13 },
   rowValue: { color: colors.ink, fontSize: 13, fontWeight: '700' },
+  contextBox: {
+    backgroundColor: colors.warningSoft,
+    borderRadius: 12,
+    padding: spacing.md,
+    marginTop: spacing.lg,
+  },
+  contextTitle: { color: colors.warning, fontSize: 14, fontWeight: '800', marginBottom: 4 },
+  contextItem: { color: colors.ink, fontSize: 13, lineHeight: 18, marginTop: 2 },
+  contextFoot: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: 8 },
   insightBox: {
     backgroundColor: colors.tealSoft,
     borderRadius: 12,

@@ -1,4 +1,5 @@
 import type {
+  ActivityEvent,
   CarbEvent,
   CGMReading,
   GlucoseInsight,
@@ -21,6 +22,8 @@ export interface SummaryData {
   insulin: InsulinEvent[];
   carbs: CarbEvent[];
   meals: MealEvent[];
+  /** Solo para descartar episodios confundidos (Fase 23). No se promedia. */
+  activity: ActivityEvent[];
   /**
    * Filas del historial que no se pudieron decodificar en este rango y se
    * descartaron. Se muestra a la usuaria cuando es > 0: un agregado sobre una
@@ -48,6 +51,8 @@ export interface ReportExport {
   insulin: InsulinEvent[];
   carbs: CarbEvent[];
   meals: MealEvent[];
+  /** Solo para descartar episodios confundidos (Fase 23). No se promedia. */
+  activity: ActivityEvent[];
   /** Ver la nota homónima en `SummaryData`. El reporte lo declara al médico. */
   unreadableCount: number;
 }
@@ -63,6 +68,15 @@ export interface NutritionDayData {
   dayMeals: MealEvent[];
   dayCarbs: CarbEvent[];
   patternMeals: MealEvent[];
+  /**
+   * Insulina, carbohidratos y actividad de la MISMA ventana larga que
+   * `patternMeals` (Fase 23). Existen solo para descartar episodios
+   * confundidos: sin ellos, una colación a las 2 h entra al promedio de
+   * grasa/proteína como si fuera efecto tardío de la comida.
+   */
+  patternInsulin: InsulinEvent[];
+  patternCarbs: CarbEvent[];
+  patternActivity: ActivityEvent[];
   readings: CGMReading[];
   unreadableCount: number;
 }

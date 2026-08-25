@@ -167,6 +167,13 @@ docs/
   debajo de `MIN_SAMPLE_FOR_RATE` (3) devuelve `inTargetPct: undefined` en
   vez de un porcentaje — con 1-2 dosis el número sería ruido presentado como
   patrón. Excluye sintéticas.
+- `macro-glucose.ts` / `nutrition-insights.ts` — **2026-08-22 (Fase 23)**:
+  ambos excluyen ahora, **por horizonte**, los episodios con un evento
+  confundente en el medio. Antes una colación a las 2 h se promediaba como si
+  fuera efecto tardío de la grasa de la comida original. La exclusión es por
+  horizonte y no por comida entera para no tirar datos limpios: se nota solo
+  en el `sampleSize`, que la pantalla ya muestra. Pásales siempre `insulin`,
+  `carbs` y `activity` — sin ellos vuelven a la versión que mezclaba.
 - `food-catalog.ts` — **2026-08-21 (Fase 18)**: porción de referencia
   (`servingGrams`/`servingLabel`, ambos **opcionales**; ausente = 100 g, que
   es como quedan todas las filas ya guardadas en el teléfono),
@@ -175,6 +182,22 @@ docs/
   mano a la base por 100 g). `blendCatalogEntry` **conserva** la porción que
   definió la usuaria: un análisis nuevo de la IA nunca trae ese campo, así que
   sin eso se lo borraba en cada identificación.
+- `episode-context.ts` — **2026-08-22 (Fase 23)**. Qué más pasó mientras un
+  episodio se medía. Dos funciones con propósitos distintos:
+  `collectEpisodeContext` (descriptivo, alimenta el resumen post-comida) y
+  `hasConfoundingEvent` (decide si un episodio entra o no al promedio de una
+  correlación). Una **nota no confunde** — es texto, no mueve la glucosa —
+  pero la actividad física sí. `EPISODE_GRACE_MINUTES` (15) evita que la
+  comida se cuente a sí misma como su propio confusor: al guardarla se
+  escriben varias filas casi simultáneas.
+  **Dos gracias, no una** (corregido el 2026-08-22 tras la revisión de
+  seguridad): `graceMinutes` aplica a todas las clases, y `mealGraceMinutes`
+  **solo** a `meal`/`carbs`. La distinción es la frontera: una gracia larga
+  única volvía invisible una corrección real dentro de la primera hora, que
+  es justo el confusor buscado. Y **la ventana mira solo hacia adelante** —
+  un evento anterior al ancla nunca confunde, limitación conocida y
+  documentada (ver roadmap § Fase 23), porque resolverla exige asumir cuánto
+  dura la insulina rápida, que es un parámetro de terapia.
 - `ai-safety.ts` — dos guardrails, uno en cada dirección. Son el respaldo
   técnico de la regla "Never let an LLM calculate, infer, or recommend
   insulin" de `AGENTS.md`. Si tocas cualquiera, agrega casos de test.
@@ -229,6 +252,17 @@ docs/
   `librelinkup` — el real en uso — / `junction`, según `CGM_PROVIDER`; ver
   `docs/CGM_INTEGRATION_DECISION.md`), servicios de AI, rutas HTTP,
   validación con `MealEpisodeMetricsSchema` y schemas de `packages/schemas`.
+- `src/notifications.ts` (mobile) — **2026-08-22 (Fase 19)**: un canal de
+  Android **por tipo de alarma** (post-comida / corrección / capilar) en vez
+  de por estilo de alerta, para que se pueda silenciar un tipo sin perder los
+  otros desde los ajustes del sistema. Como Android congela sonido y
+  vibración al crear el canal, el id es `tipo-estilo` y
+  `ensureReminderChannels` borra los del estilo anterior — así en los ajustes
+  se ven siempre tres entradas y no doce. Cada tipo lleva emoji, `color` y
+  título propios. El handler de primer plano ya **no** devuelve
+  `shouldPlaySound: false` fijo: respeta el estilo elegido, y la notificación
+  pegajosa de acceso rápido se identifica por una marca en `data` para no
+  sonar nunca (se repone cada ~15 min).
 - `config.ts` — `readConfig()` parsea `process.env` con Zod
   (`EnvironmentSchema`) — única fuente de verdad de variables de entorno.
 - `junction-link.ts` — flujo de conexión/link de cuenta Junction.

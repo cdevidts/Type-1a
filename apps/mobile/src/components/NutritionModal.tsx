@@ -608,7 +608,15 @@ function MeasureField({
 
 function PatternsTab({ data }: { data: NutritionDayData | null }) {
   const comparison = useMemo(
-    () => (data === null ? null : buildMacroGlucoseComparison({ meals: data.patternMeals, readings: data.readings })),
+    () => (data === null ? null : buildMacroGlucoseComparison({
+      meals: data.patternMeals,
+      readings: data.readings,
+      // Fase 23: sin estos, una colación a las 2 h entraría al promedio como
+      // si fuera efecto tardío de la grasa de la comida original.
+      insulin: data.patternInsulin,
+      carbs: data.patternCarbs,
+      activity: data.patternActivity,
+    })),
     [data],
   );
 
@@ -632,6 +640,12 @@ function PatternsTab({ data }: { data: NutritionDayData | null }) {
       <Text style={styles.tabIntro}>
         Cómo se comportó tu glucosa después de comer, separando tus comidas en las de mayor y menor carga de
         grasa más proteína. Se mide el cambio desde el momento de comer, no el valor absoluto.
+      </Text>
+      <Text style={styles.tabIntro}>
+        Cada horizonte usa solo las comidas que no tuvieron otra cosa registrada en el medio (otra comida,
+        carbohidratos, una dosis o actividad), porque en esas la glucosa ya no describe solo a la comida
+        original. Por eso el <Text style={styles.tabIntroStrong}>n</Text> de cada barra puede ser menor que
+        las comidas del grupo, y suele achicarse en los horizontes más largos.
       </Text>
 
       <View style={styles.legendRow}>
@@ -702,8 +716,16 @@ function DeltaRow({
       <View style={styles.deltaTrack}>
         <View style={[styles.deltaFill, { width: `${width}%`, backgroundColor: color }]} />
       </View>
+      {/*
+        El `n` va SIEMPRE, no solo cuando faltan datos. Desde la Fase 23 cada
+        horizonte descarta por separado las comidas que tuvieron algo más
+        registrado en el medio, así que este promedio puede estar hecho de
+        muchas menos comidas que las que dice la leyenda del grupo. Mostrar
+        "+62 mg/dL" sin decir que son 3 comidas invita a leerlo como un
+        patrón firme. Es el mismo dato que ya se imprime en el reporte.
+      */}
       <Text style={styles.deltaValue}>
-        {delta >= 0 ? '+' : ''}{Math.round(delta)} <Text style={styles.deltaUnit}>mg/dL</Text>
+        {delta >= 0 ? '+' : ''}{Math.round(delta)} <Text style={styles.deltaUnit}>mg/dL · n={point.sampleSize}</Text>
       </Text>
     </View>
   );
@@ -802,6 +824,7 @@ const styles = StyleSheet.create({
   targetBreakdown: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: spacing.md },
 
   tabIntro: { color: colors.muted, fontSize: 12, lineHeight: 18, marginBottom: spacing.md },
+  tabIntroStrong: { color: colors.ink, fontWeight: '700' },
   legendRow: { gap: spacing.xs, marginBottom: spacing.md },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   legendSwatch: { width: 12, height: 12, borderRadius: 3 },

@@ -149,3 +149,133 @@ describe('buildMacroGlucoseComparison', () => {
     }
   });
 });
+
+describe('exclusión de episodios confundidos (Fase 23)', () => {
+  /**
+   * Seis comidas idénticas en carga y en curva: la comparación existe y sus
+   * puntos tienen muestra completa. Es la base contra la que se mide qué
+   * cambia al meter un confusor.
+   */
+  function baseline(): { meals: MealEvent[]; readings: CGMReading[] } {
+    const meals: MealEvent[] = [];
+    const readings: CGMReading[] = [];
+    for (let index = 0; index < 6; index += 1) {
+      // Alterna carga alta y baja para que existan los dos grupos.
+      const alta = index % 2 === 0;
+      meals.push(meal(index, alta ? 40 : 5, alta ? 40 : 5));
+      readings.push(...readingsFor(index, (hour) => hour * 10));
+    }
+    return { meals, readings };
+  }
+
+  it('sin confusores, todos los horizontes tienen la muestra completa', () => {
+    const { meals, readings } = baseline();
+    const result = buildMacroGlucoseComparison({ meals, readings });
+    expect(result).not.toBeNull();
+    expect(result!.higher.points.every((point) => point.sampleSize === 3)).toBe(true);
+  });
+
+  it('una colación a las 2 h saca esa comida de los horizontes posteriores, no de los previos', () => {
+    // Es el caso que motivó la fase: sin esto, la subida a las 3 h de la
+    // colación se leía como efecto tardío de la grasa de la comida original.
+    const { meals, readings } = baseline();
+    const colacionAt = new Date(START + 0 * DAY_MS + 2 * 60 * 60_000 + 60_000).toISOString();
+
+    const result = buildMacroGlucoseComparison({
+      meals,
+      readings,
+      carbs: [{ id: 'colacion', timestamp: colacionAt, carbsG: 20, source: 'manual', createdAt: colacionAt }],
+    });
+
+    expect(result).not.toBeNull();
+    const puntos = Object.fromEntries(result!.higher.points.map((p) => [p.horizonHours, p.sampleSize]));
+    // La comida 0 es de carga alta. A las 2 h todavía está limpia (la colación
+    // es un minuto después); a las 3/4/5 h ya no.
+    expect(puntos[2]).toBe(3);
+    expect(puntos[3]).toBe(2);
+    expect(puntos[4]).toBe(2);
+    expect(puntos[5]).toBe(2);
+  });
+
+  it('el bolo de la propia comida no la confunde', () => {
+    // Se reusa la ventana de asociación de findRapidInsulinCandidates
+    // (-90/+60): una dosis ahí dentro es el bolo de esta comida, no una
+    // corrección aparte. Sin esto, pre-bolear o bolear tarde sacaría del
+    // promedio a casi todas las comidas.
+    const { meals, readings } = baseline();
+    const boloAt = new Date(START + 0 * DAY_MS + 30 * 60_000).toISOString();
+
+    const result = buildMacroGlucoseComparison({
+      meals,
+      readings,
+      insulin: [{ id: 'bolo', timestamp: boloAt, type: 'rapid', units: 6, source: 'manual', createdAt: boloAt }],
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.higher.points.every((point) => point.sampleSize === 3)).toBe(true);
+  });
+
+  it('una corrección tardía sí confunde, aunque el bolo de la comida no', () => {
+    const { meals, readings } = baseline();
+    const boloAt = new Date(START + 0 * DAY_MS).toISOString();
+    const correccionAt = new Date(START + 0 * DAY_MS + 150 * 60_000).toISOString();
+
+    const result = buildMacroGlucoseComparison({
+      meals,
+      readings,
+      insulin: [
+        { id: 'bolo', timestamp: boloAt, type: 'rapid', units: 6, source: 'manual', createdAt: boloAt },
+        { id: 'correccion', timestamp: correccionAt, type: 'rapid', units: 2, source: 'manual', createdAt: correccionAt },
+      ],
+    });
+
+    expect(result).not.toBeNull();
+    const puntos = Object.fromEntries(result!.higher.points.map((p) => [p.horizonHours, p.sampleSize]));
+    expect(puntos[2]).toBe(3);
+    expect(puntos[3]).toBe(2);
+  });
+});
+
+describe('el bolo propio de la comida vs. una corrección posterior', () => {
+  function insulinAt(index: number, minutesAfterMeal: number, units: number) {
+    const at = new Date(START + index * DAY_MS + minutesAfterMeal * 60_000).toISOString();
+    return { id: `i-${index}-${minutesAfterMeal}`, timestamp: at, type: 'rapid' as const, units, source: 'manual' as const, createdAt: at };
+  }
+
+  /** Seis comidas con ambos macros, tres altas y tres bajas en grasa+proteína. */
+  function sixMeals(): MealEvent[] {
+    return [0, 1, 2].map((i) => meal(i, 40, 40)).concat([3, 4, 5].map((i) => meal(i, 5, 5)));
+  }
+
+  function readingsForAll(): CGMReading[] {
+    return [0, 1, 2, 3, 4, 5].flatMap((i) => readingsFor(i, (hour) => hour * 10));
+  }
+
+  it('el bolo de la comida no confunde', () => {
+    const comparison = buildMacroGlucoseComparison({
+      meals: sixMeals(),
+      readings: readingsForAll(),
+      insulin: [0, 1, 2, 3, 4, 5].map((i) => insulinAt(i, 0, 6)),
+    });
+    expect(comparison).not.toBeNull();
+    // Las tres comidas de cada grupo siguen contando en todos los horizontes.
+    for (const point of comparison!.higher.points) expect(point.sampleSize).toBe(MIN_MEALS_PER_GROUP);
+  });
+
+  it('una SEGUNDA dosis 40 min después sí confunde', () => {
+    // Éste es el bug que encontró la revisión de seguridad: `ownIds` usaba
+    // `candidateIds` (TODAS las dosis rápidas de la ventana -90/+60) en vez
+    // del bolo recomendado, así que una corrección real 40 min después se
+    // trataba como "el bolo de esta comida" y no confundía nada — subestimando
+    // justo la subida tardía que esta comparación existe para describir.
+    const comparison = buildMacroGlucoseComparison({
+      meals: sixMeals(),
+      readings: readingsForAll(),
+      insulin: [0, 1, 2, 3, 4, 5].flatMap((i) => [insulinAt(i, 0, 6), insulinAt(i, 40, 2)]),
+    });
+    expect(comparison).not.toBeNull();
+    // Con la segunda dosis dentro de la ventana, ningún horizonte queda limpio.
+    for (const point of comparison!.higher.points) expect(point.sampleSize).toBe(0);
+    for (const point of comparison!.lower.points) expect(point.sampleSize).toBe(0);
+  });
+});

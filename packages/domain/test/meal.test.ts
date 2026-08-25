@@ -112,3 +112,49 @@ describe('AI safety', () => {
     ).toBe(false);
   });
 });
+
+describe('contextEvents dentro de MealEpisodeMetrics (Fase 23)', () => {
+  // Este objeto es EL payload que se serializa hacia el servicio de IA
+  // externo, así que lo que entra acá sale del dispositivo.
+  const readings: CGMReading[] = [
+    { id: 'r0', glucose: 120, unit: 'mg/dL', timestamp: '2026-08-22T12:00:00.000Z', trend: 'stable', trendSource: 'provider', source: 'test', origin: 'real', sourceTimestamp: '2026-08-22T12:00:00.000Z', ingestedAt: '2026-08-22T12:00:00.000Z' },
+    { id: 'r1', glucose: 180, unit: 'mg/dL', timestamp: '2026-08-22T14:00:00.000Z', trend: 'stable', trendSource: 'provider', source: 'test', origin: 'real', sourceTimestamp: '2026-08-22T14:00:00.000Z', ingestedAt: '2026-08-22T14:00:00.000Z' },
+  ];
+
+  it('viaja con las métricas y no altera ningún cálculo', () => {
+    const withContext = calculateMealEpisodeMetrics({
+      mealTimestamp: '2026-08-22T12:00:00.000Z',
+      readings,
+      contextEvents: [{ kind: 'rapid_insulin', timestamp: '2026-08-22T13:30:00.000Z', minutesAfterAnchor: 90, amount: 2 }],
+    });
+    const without = calculateMealEpisodeMetrics({ mealTimestamp: '2026-08-22T12:00:00.000Z', readings });
+
+    expect(withContext.contextEvents).toHaveLength(1);
+    // Descriptivo: ninguna métrica cambia por tener contexto.
+    const metricsWithout = { ...withContext };
+    delete metricsWithout.contextEvents;
+    expect(metricsWithout).toEqual(without);
+  });
+
+  it('una lista vacía se omite en vez de viajar como []', () => {
+    // `exactOptionalPropertyTypes`: la propiedad ausente y la propiedad en
+    // `[]` no son lo mismo, y al modelo se le manda el mínimo necesario.
+    const metrics = calculateMealEpisodeMetrics({
+      mealTimestamp: '2026-08-22T12:00:00.000Z',
+      readings,
+      contextEvents: [],
+    });
+    expect('contextEvents' in metrics).toBe(false);
+  });
+
+  it('lo serializado no puede contener texto libre de una nota', () => {
+    // La garantía es estructural: `EpisodeContextEvent` no tiene campo de
+    // texto. Este test fija que nadie se lo agregue sin darse cuenta.
+    const metrics = calculateMealEpisodeMetrics({
+      mealTimestamp: '2026-08-22T12:00:00.000Z',
+      readings,
+      contextEvents: [{ kind: 'note', timestamp: '2026-08-22T13:00:00.000Z', minutesAfterAnchor: 60 }],
+    });
+    expect(Object.keys(metrics.contextEvents![0]!)).toEqual(['kind', 'timestamp', 'minutesAfterAnchor']);
+  });
+});

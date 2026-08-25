@@ -40,6 +40,8 @@ en vez de abrir la pregunta de nuevo.
 | 2026-08-21 | Fase 17: editar una comida con IA (foto, texto, instrucción) | **SÍ.** Tercera rama en `MealAnalysisBodySchema` + tercer modo en `AbacusMealVisionService`. Sin redeploy, "Explícale el cambio" responde 400. |
 | 2026-08-21 | Fase 18: catálogo de alimentos editable, porciones, pregunta de tres salidas | No — reusa la rama que la Fase 17 ya agregó. |
 | 2026-08-21 | Corrección de swipe (bug reportado) | No — solo `apps/mobile`. |
+| 2026-08-22 | Fase 19 (notificaciones por tipo) + Parte A (catálogo en "Nueva entrada") + Parte B (bug de input, sin código) | No — todo `apps/mobile`. |
+| 2026-08-22 | **Fase 23: el episodio captura todo su ventana + exclusión de episodios confundidos** | **SÍ, pero de bajo riesgo y NO urgente.** `apps/api/src/app.ts` no se tocó, pero sí `packages/ai/src/prompts.ts`: `glucoseInsightSystemPrompt` pasó de v2 a v3 para que el modelo pueda describir los `contextEvents` ("se registró una corrección de 2 U a las 2 h") sin evaluarlos. Hasta que se redespliegue, el backend sigue con el prompt v2: **el campo `contextEvents` viaja igual dentro de `MealEpisodeMetrics` pero el modelo no tiene instrucción sobre qué hacer con él**, así que probablemente lo ignore — no rompe nada, solo no aprovecha el dato. La parte que de verdad importaba de la Fase 23 (excluir episodios confundidos de las correlaciones) es **100 % cliente** y funciona con solo instalar el APK. Agrupar con el próximo redeploy en vez de gastar uno para esto. |
 | 2026-08-21 | **Catálogo de alimentos COMPARTIDO — backend completo** (`apps/api/src/food-catalog-store.ts`, endpoints `GET`/`POST /v1/food-catalog`, `docs/adr/0003-shared-food-catalog.md`) | **SÍ.** Primera vez que el backend gana un estado persistente (Postgres). Sin `DATABASE_URL`, los dos endpoints nuevos responden 503 y el resto del backend sigue exactamente igual — no es bloqueante para nada de lo que ya funciona, pero la función en sí no existe hasta el redeploy + la variable de entorno. |
 
 ## Qué cambió desde el último deploy
@@ -58,9 +60,12 @@ junta en el prompt consolidado de más abajo:
    Postgres que ya viene con esta instancia de app — sin esa variable, los
    endpoints existen pero responden 503. El esquema se auto-provee solo al
    arrancar: no hay SQL que correr a mano.
-3. **Sigue pendiente desde la Fase 13**: `glucoseInsightSystemPrompt` con la
-   instrucción explícita de decir "mg/dL" (riesgo bajo: número correcto,
-   posible palabra de unidad equivocada en la prosa).
+3. **`glucoseInsightSystemPrompt` v3 (Fase 23, 2026-08-22)**: instrucción
+   para describir los `contextEvents` del episodio sin evaluarlos. Sin
+   redeploy el campo viaja y el modelo no sabe qué hacer con él — no rompe,
+   solo no lo aprovecha. Riesgo bajo, no urgente.
+   (El punto de "mg/dL" pendiente desde la Fase 13 quedó resuelto en el
+   redeploy del 2026-08-21.)
 4. **Diferido a propósito, no pendiente de confirmación.** Quitar
    `LIBRELINKUP_EMAIL`/`LIBRELINKUP_PASSWORD` del entorno — Verónica ya
    confirmó (2026-08-21) que su cuenta propia funciona conectada desde la

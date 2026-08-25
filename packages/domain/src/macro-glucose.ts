@@ -1,5 +1,7 @@
-import type { CGMReading, MealEvent } from '@type1a/schemas';
+import type { ActivityEvent, CarbEvent, CGMReading, InsulinEvent, MealEvent } from '@type1a/schemas';
 
+import { hasConfoundingEvent } from './episode-context';
+import { findRapidInsulinCandidates } from './meal';
 import { readingNear, toGlucoseSeries } from './nutrition-insights';
 
 /**
@@ -88,13 +90,26 @@ function mean(values: readonly number[]): number | undefined {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+interface EligibleMeal {
+  atMs: number;
+  fatProteinG: number;
+  /** Devuelve si algo movió la glucosa entre la comida y ese horizonte. */
+  confoundedWithin: (horizonHours: number) => boolean;
+}
+
 function groupFor(
-  meals: readonly { atMs: number; fatProteinG: number }[],
+  meals: readonly EligibleMeal[],
   series: readonly { atMs: number; mgDl: number }[],
 ): MacroGlucoseGroup {
   const points: MacroGlucosePoint[] = FAT_PROTEIN_HORIZONS_HOURS.map((horizonHours) => {
     const deltas: number[] = [];
     for (const meal of meals) {
+      // La exclusión es **por horizonte**, no por comida entera: una colación
+      // a las 4 h no invalida lo que se midió a las 2 h. Descartar la comida
+      // completa tiraría datos limpios, y descartar nada dejaría entrar la
+      // colación al promedio como si fuera efecto tardío de la grasa.
+      // Se nota solo en `sampleSize`, que la pantalla ya muestra.
+      if (meal.confoundedWithin(horizonHours)) continue;
       const atMeal = readingNear(series, meal.atMs);
       const atHorizon = readingNear(series, meal.atMs + horizonHours * 60 * 60_000);
       if (atMeal === undefined || atHorizon === undefined) continue;
@@ -128,13 +143,51 @@ function groupFor(
 export function buildMacroGlucoseComparison(input: {
   meals: readonly MealEvent[];
   readings: readonly CGMReading[];
+  /**
+   * Lo demás que pudo mover la glucosa (Fase 23). Opcionales por
+   * compatibilidad, pero **sin ellos la comparación no puede excluir
+   * episodios confundidos** y vuelve a ser la versión que mezclaba una
+   * colación con el efecto tardío de la grasa. Pásalos siempre que existan.
+   */
+  insulin?: readonly InsulinEvent[];
+  carbs?: readonly CarbEvent[];
+  activity?: readonly ActivityEvent[];
 }): MacroGlucoseComparison | null {
-  const eligible = input.meals
+  const eligible: EligibleMeal[] = input.meals
     .filter((meal) => meal.fatG !== undefined && meal.proteinG !== undefined)
-    .map((meal) => ({
-      atMs: Date.parse(meal.timestamp),
-      fatProteinG: meal.fatG! + meal.proteinG!,
-    }))
+    .map((meal) => {
+      // El bolo de esta misma comida no es un confusor. Se reusa la
+      // definición que ya existe de "esta dosis es de esta comida"
+      // (`findRapidInsulinCandidates`, ventana -90/+60) en vez de inventar
+      // una segunda: si divergieran, una comida podría contarse limpia acá y
+      // asociada allá.
+      //
+      // **`recommendedId`, no `candidateIds`** (corregido 2026-08-22 tras la
+      // revisión de seguridad). Una comida tiene UN bolo; `candidateIds`
+      // devuelve *todas* las dosis rápidas de la ventana — por eso el propio
+      // `findRapidInsulinCandidates` marca `requiresConfirmation` cuando hay
+      // más de una. Ignorarlas todas hacía que una corrección real 40 min
+      // después de comer se tratara como "el bolo de la comida" y no
+      // confundiera nada, subestimando justo la subida tardía que esta
+      // comparación existe para describir. `episodes.ts` ya ignoraba solo el
+      // `rapidInsulinEventId` confirmado; ahora las dos coinciden.
+      const own = findRapidInsulinCandidates(meal.timestamp, input.insulin ?? []);
+      const ownIds = own.recommendedId === undefined ? [meal.id] : [meal.id, own.recommendedId];
+      return {
+        atMs: Date.parse(meal.timestamp),
+        fatProteinG: meal.fatG! + meal.proteinG!,
+        confoundedWithin: (horizonHours: number): boolean =>
+          hasConfoundingEvent({
+            anchorTimestamp: meal.timestamp,
+            windowMinutes: horizonHours * 60,
+            ignoreIds: ownIds,
+            ...(input.insulin === undefined ? {} : { insulin: input.insulin }),
+            ...(input.carbs === undefined ? {} : { carbs: input.carbs }),
+            ...(input.activity === undefined ? {} : { activity: input.activity }),
+            meals: input.meals,
+          }),
+      };
+    })
     .filter((meal) => Number.isFinite(meal.atMs));
 
   if (eligible.length < MIN_MEALS_PER_GROUP * 2) return null;

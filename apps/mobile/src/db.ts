@@ -1383,6 +1383,51 @@ export async function getInsulinEventsForMeal(
   return rows.flatMap((row) => decodeRow(row.payload, InsulinEventSchema));
 }
 
+/**
+ * Todo lo demás que se registró durante la ventana de un episodio (Fase 23).
+ *
+ * `getInsulinEventsForMeal` de arriba responde otra pregunta —"¿qué bolo era
+ * de esta comida?"— y por eso mira solo rápidas en -90/+60 min. Esta mira
+ * **hacia adelante** sobre todo el seguimiento, y trae toda clase de evento:
+ * lo que le faltaba al episodio era saber que a los 90 minutos hubo una
+ * corrección, o a las 2 h una colación.
+ *
+ * Devuelve las filas crudas; `collectEpisodeContext` (packages/domain) decide
+ * cuáles caen dentro de la gracia y cuáles son contexto real.
+ */
+export async function getEventsDuringEpisode(
+  db: SQLiteDatabase,
+  mealTimestamp: string,
+  windowMinutes: number,
+): Promise<{
+  insulin: InsulinEvent[];
+  carbs: CarbEvent[];
+  meals: MealEvent[];
+  activity: ActivityEvent[];
+  notes: NoteEvent[];
+}> {
+  const mealMs = Date.parse(mealTimestamp);
+  if (!Number.isFinite(mealMs)) {
+    return { insulin: [], carbs: [], meals: [], activity: [], notes: [] };
+  }
+  const from = new Date(mealMs);
+  const to = new Date(mealMs + windowMinutes * 60_000);
+  const [insulinRows, carbRows, mealRows, activityRows, noteRows] = await Promise.all([
+    getInsulinEvents(db, from, to),
+    getCarbEvents(db, from, to),
+    getMealEvents(db, from, to),
+    getActivityEvents(db, from, to),
+    getNoteEvents(db, from, to),
+  ]);
+  return {
+    insulin: insulinRows,
+    carbs: carbRows,
+    meals: mealRows,
+    activity: activityRows,
+    notes: noteRows,
+  };
+}
+
 export async function getCollectingEpisodes(db: SQLiteDatabase): Promise<Array<{ episode: StoredMealEpisode; meal: MealEvent }>> {
   const rows = await db.getAllAsync<{
     id: string;

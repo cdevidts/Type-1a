@@ -1,5 +1,6 @@
-import type { CarbEvent, CGMReading, InsulinEvent, MealEvent } from '@type1a/schemas';
+import type { ActivityEvent, CarbEvent, CGMReading, InsulinEvent, MealEvent } from '@type1a/schemas';
 
+import { hasConfoundingEvent } from './episode-context';
 import { HIGH_THRESHOLD, HYPOGLYCEMIA_THRESHOLD } from './glucose-thresholds';
 import { convertGlucose } from './units';
 
@@ -144,7 +145,33 @@ export interface NutritionInsightsInput {
   insulin: readonly InsulinEvent[];
   carbs: readonly CarbEvent[];
   meals: readonly MealEvent[];
+  /**
+   * Actividad física, solo para detectar episodios confundidos (Fase 23).
+   * No entra en ningún promedio; mueve la glucosa lo suficiente como para
+   * que una caminata a las 2 h invalide el "% en rango" de esa dosis.
+   */
+  activity?: readonly ActivityEvent[];
 }
+
+/**
+ * Cuánto después de una dosis se sigue considerando "la comida de esa dosis"
+ * y no una intervención nueva (Fase 23).
+ *
+ * 60 minutos, igual que la ventana de asociación de
+ * `findRapidInsulinCandidates` — no un número nuevo. Pre-bolear 20 min antes
+ * de comer es práctica estándar: con una gracia corta, **toda** comida bien
+ * pre-boleada quedaría marcada como confundida y el patrón se quedaría sin
+ * muestra.
+ *
+ * ⚠️ Se pasa como `mealGraceMinutes`, **no** como `graceMinutes` (corregido
+ * 2026-08-22 tras la revisión de seguridad). Aplicado a todas las clases,
+ * volvía invisible una corrección real dentro de la primera hora —
+ * exactamente el confusor que esta exclusión existe para detectar— y con el
+ * horizonte de 1 h dejaba la ventana vacía, así que esa hora **nunca** podía
+ * marcarse confundida. Insulina y actividad se quedan con la gracia base
+ * corta (`EPISODE_GRACE_MINUTES`).
+ */
+const DOSE_OWN_MEAL_MINUTES = 60;
 
 function localHour(isoTimestamp: string): number {
   return new Date(isoTimestamp).getHours();
@@ -259,6 +286,21 @@ export function buildNutritionInsights(input: NutritionInsightsInput): MealWindo
       let inTargetCount = 0;
       let aboveCount = 0;
       for (const dose of rapidDoses) {
+        // Exclusión por horizonte (Fase 23): una corrección a los 90 min
+        // invalida el "% en rango" a 2 y 3 h de ESTA dosis, pero no el de 1 h.
+        // Sin esto, el resultado de la segunda dosis se le atribuía a la
+        // primera — y este número se lee como patrón, y se imprime en el
+        // reporte que va al control médico.
+        if (hasConfoundingEvent({
+          anchorTimestamp: dose.timestamp,
+          windowMinutes: horizonHours * 60,
+          mealGraceMinutes: DOSE_OWN_MEAL_MINUTES,
+          ignoreIds: [dose.id],
+          insulin: input.insulin,
+          carbs: input.carbs,
+          meals: input.meals,
+          ...(input.activity === undefined ? {} : { activity: input.activity }),
+        })) continue;
         const targetMs = Date.parse(dose.timestamp) + horizonHours * 60 * 60_000;
         const point = readingNear(series, targetMs);
         if (point === undefined) continue;

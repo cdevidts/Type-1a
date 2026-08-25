@@ -1,5 +1,6 @@
 import type {
   CGMReading,
+  EpisodeContextEvent,
   FoodEstimate,
   InsulinEvent,
   MealEpisodeMetrics,
@@ -69,6 +70,14 @@ export interface EpisodeMetricInput {
   proteinG?: number;
   fatG?: number;
   rapidInsulin?: InsulinEvent;
+  /**
+   * Lo demás que se registró durante la ventana (Fase 23) — ver
+   * `collectEpisodeContext` en `episode-context.ts`. Puramente descriptivo:
+   * no entra en ningún cálculo de esta función, solo viaja con las métricas
+   * para que el resumen post-comida no describa la curva como si solo
+   * hubiera existido la comida original.
+   */
+  contextEvents?: readonly EpisodeContextEvent[];
   lowThreshold?: number;
   highThreshold?: number;
 }
@@ -151,6 +160,9 @@ export function calculateMealEpisodeMetrics(input: EpisodeMetricInput): MealEpis
             (mealMs - Date.parse(input.rapidInsulin.timestamp)) / 60_000,
           ),
         }),
+    ...(input.contextEvents === undefined || input.contextEvents.length === 0
+      ? {}
+      : { contextEvents: [...input.contextEvents] }),
     readingCount: postMeal.length,
   };
 }

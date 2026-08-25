@@ -420,7 +420,16 @@ export function reportHtml(data: ReportExport, rangeLabel: string): string {
   const summary = summarizeGlucose(data.readings);
   const profile = buildAmbulatoryProfile(data.readings);
   const insights = buildNutritionInsights(data);
-  const macroGlucose = buildMacroGlucoseComparison({ meals: data.meals, readings: data.readings });
+  const macroGlucose = buildMacroGlucoseComparison({
+    meals: data.meals,
+    readings: data.readings,
+    // Fase 23: excluye del promedio los episodios con algo de por medio. Sin
+    // esto, el reporte que va al control médico presenta como patrón de
+    // grasa/proteína lo que puede ser una colación.
+    insulin: data.insulin,
+    carbs: data.carbs,
+    activity: data.activity,
+  });
   const dayBuckets = groupReadingsByDay(data.readings);
   const chartsSection = dayBuckets.length === 0
     ? '<p class="summary-empty">Sin lecturas de glucosa en este rango.</p>'
@@ -516,7 +525,16 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
   ];
 
   const insights = buildNutritionInsights(data);
-  const macroGlucose = buildMacroGlucoseComparison({ meals: data.meals, readings: data.readings });
+  const macroGlucose = buildMacroGlucoseComparison({
+    meals: data.meals,
+    readings: data.readings,
+    // Fase 23: excluye del promedio los episodios con algo de por medio. Sin
+    // esto, el reporte que va al control médico presenta como patrón de
+    // grasa/proteína lo que puede ser una colación.
+    insulin: data.insulin,
+    carbs: data.carbs,
+    activity: data.activity,
+  });
   const outcomeCell = (window: MealWindowInsight, hours: number): string => {
     const found = window.outcomes.find((o) => o.horizonHours === hours);
     if (found === undefined || found.inTargetPct === undefined) return `sin dato (n=${found?.sampleSize ?? 0})`;

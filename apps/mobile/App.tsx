@@ -128,7 +128,8 @@ import {
   enableQuickEntryNotification,
   QUICK_ENTRY_ENABLED_KEY,
   quickRouteFromNotificationAction,
-  reminderChannelId,
+  ensureReminderChannels,
+  setActiveAlertStyle,
   scheduleCapillaryReminders,
   scheduleCorrectionReminder,
   scheduleEpisodeNotifications,
@@ -245,6 +246,11 @@ function Type1AApp() {
     setMealAlarmOffsets(mealOffsets);
     setCorrectionReminder(correctionSettings);
     setReminderAlertStyle(alertStyle);
+    // El handler de primer plano vive a nivel de módulo y no puede leer este
+    // estado: hay que empujárselo. Sin esto, con la app abierta las alarmas
+    // suenan según el default y no según lo que ella eligió (Fase 19).
+    setActiveAlertStyle(alertStyle);
+    void ensureReminderChannels(alertStyle);
     setCapillaryReminder(capillarySettings);
     setOnboardingDone(onboardingSeen === 'true');
     setNutritionProfile(nutrition);
@@ -341,7 +347,7 @@ function Type1AApp() {
       if (capillary.enabled) {
         const style = await getReminderAlertStyle(db);
         const times = capillaryReminderTimes(capillary.wakeStart, capillary.wakeEnd, capillary.count);
-        await scheduleCapillaryReminders(times ?? [], reminderChannelId(style));
+        await scheduleCapillaryReminders(times ?? [], style);
       }
     })();
     const appStateSubscription = AppState.addEventListener('change', (nextState) => {
@@ -414,7 +420,7 @@ function Type1AApp() {
     const timestamp = new Date().toISOString();
     await registerNumeric('rapid', units);
     if (correctionReminder.enabled) {
-      await scheduleCorrectionReminder(timestamp, correctionReminder.offsetMinutes, reminderChannelId(reminderAlertStyle));
+      await scheduleCorrectionReminder(timestamp, correctionReminder.offsetMinutes, reminderAlertStyle);
     }
     setNotice(`Se registraron ${units} U de rápida tras confirmación.`);
   }
@@ -516,7 +522,7 @@ function Type1AApp() {
         logSaveError('App.recordCatalogFoods', error);
       }
     }
-    await scheduleEpisodeNotifications(episodeId, timestamp, mealAlarmOffsets, reminderChannelId(reminderAlertStyle));
+    await scheduleEpisodeNotifications(episodeId, timestamp, mealAlarmOffsets, reminderAlertStyle);
     setNotice(`Comida guardada. El episodio se completará con CGM a ${mealAlarmOffsets.map((minutes) => `+${minutes}`).join(', ')} minutos.`);
     await loadLocalState();
   }
@@ -548,11 +554,25 @@ function Type1AApp() {
             macrosSource: 'ai' as const,
           }),
     });
+    // Mismo trato que `confirmMeal`: una comida analizada por IA alimenta el
+    // catálogo, venga del formulario que venga. Esta hoja no lo hacía, así que
+    // registrar una comida con foto desde "Nueva entrada" no dejaba nada en el
+    // catálogo y la misma comida desde `MealModal` sí — dos caminos para lo
+    // mismo con memorias distintas. Va después de guardar y en su propio
+    // try/catch por la misma razón que allá: el catálogo es una comodidad, y
+    // un fallo suyo nunca puede impedir que quede registrado lo que se comió.
+    if (draft.analysis !== undefined) {
+      try {
+        await recordCatalogFoods(db, catalogEntriesFrom(draft.analysis.estimate.foods, draft.timestamp));
+      } catch (error) {
+        logSaveError('App.recordCatalogFoods', error);
+      }
+    }
     if (outcome.episodeId !== null) {
-      await scheduleEpisodeNotifications(outcome.episodeId, draft.timestamp, mealAlarmOffsets, reminderChannelId(reminderAlertStyle));
+      await scheduleEpisodeNotifications(outcome.episodeId, draft.timestamp, mealAlarmOffsets, reminderAlertStyle);
     }
     if (outcome.savedRapid && draft.rapidIncludesCorrection && correctionReminder.enabled) {
-      await scheduleCorrectionReminder(draft.timestamp, correctionReminder.offsetMinutes, reminderChannelId(reminderAlertStyle));
+      await scheduleCorrectionReminder(draft.timestamp, correctionReminder.offsetMinutes, reminderAlertStyle);
     }
     const saved = [
       outcome.savedGlucose ? 'glucosa' : null,
@@ -572,13 +592,17 @@ function Type1AApp() {
       // Un solo contador para las cuatro consultas: a la usuaria le importa
       // "faltan N registros de este rango", no cuál tabla los perdió.
       const tally = createDecodeTally();
-      const [readings, insulin, carbs, meals] = await Promise.all([
+      const [readings, insulin, carbs, meals, activity] = await Promise.all([
         getCGMReadings(db, range.from, range.to, tally),
         getInsulinEvents(db, range.from, range.to, tally),
         getCarbEvents(db, range.from, range.to, tally),
         getMealEvents(db, range.from, range.to, tally),
+        // Solo para descartar episodios confundidos (Fase 23): una caminata
+        // entre la dosis y el horizonte hace que ese "% en rango" ya no
+        // describa a la dosis. No entra en ningún promedio.
+        getActivityEvents(db, range.from, range.to),
       ]);
-      return { readings, insulin, carbs, meals, unreadableCount: tally.unreadable };
+      return { readings, insulin, carbs, meals, activity, unreadableCount: tally.unreadable };
     },
     [db],
   );
@@ -595,15 +619,26 @@ function Type1AApp() {
     const now = new Date();
     const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const patternStart = new Date(now.getTime() - 90 * 24 * 60 * 60_000);
-    const [patternMeals, dayCarbs, readings] = await Promise.all([
+    // La insulina, los carbohidratos y la actividad de la ventana LARGA son
+    // los que permiten descartar episodios confundidos (Fase 23) — sin ellos,
+    // una colación a las 2 h entra al promedio de grasa/proteína como si
+    // fuera efecto tardío de la comida. `dayCarbs` sigue siendo la ventana
+    // corta porque alimenta las metas del día, que es otra pregunta.
+    const [patternMeals, dayCarbs, readings, patternInsulin, patternCarbs, patternActivity] = await Promise.all([
       getMealEvents(db, patternStart, now, tally),
       getCarbEvents(db, dayStart, now, tally),
       getCGMReadings(db, patternStart, now, tally),
+      getInsulinEvents(db, patternStart, now, tally),
+      getCarbEvents(db, patternStart, now, tally),
+      getActivityEvents(db, patternStart, now),
     ]);
     return {
       dayMeals: patternMeals.filter((meal) => Date.parse(meal.timestamp) >= dayStart.getTime()),
       dayCarbs,
       patternMeals,
+      patternInsulin,
+      patternCarbs,
+      patternActivity,
       readings,
       unreadableCount: tally.unreadable,
     };
@@ -626,6 +661,8 @@ function Type1AApp() {
       insulin,
       carbs,
       meals,
+      // Ver la nota de `loadSummary`: solo para descartar confundidos.
+      activity: activities,
       rows: buildReportRows({ readings, insulin, carbs, meals, activities, notes, vitals, hba1c }),
       unreadableCount: tally.unreadable,
     };
@@ -660,13 +697,18 @@ function Type1AApp() {
   async function updateReminderAlertStyle(style: ReminderAlertStyle): Promise<void> {
     await saveReminderAlertStyle(db, style);
     setReminderAlertStyle(style);
+    setActiveAlertStyle(style);
+    // Crea los tres canales del estilo nuevo y borra los del anterior: Android
+    // congela sonido y vibración al crear el canal, así que cambiar de estilo
+    // es cambiar de canal, no editar el que ya existe.
+    await ensureReminderChannels(style);
     // Reschedule the standing capillary reminders onto the newly-chosen alert
     // channel — they're the only reminders scheduled ahead of time; episode
     // and correction reminders are scheduled on demand and already read the
     // current style. If capillary reminders are off, this just clears them.
     if (capillaryReminder.enabled) {
       const times = capillaryReminderTimes(capillaryReminder.wakeStart, capillaryReminder.wakeEnd, capillaryReminder.count);
-      await scheduleCapillaryReminders(times ?? [], reminderChannelId(style));
+      await scheduleCapillaryReminders(times ?? [], style);
     }
   }
 
@@ -679,7 +721,7 @@ function Type1AApp() {
     // A null result means the window/count didn't produce valid times; treat
     // it as "none" so a bad edit clears the schedule rather than leaving stale
     // reminders. SettingsModal validates before calling, so this is a backstop.
-    await scheduleCapillaryReminders(times ?? [], reminderChannelId(reminderAlertStyle));
+    await scheduleCapillaryReminders(times ?? [], reminderAlertStyle);
   }
 
   async function saveTimelineItem(item: TimelineItem, payload: TimelineEditPayload): Promise<void> {
@@ -708,10 +750,10 @@ function Type1AApp() {
         if (outcome.episodeId !== null) {
           // Offsets in the past self-skip; a reading measured minutes ago can
           // still have future check-ins worth scheduling.
-          await scheduleEpisodeNotifications(outcome.episodeId, item.timestamp, mealAlarmOffsets, reminderChannelId(reminderAlertStyle));
+          await scheduleEpisodeNotifications(outcome.episodeId, item.timestamp, mealAlarmOffsets, reminderAlertStyle);
         }
         if (outcome.savedRapid && payload.rapidIncludesCorrection === true && correctionReminder.enabled) {
-          await scheduleCorrectionReminder(item.timestamp, correctionReminder.offsetMinutes, reminderChannelId(reminderAlertStyle));
+          await scheduleCorrectionReminder(item.timestamp, correctionReminder.offsetMinutes, reminderAlertStyle);
         }
         // Compute the retroactive episode right away from the CGM around that
         // time, rather than waiting for the next refresh.
