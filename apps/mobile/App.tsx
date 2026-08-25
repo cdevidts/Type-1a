@@ -16,7 +16,18 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
-import { buildReportRows, catalogEntriesFrom, catalogEntryFromPortion, latestLiveReading, rapidInsulinLookbackMinutes, type CatalogFood } from '@type1a/domain';
+import {
+  basalInsulinLookbackMinutes,
+  buildReportRows,
+  catalogEntriesFrom,
+  catalogEntryFromPortion,
+  isPlausibleInsulinDuration,
+  latestLiveReading,
+  MAX_INSULIN_DURATION_HOURS,
+  MIN_INSULIN_DURATION_HOURS,
+  rapidInsulinLookbackMinutes,
+  type CatalogFood,
+} from '@type1a/domain';
 import type {
   CGMProviderStatus,
   CGMReading,
@@ -453,6 +464,63 @@ function Type1AApp() {
     setNotice(`Se registraron ${units} U de rápida tras confirmación.`);
   }
 
+  /**
+   * Aplica la respuesta a la pregunta de tres salidas del catálogo (Fase 18).
+   *
+   * Extraído a función propia el 2026-08-25 porque ahora tiene **dos**
+   * llamadores: el guardado normal de una comida y el modo "solo al
+   * catálogo". Cuando vivía embebido en el primero, elegir "actualizar el
+   * alimento" en modo solo-catálogo se perdía en silencio — justo el modo
+   * donde esa corrección es lo único que se pidió.
+   *
+   * Nunca lanza: el catálogo es una comodidad y su fallo no puede tumbar el
+   * registro de lo que se comió.
+   */
+  async function applyCatalogWrite(
+    write: NonNullable<ConfirmedMealDraft['catalogWrite']>,
+    timestamp: string,
+  ): Promise<void> {
+    try {
+      const entry = catalogEntryFromPortion(write.food, {
+        grams: write.grams,
+        carbsG: write.carbsG,
+        proteinG: write.proteinG,
+        fatG: write.fatG,
+        fiberG: write.fiberG,
+        caloriesKcal: write.caloriesKcal,
+      }, timestamp);
+      if (entry === null) {
+        setNotice('Esos valores no son posibles por 100 g, así que el catálogo no se tocó.');
+      } else if (write.mode === 'update') {
+        await updateCatalogFood(db, write.food.key, {
+          carbsPer100g: entry.carbsPer100g,
+          proteinPer100g: entry.proteinPer100g,
+          fatPer100g: entry.fatPer100g,
+          fiberPer100g: entry.fiberPer100g,
+          kcalPer100g: entry.kcalPer100g,
+        });
+      } else {
+        // `createCatalogFoodVariant` deriva su propia clave desde el nombre
+        // nuevo; la del alimento original no debe viajar, o la variante
+        // pisaría justamente al alimento que se quiso conservar.
+        await createCatalogFoodVariant(db, {
+          name: `${write.name} (variante)`,
+          carbsPer100g: entry.carbsPer100g,
+          proteinPer100g: entry.proteinPer100g,
+          fatPer100g: entry.fatPer100g,
+          fiberPer100g: entry.fiberPer100g,
+          kcalPer100g: entry.kcalPer100g,
+          lastSeenAt: entry.lastSeenAt,
+          ...(entry.servingGrams === undefined ? {} : { servingGrams: entry.servingGrams }),
+          ...(entry.servingLabel === undefined ? {} : { servingLabel: entry.servingLabel }),
+        });
+      }
+    } catch (error) {
+      logSaveError('App.catalogWrite', error);
+      setNotice('No se pudo actualizar el catálogo.');
+    }
+  }
+
   async function confirmMeal(draft: ConfirmedMealDraft): Promise<void> {
     const timestamp = new Date().toISOString();
     const meal: MealEvent = {
@@ -499,17 +567,27 @@ function Type1AApp() {
     // haberlo comido. El catálogo se alimenta más abajo con el mismo camino
     // de siempre.
     if (draft.registerToTimeline === false) {
+      // Ojo: `catalogWrite` (la respuesta a la pregunta de tres salidas de la
+      // Fase 18) también tiene que atenderse acá. Si solo se mirara
+      // `draft.analysis`, corregir los macros de un alimento del catálogo y
+      // elegir "actualizar el alimento" se perdería en silencio en este modo,
+      // que es justo el modo donde esa corrección es lo único que se pidió.
+      const wroteCatalog = draft.catalogWrite !== undefined
+        || (draft.analysis !== undefined && draft.saveToCatalog !== false);
+      if (draft.catalogWrite !== undefined) await applyCatalogWrite(draft.catalogWrite, timestamp);
       if (draft.analysis !== undefined && draft.saveToCatalog !== false) {
         try {
           await recordCatalogFoods(db, catalogEntriesFrom(draft.analysis.estimate.foods, timestamp));
-          setNotice('Guardado en tu catálogo. No se registró ninguna comida de hoy.');
         } catch (error) {
           logSaveError('App.recordCatalogFoods', error);
           setNotice('No se pudo guardar en el catálogo.');
+          await loadLocalState();
+          return;
         }
-      } else {
-        setNotice('No había nada que guardar en el catálogo: analiza la comida con foto o texto primero.');
       }
+      setNotice(wroteCatalog
+        ? 'Guardado en tu catálogo. No se registró ninguna comida de hoy.'
+        : 'No había nada que guardar en el catálogo: analiza la comida con foto o texto primero.');
       await loadLocalState();
       return;
     }
@@ -542,48 +620,7 @@ function Type1AApp() {
     // Respuesta a la pregunta de tres salidas (Fase 18). Va **después** de
     // guardar la comida y en su propio try: el catálogo es una comodidad, y
     // un fallo suyo no puede impedir que quede registrado lo que se comió.
-    if (draft.catalogWrite !== undefined) {
-      try {
-        const write = draft.catalogWrite;
-        const entry = catalogEntryFromPortion(write.food, {
-          grams: write.grams,
-          carbsG: write.carbsG,
-          proteinG: write.proteinG,
-          fatG: write.fatG,
-          fiberG: write.fiberG,
-          caloriesKcal: write.caloriesKcal,
-        }, timestamp);
-        if (entry === null) {
-          setNotice('La comida quedó guardada, pero esos valores no son posibles por 100 g y el catálogo no se tocó.');
-        } else if (write.mode === 'update') {
-          await updateCatalogFood(db, write.food.key, {
-            carbsPer100g: entry.carbsPer100g,
-            proteinPer100g: entry.proteinPer100g,
-            fatPer100g: entry.fatPer100g,
-            fiberPer100g: entry.fiberPer100g,
-            kcalPer100g: entry.kcalPer100g,
-          });
-        } else {
-          // `createCatalogFoodVariant` deriva su propia clave desde el nombre
-          // nuevo; la del alimento original no debe viajar, o la variante
-          // pisaría justamente al alimento que se quiso conservar.
-          await createCatalogFoodVariant(db, {
-            name: `${write.name} (variante)`,
-            carbsPer100g: entry.carbsPer100g,
-            proteinPer100g: entry.proteinPer100g,
-            fatPer100g: entry.fatPer100g,
-            fiberPer100g: entry.fiberPer100g,
-            kcalPer100g: entry.kcalPer100g,
-            lastSeenAt: entry.lastSeenAt,
-            ...(entry.servingGrams === undefined ? {} : { servingGrams: entry.servingGrams }),
-            ...(entry.servingLabel === undefined ? {} : { servingLabel: entry.servingLabel }),
-          });
-        }
-      } catch (error) {
-        logSaveError('App.catalogWrite', error);
-        setNotice('La comida quedó guardada. No se pudo actualizar el catálogo.');
-      }
-    }
+    if (draft.catalogWrite !== undefined) await applyCatalogWrite(draft.catalogWrite, timestamp);
     // El catálogo se alimenta de cada análisis, y nunca puede impedir que la
     // comida se guarde: es una comodidad, no parte del registro.
     if (draft.analysis !== undefined && draft.saveToCatalog !== false) {
@@ -683,6 +720,7 @@ function Type1AApp() {
         // por dosis que siguen actuando. Sin elegir, `undefined`: no se
         // excluye nada por una suposición de la app (AGENTS.md).
         rapidLookbackMinutes: rapidInsulinLookbackMinutes(profile),
+        basalLookbackMinutes: basalInsulinLookbackMinutes(profile),
         unreadableCount: tally.unreadable,
       };
     },
@@ -723,6 +761,7 @@ function Type1AApp() {
       patternActivity,
       readings,
       rapidLookbackMinutes: rapidInsulinLookbackMinutes(profile),
+      basalLookbackMinutes: basalInsulinLookbackMinutes(profile),
       // Al control médico: con qué insulina se generaron estos números.
       ...(profile.rapidInsulinId === undefined ? {} : { rapidInsulinId: profile.rapidInsulinId }),
       ...(profile.basalInsulinId === undefined ? {} : { basalInsulinId: profile.basalInsulinId }),
@@ -755,6 +794,7 @@ function Type1AApp() {
       // El reporte va al control médico: los promedios que imprime tienen que
       // excluir lo confundido con el mismo criterio que la app en pantalla.
       rapidLookbackMinutes: rapidInsulinLookbackMinutes(profile),
+      basalLookbackMinutes: basalInsulinLookbackMinutes(profile),
       unreadableCount: tally.unreadable,
     };
   }
@@ -1116,6 +1156,7 @@ function Type1AApp() {
         onConfirm={confirmMeal}
         catalogFoods={catalogFoods}
         carbRatio={profile.carbRatio}
+        therapyConfigured={therapyConfigured}
         targetGlucose={profile.targetGlucose}
         correctionFactor={profile.correctionFactor}
         doseIncrement={profile.doseIncrement}
@@ -1140,6 +1181,12 @@ function Type1AApp() {
           await saveTherapyProfile(db, nextProfile, { markConfigured: true });
           setProfile(nextProfile);
           setTherapyConfigured(true);
+        }}
+        onSaveInsulins={async (nextProfile) => {
+          // Sin `markConfigured`: elegir tu insulina NO desbloquea las
+          // calculadoras de dosis. Ver la nota del prop en SettingsModal.
+          await saveTherapyProfile(db, nextProfile);
+          setProfile(nextProfile);
         }}
         onEnableQuickEntry={activateQuickEntry}
         mealAlarmOffsets={mealAlarmOffsets}
@@ -1227,6 +1274,20 @@ function Type1AApp() {
           // configurado: elegir tu insulina no es haber cargado tus
           // parámetros de terapia, y las calculadoras siguen bloqueadas.
           if (rapid.id === undefined && basal.id === undefined) return;
+          // Se valida ACÁ y no solo en Ajustes. Sin esto, una duración fuera
+          // de rango hacía que `TherapyProfileSchema.parse` lanzara, el error
+          // se tragara en `logSaveError`, y ella siguiera adelante creyendo
+          // que su insulina había quedado configurada cuando no se escribió
+          // nada. Un guardado que falla en silencio es peor que uno que se
+          // niega en voz alta.
+          const invalid = [rapid, basal].some(
+            (selection) => selection.durationHours !== undefined
+              && !isPlausibleInsulinDuration(selection.durationHours),
+          );
+          if (invalid) {
+            setNotice(`La duración de la insulina debe estar entre ${MIN_INSULIN_DURATION_HOURS} y ${MAX_INSULIN_DURATION_HOURS} horas. Puedes elegirlas después en Ajustes → Terapia.`);
+            return;
+          }
           try {
             const next = { ...profile, ...insulinProfileFields(rapid, basal) };
             // `saveTherapyProfile` sin `markConfigured`: guarda el dato pero

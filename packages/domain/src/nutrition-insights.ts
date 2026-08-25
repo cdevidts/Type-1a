@@ -1,6 +1,7 @@
 import type { ActivityEvent, CarbEvent, CGMReading, InsulinEvent, MealEvent } from '@type1a/schemas';
 
 import { hasConfoundingEvent } from './episode-context';
+import { findRapidInsulinCandidates } from './meal';
 import { HIGH_THRESHOLD, HYPOGLYCEMIA_THRESHOLD } from './glucose-thresholds';
 import { convertGlucose } from './units';
 
@@ -157,6 +158,8 @@ export interface NutritionInsightsInput {
    * `undefined` y no se mira hacia atrás. Ver `insulin-catalog.ts`.
    */
   rapidLookbackMinutes?: number | undefined;
+  /** Ídem para la basal (24-42 h). Ver `insulin-catalog.ts`. */
+  basalLookbackMinutes?: number | undefined;
 }
 
 /**
@@ -286,6 +289,15 @@ export function buildNutritionInsights(input: NutritionInsightsInput): MealWindo
     const rapidDoses = input.insulin.filter((dose) => dose.type === 'rapid' && inWindow(dose.timestamp));
     const basalDoses = input.insulin.filter((dose) => dose.type === 'basal' && inWindow(dose.timestamp));
 
+    // Ver la nota homónima en `macro-glucose.ts`: el bolo de una comida
+    // anterior es el fondo normal de cualquier medición, no un confusor. Sin
+    // esta exención, con comidas cada 4-5 h y una rápida de 5 h, la ventana
+    // hacia atrás descartaba prácticamente todas las dosis y esta pantalla
+    // quedaba vacía apenas la usuaria elegía su insulina.
+    const mealBolusIds = input.meals
+      .map((meal) => findRapidInsulinCandidates(meal.timestamp, input.insulin).recommendedId)
+      .filter((id): id is string => id !== undefined);
+
     const outcomes: HorizonOutcome[] = RESPONSE_HORIZONS_HOURS.map((horizonHours) => {
       let sampleSize = 0;
       let belowCount = 0;
@@ -301,12 +313,13 @@ export function buildNutritionInsights(input: NutritionInsightsInput): MealWindo
           anchorTimestamp: dose.timestamp,
           windowMinutes: horizonHours * 60,
           mealGraceMinutes: DOSE_OWN_MEAL_MINUTES,
-          ignoreIds: [dose.id],
+          ignoreIds: [dose.id, ...mealBolusIds],
           insulin: input.insulin,
           carbs: input.carbs,
           meals: input.meals,
           ...(input.activity === undefined ? {} : { activity: input.activity }),
           ...(input.rapidLookbackMinutes === undefined ? {} : { lookbackMinutes: input.rapidLookbackMinutes }),
+          ...(input.basalLookbackMinutes === undefined ? {} : { basalLookbackMinutes: input.basalLookbackMinutes }),
         })) continue;
         const targetMs = Date.parse(dose.timestamp) + horizonHours * 60 * 60_000;
         const point = readingNear(series, targetMs);

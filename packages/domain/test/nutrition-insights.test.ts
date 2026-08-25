@@ -386,3 +386,60 @@ describe('exclusión de dosis confundidas (Fase 23)', () => {
     }
   });
 });
+
+describe('el lookback llega de verdad hasta collectEpisodeContext', () => {
+  // La revisión de seguridad del 2026-08-25 marcó este hueco: se podía borrar
+  // el spread de `rapidLookbackMinutes` en nutrition-insights.ts o en
+  // macro-glucose.ts y los 238 tests del dominio seguían pasando. La
+  // exclusión dejaba de funcionar en silencio.
+  function seriesAround(day: number, hour: number, mgDl: number): CGMReading[] {
+    const out: CGMReading[] = [];
+    for (let minutes = -360; minutes <= 240; minutes += 15) {
+      out.push(reading(atLocal(day, hour, minutes), mgDl));
+    }
+    return out;
+  }
+
+  const base = {
+    ...EMPTY,
+    readings: seriesAround(18, 13, 140),
+    // Una CORRECCIÓN 2 h antes: no está asociada a ninguna comida, así que
+    // es exactamente el confusor que el lookback existe para detectar.
+    insulin: [rapid(atLocal(18, 11), 2), rapid(atLocal(18, 13), 6)],
+  };
+
+  it('sin lookback, la dosis anterior no confunde: las dos cuentan', () => {
+    const midday = windowNamed(buildNutritionInsights(base), 'mediodía');
+    const oneHour = midday.outcomes.find((outcome) => outcome.horizonHours === 1);
+    expect(oneHour!.sampleSize).toBe(2);
+  });
+
+  it('con lookback, la corrección anterior sí confunde', () => {
+    const midday = windowNamed(
+      buildNutritionInsights({ ...base, rapidLookbackMinutes: 300 }),
+      'mediodía',
+    );
+    // La dosis de las 13:00 queda excluida por la corrección de las 11:00.
+    // La de las 11:00 sobrevive: no tiene nada antes. Baja de 2 a 1.
+    const oneHour = midday.outcomes.find((outcome) => outcome.horizonHours === 1);
+    expect(oneHour!.sampleSize).toBe(1);
+  });
+
+  it('el bolo de una comida anterior NO confunde, aunque caiga en la ventana', () => {
+    // Con MDI las comidas van cada 4-5 h y la rápida "dura" 5 h, así que el
+    // bolo de la comida anterior cae casi siempre dentro del lookback. Si
+    // contara, elegir la insulina en Ajustes vaciaría la pantalla entera.
+    const midday = windowNamed(
+      buildNutritionInsights({
+        ...base,
+        meals: [meal(atLocal(18, 11), { confirmedCarbsG: 40 })],
+        rapidLookbackMinutes: 300,
+      }),
+      'mediodía',
+    );
+    // Vuelve a 2: el bolo de las 11:00 pasó a ser "de una comida" y dejó de
+    // contar como confusor.
+    const oneHour = midday.outcomes.find((outcome) => outcome.horizonHours === 1);
+    expect(oneHour!.sampleSize).toBe(2);
+  });
+});

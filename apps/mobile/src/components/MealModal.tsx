@@ -148,6 +148,7 @@ export function MealModal({
   onConfirm,
   catalogFoods,
   carbRatio,
+  therapyConfigured,
   targetGlucose,
   correctionFactor,
   doseIncrement,
@@ -163,6 +164,15 @@ export function MealModal({
    * y el campo de insulina sigue estando para escribirla a mano.
    */
   carbRatio?: number | undefined;
+  /**
+   * `false` mientras el perfil sigue con los valores placeholder que vienen
+   * con la app. **La calculadora tiene que negarse a calcular** en ese caso:
+   * mostrar una dosis derivada de un default de fábrica sería inferir un
+   * parámetro de terapia, que `AGENTS.md` prohíbe. Es la misma negativa
+   * explícita que ya hacen `EntryModal` y `CorrectionModal`; esta pantalla
+   * era la única superficie de dosis sin ella.
+   */
+  therapyConfigured: boolean;
   targetGlucose: number;
   correctionFactor: number;
   doseIncrement: number;
@@ -176,6 +186,18 @@ export function MealModal({
   const [registerToTimeline, setRegisterToTimeline] = useState(true);
   const [saveToCatalog, setSaveToCatalog] = useState(true);
   const [rapidInput, setRapidInput] = useState('');
+  /**
+   * Con qué gramos de carbohidratos se calculó la dosis que hay en el campo,
+   * o `null` si el número lo escribió ella a mano.
+   *
+   * Existe para invalidar: sin esto, calcular 8 U para 80 g y después
+   * corregir los carbohidratos a 30 g dejaba **8 U en el campo**, sin nada en
+   * pantalla que atara ese número a los gramos de los que salió. Ella podía
+   * guardarlo —o inyectárselo— creyendo que correspondía. `EntryModal` ya
+   * resolvía esto con `invalidateSuggestion`; acá se había reimplementado la
+   * calculadora sin la salvaguarda.
+   */
+  const [calcBasisCarbsG, setCalcBasisCarbsG] = useState<number | null>(null);
   const [proteinInput, setProteinInput] = useState('');
   const [fatInput, setFatInput] = useState('');
   const [fiberInput, setFiberInput] = useState('');
@@ -232,6 +254,15 @@ export function MealModal({
     setAppliedCatalog(null);
     setCatalogQuestion(null);
     setCatalogPreview(null);
+    // Los tres controles de la Fase 21 vuelven a su estado por defecto.
+    // `rapidInput` es el más grave de los tres: sin esto, la comida siguiente
+    // heredaba las unidades de la anterior en un campo ya rellenado, listo
+    // para confirmarse de un toque. Una dosis arrastrada es exactamente la
+    // clase de error que esta app no puede permitirse.
+    setRegisterToTimeline(true);
+    setSaveToCatalog(true);
+    setRapidInput('');
+    setCalcBasisCarbsG(null);
   }, [visible]);
 
   async function captureAndAnalyze(): Promise<void> {
@@ -676,7 +707,17 @@ export function MealModal({
       <View style={styles.confirmInputWrap}>
         <TextInput
           value={confirmedCarbs}
-          onChangeText={setConfirmedCarbs}
+          onChangeText={(text) => {
+            setConfirmedCarbs(text);
+            // Si los gramos cambian, la dosis calculada deja de corresponder.
+            // Se borra en vez de quedarse: un número viejo en un campo de
+            // insulina es peor que un campo vacío.
+            if (calcBasisCarbsG !== null) {
+              setCalcBasisCarbsG(null);
+              setRapidInput('');
+              setMessage('Cambiaste los carbohidratos, así que se borró la dosis calculada. Vuelve a calcularla o escríbela a mano.');
+            }
+          }}
           keyboardType="decimal-pad"
           style={styles.confirmInput}
           placeholder="Escribe un valor"
@@ -832,7 +873,12 @@ export function MealModal({
             <View style={styles.insulinInputWrap}>
               <TextInput
                 value={rapidInput}
-                onChangeText={setRapidInput}
+                onChangeText={(text) => {
+                  // Escrito a mano: deja de ser una dosis calculada, así que
+                  // cambiar los carbohidratos ya no debe borrarlo.
+                  setRapidInput(text);
+                  setCalcBasisCarbsG(null);
+                }}
                 keyboardType="decimal-pad"
                 style={styles.insulinInput}
                 placeholder="—"
@@ -848,9 +894,11 @@ export function MealModal({
             una dosis: escribe un número en un campo que ella revisa y puede
             sobrescribir antes de guardar (AGENTS.md).
           */}
-          {carbRatio === undefined ? (
+          {!therapyConfigured || carbRatio === undefined ? (
             <Text style={styles.choiceFoot}>
-              Para calcularla por conteo, carga tus “carbs por unidad” en Ajustes → Terapia.
+              {therapyConfigured
+                ? 'Para calcularla por conteo, carga tus “carbs por unidad” en Ajustes → Terapia.'
+                : 'Para calcularla por conteo, confirma primero tus parámetros en Ajustes → Terapia. La app no calcula dosis con valores que tú no hayas cargado.'}
             </Text>
           ) : (
             <Pressable
@@ -869,7 +917,14 @@ export function MealModal({
                   correctionFactor,
                   doseIncrement,
                 });
+                // 0 g da 0 U, y el guardado después rechaza el 0 con un error
+                // que parece culpa de la usuaria. Se dice acá en su lugar.
+                if (result.totalRoundedUnits <= 0) {
+                  setMessage('Con esos carbohidratos el conteo da 0 U, así que no hay dosis que registrar.');
+                  return;
+                }
                 setRapidInput(String(result.totalRoundedUnits));
+                setCalcBasisCarbsG(carbsNow);
                 setMessage(`Por conteo: ${result.mealFormula} = ${result.totalRoundedUnits} U. Revísalo antes de guardar.`);
               }}
             >
@@ -878,7 +933,9 @@ export function MealModal({
           )}
           <Text style={styles.insulinFoot}>
             Type 1A no decide ni sugiere dosis: solo aplica los valores que cargaste. Confirma la cantidad antes
-            de guardar.
+            de guardar.{'\n\n'}
+            El conteo no descuenta insulina que siga actuando de una dosis anterior — la app no calcula insulina
+            activa. Si te pinchaste hace poco, tenlo en cuenta antes de confirmar.
           </Text>
         </View>
       ) : null}

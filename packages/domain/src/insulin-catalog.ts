@@ -122,6 +122,14 @@ export function isPlausibleInsulinDuration(hours: number): boolean {
  * Sin dato, la ventana se queda como estaba (solo hacia adelante) y la
  * pantalla lo dice.
  */
+export function basalInsulinLookbackMinutes(profile: {
+  basalInsulinDurationHours?: number | undefined;
+}): number | undefined {
+  const hours = profile.basalInsulinDurationHours;
+  if (hours === undefined || !isPlausibleInsulinDuration(hours)) return undefined;
+  return Math.round(hours * 60);
+}
+
 export function rapidInsulinLookbackMinutes(profile: {
   rapidInsulinDurationHours?: number | undefined;
 }): number | undefined {

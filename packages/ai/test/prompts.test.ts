@@ -42,10 +42,18 @@ describe('glucoseInsightSystemPrompt', () => {
     expect(containsTherapyRecommendation(glucoseInsightSystemPrompt)).toBe(false);
   });
 
+  it('declara que minutesAfterAnchor puede ser negativo', () => {
+    // Desde el 2026-08-25 una dosis ANTERIOR al ancla entra al contexto. El
+    // prompt decía "minutos después"; un modelo que lea -45 bajo ese contrato
+    // describe una dosis pre-comida como post-comida, que invierte la lectura
+    // clínica del episodio.
+    expect(glucoseInsightSystemPrompt).toMatch(/negative for before it/i);
+  });
+
   it('la versión se movió al cambiar las reglas de seguridad', () => {
     // La versión viaja con cada respuesta guardada: si el texto cambia y la
     // versión no, no hay forma de saber después bajo qué reglas se generó un
     // insight ya almacenado.
-    expect(GLUCOSE_INSIGHT_PROMPT_VERSION).toBe('glucose-insight.v4');
+    expect(GLUCOSE_INSIGHT_PROMPT_VERSION).toBe('glucose-insight.v5');
   });
 });

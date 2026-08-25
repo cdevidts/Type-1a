@@ -122,6 +122,13 @@ export interface EpisodeContextInput {
    * número de ficha técnica equivalente, así que no se inventa uno.
    */
   lookbackMinutes?: number;
+  /**
+   * Ídem para la basal, que dura muchísimo más (24-42 h contra 5). Separado
+   * porque aplicarle la ventana de la rápida era usar un número que no es el
+   * suyo — y la app pedía la duración de la basal en Ajustes sin leerla nunca
+   * (corregido 2026-08-25 tras la revisión de seguridad).
+   */
+  basalLookbackMinutes?: number;
   insulin?: readonly InsulinEvent[];
   carbs?: readonly CarbEvent[];
   meals?: readonly MealEvent[];
@@ -203,9 +210,10 @@ export function collectEpisodeContext(input: EpisodeContextInput): EpisodeContex
     ? baseGraceMs
     : input.mealGraceMinutes * 60_000;
   const windowEndMs = anchorMs + input.windowMinutes * 60_000;
-  const lookbackMs = input.lookbackMinutes === undefined || input.lookbackMinutes <= 0
-    ? undefined
-    : input.lookbackMinutes * 60_000;
+  const toMs = (minutes: number | undefined): number | undefined =>
+    minutes === undefined || minutes <= 0 ? undefined : minutes * 60_000;
+  const lookbackMs = toMs(input.lookbackMinutes);
+  const basalLookbackMs = toMs(input.basalLookbackMinutes);
   const ignore = new Set(input.ignoreIds ?? []);
 
   return candidatesFrom(input)
@@ -218,9 +226,10 @@ export function collectEpisodeContext(input: EpisodeContextInput): EpisodeContex
       // contamina la curva igual que una posterior — era la limitación
       // conocida de la Fase 23, y se cierra con un dato elegido, no supuesto.
       if (atMs < anchorMs) {
-        if (lookbackMs === undefined) return false;
         if (!INSULIN_KINDS.has(candidate.kind)) return false;
-        return atMs >= anchorMs - lookbackMs;
+        const backMs = candidate.kind === 'basal_insulin' ? basalLookbackMs : lookbackMs;
+        if (backMs === undefined) return false;
+        return atMs >= anchorMs - backMs;
       }
       const graceMs = MEAL_KINDS.has(candidate.kind) ? mealGraceMs : baseGraceMs;
       return atMs > anchorMs + graceMs && atMs <= windowEndMs;

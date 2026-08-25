@@ -2253,6 +2253,65 @@ cámara + los tres modos de IA a ese formulario es una superficie grande, y
 `MealEditModal` ya cubre foto e IA para las comidas de verdad. Queda como lo
 único pendiente de la Fase 21.
 
+### La revisión de seguridad encontró 11 hallazgos, 4 de ellos graves
+
+Segunda corrida seguida en que la revisión **no sale limpia**, y vale la pena
+dejar el patrón escrito: los errores no estaban en el código nuevo aislado,
+sino **en cómo el código nuevo interactuaba con lo que ya existía**.
+
+1. **`MealModal` heredaba la dosis calculada de la comida anterior.** El
+   efecto de reset no cubría `rapidInput`: calcular 7 U para el almuerzo y
+   abrir después "Comida" para una colación de 15 g dejaba **7 U ya escritas
+   en el campo**, listas para confirmarse de un toque. El propio archivo tenía
+   escrita la regla que esto rompía ("o la comida siguiente hereda los números
+   de la anterior") desde la Fase 15. Encontrado en paralelo por la revisión y
+   por relectura propia.
+2. **La calculadora nueva no tenía el candado de `therapyConfigured`** que sí
+   tienen `EntryModal` y `CorrectionModal`. Podía calcular sobre los valores
+   placeholder que trae la app (objetivo 110, factor 45, incremento 0,5) —
+   una dosis derivada de constantes de fábrica, que es literalmente inferir un
+   parámetro de terapia. Solo no disparaba por una coincidencia:
+   `carbRatio` hoy únicamente se puede guardar por el mismo botón que marca el
+   perfil como configurado. Un acoplamiento implícito que nada garantizaba.
+3. **La dosis calculada no se invalidaba al cambiar los carbohidratos.**
+   Calcular 8 U para 80 g y corregir después a 30 g dejaba las 8 U en el
+   campo, sin nada que atara ese número a los gramos de los que salió.
+   `EntryModal` ya resolvía esto; la calculadora se había reimplementado sin
+   la salvaguarda.
+4. **Editar podía borrar la comida entera.** `hasMeal` en
+   `updateUnifiedEntryGroup` no contaba los macros, y cuando es falso **se
+   borra la fila de `meal_events`**. Vaciar los carbohidratos de una entrada
+   keto que tenía proteína, grasa, nota y análisis de IA borraba todo eso —
+   y el formulario decía que había guardado bien.
+5. **`macrosSource` mentía en las dos direcciones.** `'user' → 'mixed'` decía
+   que la IA había precargado unos macros que ella había pesado; y
+   `undefined → 'user'` etiquetaba como "escritos por ella" los tres macros de
+   una comida vieja donde solo había corregido uno. Ese número se imprime en
+   el reporte médico.
+6. **Elegir tu insulina iba a vaciar la pantalla de Patrones.** Con MDI las
+   comidas van cada 4-5 h y una rápida "dura" 5 h, así que mirando hacia atrás
+   **el bolo de la comida anterior cae casi siempre dentro de la ventana**.
+   Corregido eximiendo los bolos atribuibles a una comida: haber comido y
+   boleado antes es el fondo normal de cualquier medición, no una anomalía; lo
+   que contamina es una **corrección** que siga actuando. Además, la duración
+   de la basal se pedía en Ajustes y **no se leía nunca** — se le aplicaba la
+   ventana de la rápida.
+7. **El prompt decía "minutos después"** mientras el esquema ya admitía
+   negativos: un modelo que lea `-45` bajo ese contrato describe una dosis
+   **pre-comida como post-comida**, invirtiendo la lectura clínica. Prompt a
+   **v5**.
+8. **El guardado de insulinas del onboarding fallaba en silencio** con una
+   duración fuera de rango, y Ajustes obligaba a tener objetivo/factor/
+   incremento cargados para poder guardar las insulinas — empujando a
+   **inventar un factor de corrección** a quien solo quería que sus patrones
+   se leyeran bien. Ahora las insulinas tienen su propio botón y su propia
+   vía de guardado, que **no** marca el perfil como configurado.
+
+**El test que faltaba y que valía más que los otros:** se podía borrar el
+cableado del lookback en cualquiera de los dos builders y los 238 tests del
+dominio seguían pasando. La exclusión dejaba de funcionar en silencio. Ya hay
+un test que va de punta a punta.
+
 ---
 
 ## Fase 22 — Animación del swipe entre pantallas (planificada 2026-08-21)

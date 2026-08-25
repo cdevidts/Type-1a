@@ -160,7 +160,27 @@ export function buildMacroGlucoseComparison(input: {
    * suposición.
    */
   rapidLookbackMinutes?: number | undefined;
+  /** Ídem para la basal (24-42 h). Ver `insulin-catalog.ts`. */
+  basalLookbackMinutes?: number | undefined;
 }): MacroGlucoseComparison | null {
+  // ── Los bolos de OTRAS comidas no son confusores ────────────────────────
+  //
+  // Corregido 2026-08-25 tras la revisión de seguridad. Con MDI, las comidas
+  // van cada 4-5 h y una insulina rápida "dura" 5 h, así que mirando hacia
+  // atrás **el bolo de la comida anterior cae casi siempre dentro de la
+  // ventana**. Sin esta exención, elegir la insulina en Ajustes vaciaba la
+  // pantalla de Patrones y las tablas del reporte médico de golpe, sin
+  // ningún mensaje: pasaban de tener muestra a `n = 0`.
+  //
+  // Y conceptualmente la exención es lo correcto, no un parche para tener
+  // datos: haber comido y boleado antes es **el fondo normal** de cualquier
+  // medición en diabetes tipo 1, no una anomalía. Lo que sí contamina es una
+  // dosis *no atribuible a una comida* —una corrección— que siga actuando.
+  // Eso es justo lo que Verónica describió, y sigue excluyéndose.
+  const otherMealBolusIds = input.meals
+    .map((meal) => findRapidInsulinCandidates(meal.timestamp, input.insulin ?? []).recommendedId)
+    .filter((id): id is string => id !== undefined);
+
   const eligible: EligibleMeal[] = input.meals
     .filter((meal) => meal.fatG !== undefined && meal.proteinG !== undefined)
     .map((meal) => {
@@ -180,7 +200,7 @@ export function buildMacroGlucoseComparison(input: {
       // comparación existe para describir. `episodes.ts` ya ignoraba solo el
       // `rapidInsulinEventId` confirmado; ahora las dos coinciden.
       const own = findRapidInsulinCandidates(meal.timestamp, input.insulin ?? []);
-      const ownIds = own.recommendedId === undefined ? [meal.id] : [meal.id, own.recommendedId];
+      const ownIds = [meal.id, ...otherMealBolusIds, ...(own.recommendedId === undefined ? [] : [own.recommendedId])];
       return {
         atMs: Date.parse(meal.timestamp),
         fatProteinG: meal.fatG! + meal.proteinG!,
@@ -193,6 +213,7 @@ export function buildMacroGlucoseComparison(input: {
             ...(input.carbs === undefined ? {} : { carbs: input.carbs }),
             ...(input.activity === undefined ? {} : { activity: input.activity }),
             ...(input.rapidLookbackMinutes === undefined ? {} : { lookbackMinutes: input.rapidLookbackMinutes }),
+            ...(input.basalLookbackMinutes === undefined ? {} : { basalLookbackMinutes: input.basalLookbackMinutes }),
             meals: input.meals,
           }),
       };

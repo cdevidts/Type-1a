@@ -146,6 +146,7 @@ export function SettingsModal({
   onPrivacyChange,
   onImportMySugrCsv,
   onSaveProfile,
+  onSaveInsulins,
   onEnableQuickEntry,
   mealAlarmOffsets,
   onSaveMealAlarmOffsets,
@@ -168,6 +169,16 @@ export function SettingsModal({
   onPrivacyChange: (show: boolean) => Promise<void>;
   onImportMySugrCsv: (csvText: string) => Promise<MySugrImportOutcome>;
   onSaveProfile: (profile: TherapyProfile) => Promise<void>;
+  /**
+   * Guarda el perfil **sin** marcarlo como configurado.
+   *
+   * Separado de `onSaveProfile` porque aquel desbloquea las calculadoras de
+   * dosis, y elegir tu insulina no es haber cargado tus parámetros de
+   * terapia. Pasarlo por el mismo camino habría habilitado el cálculo de
+   * dosis sobre los valores placeholder que trae la app — exactamente la
+   * inferencia de parámetros que `AGENTS.md` prohíbe.
+   */
+  onSaveInsulins: (profile: TherapyProfile) => Promise<void>;
   /** Requests notification permission, posts the sticky notification, and — on success — persists it as enabled and starts the background refresh. */
   onEnableQuickEntry: () => Promise<boolean>;
   mealAlarmOffsets: number[];
@@ -208,6 +219,8 @@ export function SettingsModal({
     id: profile.rapidInsulinId,
     durationHours: profile.rapidInsulinDurationHours,
   });
+  const [insulinBusy, setInsulinBusy] = useState(false);
+  const [insulinMessage, setInsulinMessage] = useState<string | null>(null);
   const [basalInsulin, setBasalInsulin] = useState<InsulinSelection>({
     id: profile.basalInsulinId,
     durationHours: profile.basalInsulinDurationHours,
@@ -252,7 +265,14 @@ export function SettingsModal({
       setFactorInput(therapyConfigured ? String(profile.correctionFactor) : '');
       setIncrementInput(therapyConfigured ? String(profile.doseIncrement) : '');
       setCarbRatioInput(profile.carbRatio === undefined ? '' : String(profile.carbRatio));
+      // Las insulinas también se re-sincronizan al abrir. Sin esto, el estado
+      // se quedaba con el valor del primer montaje: alguien que eligiera sus
+      // insulinas en el flujo de primer uso abría Ajustes con los selectores
+      // vacíos, y el primer "Guardar parámetros" se las borraba en silencio.
+      setRapidInsulin({ id: profile.rapidInsulinId, durationHours: profile.rapidInsulinDurationHours });
+      setBasalInsulin({ id: profile.basalInsulinId, durationHours: profile.basalInsulinDurationHours });
       setTherapyMessage(null);
+      setInsulinMessage(null);
       setMealOffsetsInput(mealAlarmOffsets.join(', '));
       setCorrectionReminderEnabled(correctionReminder.enabled);
       setCorrectionOffsetInput(String(correctionReminder.offsetMinutes));
@@ -310,6 +330,30 @@ export function SettingsModal({
       setAlarmMessage('No se pudieron guardar las alarmas.');
     } finally {
       setAlarmBusy(false);
+    }
+  }
+
+  /**
+   * Guarda SOLO las insulinas. Independiente de los parámetros de terapia a
+   * propósito — ver el comentario del botón.
+   */
+  async function saveInsulins(): Promise<void> {
+    for (const selection of [rapidInsulin, basalInsulin]) {
+      if (selection.durationHours !== undefined && !isPlausibleInsulinDuration(selection.durationHours)) {
+        setInsulinMessage(`La duración debe estar entre ${MIN_INSULIN_DURATION_HOURS} y ${MAX_INSULIN_DURATION_HOURS} horas.`);
+        return;
+      }
+    }
+    setInsulinBusy(true);
+    setInsulinMessage(null);
+    try {
+      await onSaveInsulins({ ...profile, ...insulinProfileFields(rapidInsulin, basalInsulin) });
+      setInsulinMessage('Insulinas guardadas.');
+    } catch (error) {
+      logSaveError('SettingsModal.saveInsulins', error);
+      setInsulinMessage('No se pudieron guardar las insulinas.');
+    } finally {
+      setInsulinBusy(false);
     }
   }
 
@@ -828,6 +872,24 @@ export function SettingsModal({
           <InsulinPicker category="rapid" selection={rapidInsulin} onChange={setRapidInsulin} />
           <InsulinPicker category="basal" selection={basalInsulin} onChange={setBasalInsulin} />
           <InsulinPickerSafetyNote />
+          {/*
+            Botón propio, separado del de parámetros de terapia (2026-08-25,
+            tras la revisión de seguridad). Guardar las insulinas por
+            `saveTherapy` obligaba a tener objetivo, factor e incremento
+            cargados primero — así que alguien que solo quiere que sus
+            patrones se lean bien quedaba empujada a **inventar un factor de
+            corrección** para poder avanzar. Eso es exactamente la presión que
+            `markConfigured` existe para evitar. Este guardado no toca ningún
+            parámetro de dosis ni marca el perfil como configurado.
+          */}
+          <Pressable
+            style={[styles.connectButton, insulinBusy && styles.disabled]}
+            disabled={insulinBusy}
+            onPress={() => { void saveInsulins(); }}
+          >
+            <Text style={styles.connectText}>Guardar mis insulinas</Text>
+          </Pressable>
+          {insulinMessage === null ? null : <Text style={styles.message}>{insulinMessage}</Text>}
 
           <Pressable style={[styles.connectButton, therapyBusy && styles.disabled]} disabled={therapyBusy} onPress={() => { void saveTherapy(); }}>
             <Text style={styles.connectText}>Guardar parámetros de terapia</Text>

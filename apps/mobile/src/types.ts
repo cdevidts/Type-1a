@@ -30,13 +30,17 @@ export interface SummaryData {
    * muestra silenciosamente recortada es un número inventado, no un dato
    * omitido. Ver `DecodeTally` en `db.ts`.
    */
-  unreadableCount: number;  /**
+  unreadableCount: number;
+
+  /**
    * Cuánto mirar hacia atrás por dosis que siguen actuando, en minutos
    * (2026-08-25). Sale de la insulina que la usuaria eligió en Ajustes
    * (`rapidInsulinLookbackMinutes` en `packages/domain`). `undefined`
    * mientras no haya elegido: sin dato no se excluye por una suposición.
    */
   rapidLookbackMinutes?: number | undefined;
+  /** Ídem para la basal, que dura 24-42 h en vez de 5. Ver `insulin-catalog.ts`. */
+  basalLookbackMinutes?: number | undefined;
 }
 
 /**
@@ -66,6 +70,8 @@ export interface ReportExport {
    * mientras no haya elegido: sin dato no se excluye por una suposición.
    */
   rapidLookbackMinutes?: number | undefined;
+  /** Ídem para la basal, que dura 24-42 h en vez de 5. Ver `insulin-catalog.ts`. */
+  basalLookbackMinutes?: number | undefined;
   /**
    * Qué insulinas usa, para el encabezado del reporte (2026-08-25). El
    * equipo clínico necesita saberlo: la misma curva significa cosas
@@ -107,6 +113,8 @@ export interface NutritionDayData {
    * mientras no haya elegido: sin dato no se excluye por una suposición.
    */
   rapidLookbackMinutes?: number | undefined;
+  /** Ídem para la basal, que dura 24-42 h en vez de 5. Ver `insulin-catalog.ts`. */
+  basalLookbackMinutes?: number | undefined;
   unreadableCount: number;
 }
 
@@ -244,7 +252,14 @@ export interface TimelineEntryGroupRaw {
   proteinG?: number;
   fatG?: number;
   fiberG?: number;
-  /** Foto de la comida del grupo, si la tiene. Solo lectura en el editor. */
+  /**
+   * Foto de la comida del grupo, si la tiene.
+   *
+   * Se lee ya, pero **todavía no se muestra ni se puede cambiar**: editar con
+   * foto es lo único que quedó pendiente de la Fase 21 (ver el roadmap). Está
+   * acá para que la corrida que lo construya no tenga que tocar también la
+   * capa de lectura.
+   */
   imageUri?: string;
   rapidUnits?: number;
   basalUnits?: number;

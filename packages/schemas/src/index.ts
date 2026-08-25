@@ -111,8 +111,13 @@ export const TherapyProfileSchema = z.object({
   // silencioso excluiría episodios por una suposición que nadie confirmó.
   rapidInsulinId: z.string().trim().max(40).optional(),
   basalInsulinId: z.string().trim().max(40).optional(),
-  rapidInsulinDurationHours: z.number().positive().finite().max(72).optional(),
-  basalInsulinDurationHours: z.number().positive().finite().max(72).optional(),
+  // `.min(1)` y no solo `.positive()`: el mismo piso que
+  // `MIN_INSULIN_DURATION_HOURS` en `packages/domain`. La UI ya lo validaba y
+  // el esquema no, así que un camino de guardado que se saltara la UI (el
+  // flujo de primer uso, una restauración) podía persistir 0,5 h — un valor
+  // que después la propia pantalla de Ajustes marca en rojo.
+  rapidInsulinDurationHours: z.number().min(1).finite().max(72).optional(),
+  basalInsulinDurationHours: z.number().min(1).finite().max(72).optional(),
 });
 export type TherapyProfile = z.infer<typeof TherapyProfileSchema>;
 

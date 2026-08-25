@@ -114,7 +114,9 @@ export function InsulinPicker({
       {chosen === undefined ? (
         <Text style={styles.hint}>
           Sin elegir, la app no supone ninguna: los patrones se calculan igual, solo que sin descartar los
-          tramos donde otra dosis pudo estar actuando.
+          tramos donde otra dosis pudo estar actuando. Al elegirla, esos tramos se descartan — así que
+          algunos promedios pueden pasar a mostrar menos muestras, o quedarse sin las suficientes para
+          mostrarse.
         </Text>
       ) : (
         <>

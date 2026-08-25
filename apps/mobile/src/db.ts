@@ -407,14 +407,28 @@ async function updateMealCarbsAndNoteRows(
     proteinG: updates.proteinG,
     fatG: updates.fatG,
     fiberG: updates.fiberG,
-    // Si la usuaria escribió un macro a mano, la procedencia deja de ser
-    // "tal cual lo estimó la IA". No distinguir esto haría que el reporte
-    // presentara como estimación de IA algo que ella corrigió.
+    // Procedencia de los macros. Corregido 2026-08-25 tras la revisión de
+    // seguridad — la versión anterior mentía en las dos direcciones:
+    //
+    //  - `'user' → 'mixed'` decía que la IA los había precargado cuando ella
+    //    los había pesado y escrito. Sub-reporta lo que de verdad midió.
+    //  - `undefined → 'user'` era la peligrosa: una comida vieja de
+    //    procedencia desconocida, con UN macro editado, quedaba etiquetada
+    //    como si ella hubiera escrito los tres a mano. El comentario de
+    //    `MealEventSchema` lo prohíbe explícitamente: ausente significa
+    //    "procedencia desconocida" y **nunca se asume "confirmado por la
+    //    usuaria"**.
+    //
+    // Regla: desconocido se queda desconocido; lo que era de ella sigue
+    // siendo de ella; y solo lo que la IA precargó pasa a `'mixed'` al
+    // corregirse. Misma lógica campo a campo que `MealEditModal`.
     ...(updates.proteinG === existing.proteinG
       && updates.fatG === existing.fatG
       && updates.fiberG === existing.fiberG
       ? {}
-      : { macrosSource: existing.macrosSource === undefined ? 'user' : 'mixed' }),
+      : existing.macrosSource === undefined
+        ? {}
+        : { macrosSource: existing.macrosSource === 'user' ? 'user' : 'mixed' }),
   });
   await db.runAsync('UPDATE meal_events SET payload = ? WHERE id = ?', JSON.stringify(next), id);
   await syncConfirmedCarbRow(db, existing, next.confirmedCarbsG);
@@ -688,6 +702,8 @@ export async function saveMealWithEpisode(db: SQLiteDatabase, meal: MealEvent): 
  */
 const InsulinUnitsSchema = InsulinEventSchema.shape.units;
 const CarbGramsSchema = CarbEventSchema.shape.carbsG;
+/** Gramos de un macro, con el mismo límite que `MealEventSchema`. */
+const MacroGramsSchema = MealEventSchema.shape.proteinG.unwrap();
 const GlucoseValueSchema = CGMReadingSchema.shape.glucose;
 
 export interface UnifiedEntryInput {
@@ -870,8 +886,26 @@ export async function updateUnifiedEntryGroup(
   if (input.basalUnits !== undefined) InsulinUnitsSchema.parse(input.basalUnits);
   if (input.carbsG !== undefined) CarbGramsSchema.parse(input.carbsG);
   if (input.manualGlucose !== undefined) GlucoseValueSchema.parse(input.manualGlucose);
+  // Los macros también se validan acá, como todo lo demás: `AGENTS.md` manda
+  // validar toda entrada externa con Zod, y este era el único campo numérico
+  // del grupo que llegaba a la base sin pasar por un esquema.
+  for (const macro of [input.proteinG, input.fatG, input.fiberG]) {
+    if (macro !== undefined) MacroGramsSchema.parse(macro);
+  }
 
-  const hasMeal = input.carbsG !== undefined || input.description !== undefined;
+  // ⚠️ Los macros y la foto CUENTAN para decidir si hay comida (corregido
+  // 2026-08-25 tras la revisión de seguridad). Cuando esto es falso, más
+  // abajo se **borra la fila de la comida entera**: vaciar los carbohidratos
+  // de una entrada keto que tenía proteína, grasa, nota y análisis de IA
+  // borraba todo eso en silencio, y el formulario decía que había guardado
+  // bien. El camino de creación (`saveUnifiedEntry`) ya contaba `imageUri`,
+  // así que además los dos estaban en desacuerdo.
+  const hasMeal = input.carbsG !== undefined
+    || input.description !== undefined
+    || input.imageUri !== undefined
+    || input.proteinG !== undefined
+    || input.fatG !== undefined
+    || input.fiberG !== undefined;
   const outcome: UnifiedEntryOutcome = {
     episodeId: null,
     savedGlucose: false,

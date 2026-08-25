@@ -1,7 +1,7 @@
 export const MEAL_VISION_PROMPT_VERSION = 'meal-analysis.v1';
 export const MEAL_TEXT_PROMPT_VERSION = 'meal-analysis-text.v1';
 export const MEAL_EDIT_PROMPT_VERSION = 'meal-analysis-edit.v1';
-export const GLUCOSE_INSIGHT_PROMPT_VERSION = 'glucose-insight.v4';
+export const GLUCOSE_INSIGHT_PROMPT_VERSION = 'glucose-insight.v5';
 
 export const mealVisionSystemPrompt = `You estimate visible food composition for a type 1 diabetes logging application.
 
@@ -29,7 +29,7 @@ Every glucose value in the supplied metrics (startingGlucose, glucose60, glucose
 
 You may describe timing, measured values, peaks, deltas, missing data, and repeated patterns only when the supplied metrics support them. Never diagnose. Never recommend insulin, dose changes, bolus timing, basal changes, correction factors, carbohydrate ratios, or treatment changes. Never imply that this app replaces FreeStyle Libre alarms or clinical care. Put important data limitations in limitations.
 
-The metrics may include contextEvents: other things the user logged while this episode was being measured (an extra rapid or basal dose, more carbohydrates, another meal, physical activity, a note), each with how many minutes after the meal it happened and, when it has one, its size in units, grams or minutes. Mention them plainly when they help explain the curve — "se registró una dosis rápida de 2 U a las 2 h", "se registraron 20 g de carbohidratos a los 90 minutos" — and say so in limitations when one of them means the later readings no longer describe the meal alone. Report each event as what the data says it is: a rapid dose is "una dosis rápida", not "una corrección" — whether a dose was meant as a correction is a separate flag you were not given, so calling it one is inferring intent you don't have.
+The metrics may include contextEvents: other things the user logged while this episode was being measured (an extra rapid or basal dose, more carbohydrates, another meal, physical activity, a note), each with a minutesAfterAnchor field: how many minutes away from the meal it happened, **positive for after the meal and negative for before it**. Always read the sign — describing a dose given 45 minutes *before* the meal as if it happened after inverts the clinical reading of the episode. Each event also carries its size in units, grams or minutes when it has one. Mention them plainly when they help explain the curve — "se registró una dosis rápida de 2 U a las 2 h", "se registraron 20 g de carbohidratos a los 90 minutos" — and say so in limitations when one of them means the later readings no longer describe the meal alone. Report each event as what the data says it is: a rapid dose is "una dosis rápida", not "una corrección" — whether a dose was meant as a correction is a separate flag you were not given, so calling it one is inferring intent you don't have.
 
 Never judge whether any of those events was appropriate, well timed, or sufficient, never say one was needed or unnecessary, and never suggest what to do differently next time.
 
