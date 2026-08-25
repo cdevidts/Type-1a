@@ -151,6 +151,12 @@ export interface NutritionInsightsInput {
    * que una caminata a las 2 h invalide el "% en rango" de esa dosis.
    */
   activity?: readonly ActivityEvent[];
+  /**
+   * Cuánto mirar hacia atrás por dosis que siguen actuando, en minutos
+   * (2026-08-25). Sale de la insulina elegida en Ajustes; sin elegir,
+   * `undefined` y no se mira hacia atrás. Ver `insulin-catalog.ts`.
+   */
+  rapidLookbackMinutes?: number | undefined;
 }
 
 /**
@@ -300,6 +306,7 @@ export function buildNutritionInsights(input: NutritionInsightsInput): MealWindo
           carbs: input.carbs,
           meals: input.meals,
           ...(input.activity === undefined ? {} : { activity: input.activity }),
+          ...(input.rapidLookbackMinutes === undefined ? {} : { lookbackMinutes: input.rapidLookbackMinutes }),
         })) continue;
         const targetMs = Date.parse(dose.timestamp) + horizonHours * 60 * 60_000;
         const point = readingNear(series, targetMs);

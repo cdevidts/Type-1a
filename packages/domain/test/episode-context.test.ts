@@ -244,3 +244,65 @@ describe('la fila espejo de una comida no se cuenta dos veces', () => {
     expect(events.map((event) => event.kind)).toEqual(['meal', 'carbs']);
   });
 });
+
+describe('lookbackMinutes — dosis anterior que sigue actuando (2026-08-25)', () => {
+  it('sin lookback, una dosis anterior no confunde (comportamiento previo)', () => {
+    expect(hasConfoundingEvent({
+      anchorTimestamp: MEAL_AT,
+      windowMinutes: 180,
+      insulin: [insulin({ id: 'anterior', timestamp: at(-45) })],
+    })).toBe(false);
+  });
+
+  it('con lookback, una dosis dentro de su duración sí confunde', () => {
+    expect(hasConfoundingEvent({
+      anchorTimestamp: MEAL_AT,
+      windowMinutes: 180,
+      lookbackMinutes: 300,
+      insulin: [insulin({ id: 'anterior', timestamp: at(-45) })],
+    })).toBe(true);
+  });
+
+  it('una dosis más vieja que la duración de la insulina ya no confunde', () => {
+    expect(hasConfoundingEvent({
+      anchorTimestamp: MEAL_AT,
+      windowMinutes: 180,
+      lookbackMinutes: 300,
+      insulin: [insulin({ id: 'vieja', timestamp: at(-360) })],
+    })).toBe(false);
+  });
+
+  it('el lookback NO aplica a comida ni actividad: no hay ficha técnica equivalente', () => {
+    expect(hasConfoundingEvent({
+      anchorTimestamp: MEAL_AT,
+      windowMinutes: 180,
+      lookbackMinutes: 300,
+      carbs: [carbs('antes', at(-60))],
+      meals: [meal('antes', at(-90))],
+      activity: [activity('antes', at(-30))],
+    })).toBe(false);
+  });
+
+  it('el bolo propio, aunque sea anterior, sigue ignorándose por id', () => {
+    // Pre-bolear 20 min antes es normal: si el lookback lo contara, toda
+    // comida bien pre-boleada quedaría confundida.
+    expect(hasConfoundingEvent({
+      anchorTimestamp: MEAL_AT,
+      windowMinutes: 180,
+      lookbackMinutes: 300,
+      insulin: [insulin({ id: 'su-bolo', timestamp: at(-20) })],
+      ignoreIds: ['su-bolo'],
+    })).toBe(false);
+  });
+
+  it('una dosis anterior aparece en el contexto descriptivo con minutos negativos', () => {
+    const events = collectEpisodeContext({
+      anchorTimestamp: MEAL_AT,
+      windowMinutes: 180,
+      lookbackMinutes: 300,
+      insulin: [insulin({ id: 'anterior', timestamp: at(-45) })],
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.minutesAfterAnchor).toBe(-45);
+  });
+});

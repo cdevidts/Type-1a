@@ -152,6 +152,14 @@ export function buildMacroGlucoseComparison(input: {
   insulin?: readonly InsulinEvent[];
   carbs?: readonly CarbEvent[];
   activity?: readonly ActivityEvent[];
+  /**
+   * Cuánto mirar hacia atrás por dosis que siguen actuando, en minutos
+   * (2026-08-25). Sale de la insulina que la usuaria eligió en Ajustes —
+   * `rapidInsulinLookbackMinutes(profile)` en `insulin-catalog.ts`. Sin
+   * elegir, `undefined`: no se mira hacia atrás y no se excluye por una
+   * suposición.
+   */
+  rapidLookbackMinutes?: number | undefined;
 }): MacroGlucoseComparison | null {
   const eligible: EligibleMeal[] = input.meals
     .filter((meal) => meal.fatG !== undefined && meal.proteinG !== undefined)
@@ -184,6 +192,7 @@ export function buildMacroGlucoseComparison(input: {
             ...(input.insulin === undefined ? {} : { insulin: input.insulin }),
             ...(input.carbs === undefined ? {} : { carbs: input.carbs }),
             ...(input.activity === undefined ? {} : { activity: input.activity }),
+            ...(input.rapidLookbackMinutes === undefined ? {} : { lookbackMinutes: input.rapidLookbackMinutes }),
             meals: input.meals,
           }),
       };

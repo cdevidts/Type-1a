@@ -5,6 +5,11 @@ import * as Sharing from 'expo-sharing';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import type { LibreLinkUpRegion } from '@type1a/cgm';
+import {
+  isPlausibleInsulinDuration,
+  MAX_INSULIN_DURATION_HOURS,
+  MIN_INSULIN_DURATION_HOURS,
+} from '@type1a/domain';
 import type { CGMProviderStatus, TherapyProfile } from '@type1a/schemas';
 
 import { API_BASE_URL } from '../api';
@@ -20,6 +25,7 @@ import {
   testSensorCredentials,
 } from '../sensorConnection';
 import { colors, radius, spacing } from '../theme';
+import { InsulinPicker, InsulinPickerSafetyNote, insulinProfileFields, type InsulinSelection } from './InsulinPicker';
 import type { ReminderAlertStyle, ReportExport } from '../types';
 import { ModalShell } from './ModalShell';
 
@@ -198,6 +204,14 @@ export function SettingsModal({
   const [factorInput, setFactorInput] = useState(therapyConfigured ? String(profile.correctionFactor) : '');
   const [incrementInput, setIncrementInput] = useState(therapyConfigured ? String(profile.doseIncrement) : '');
   const [carbRatioInput, setCarbRatioInput] = useState(profile.carbRatio === undefined ? '' : String(profile.carbRatio));
+  const [rapidInsulin, setRapidInsulin] = useState<InsulinSelection>({
+    id: profile.rapidInsulinId,
+    durationHours: profile.rapidInsulinDurationHours,
+  });
+  const [basalInsulin, setBasalInsulin] = useState<InsulinSelection>({
+    id: profile.basalInsulinId,
+    durationHours: profile.basalInsulinDurationHours,
+  });
   const [therapyBusy, setTherapyBusy] = useState(false);
   const [therapyMessage, setTherapyMessage] = useState<string | null>(null);
 
@@ -311,6 +325,16 @@ export function SettingsModal({
       setTherapyMessage('Revisa objetivo, factor e incremento (máximo 1 U). Carbs por unidad es opcional, pero si lo llenas debe ser un número positivo.');
       return;
     }
+    // Una duración escrita a mano fuera de rango se rechaza en vez de
+    // guardarse: con 0,5 h ningún episodio se excluiría nunca y con 200 h
+    // ninguno quedaría limpio, y en los dos casos la pantalla de patrones
+    // cambiaría sin explicación.
+    for (const selection of [rapidInsulin, basalInsulin]) {
+      if (selection.durationHours !== undefined && !isPlausibleInsulinDuration(selection.durationHours)) {
+        setTherapyMessage(`La duración de la insulina debe estar entre ${MIN_INSULIN_DURATION_HOURS} y ${MAX_INSULIN_DURATION_HOURS} horas.`);
+        return;
+      }
+    }
     setTherapyBusy(true);
     setTherapyMessage(null);
     try {
@@ -318,7 +342,17 @@ export function SettingsModal({
       // that case already returned above), so this correctly clears a
       // previously-set value when the field is emptied, not just "leaves
       // the old value alone".
-      await onSaveProfile({ ...profile, targetGlucose, correctionFactor, doseIncrement, carbRatio: carbRatio ?? undefined });
+      await onSaveProfile({
+        ...profile,
+        targetGlucose,
+        correctionFactor,
+        doseIncrement,
+        carbRatio: carbRatio ?? undefined,
+        // La insulina elegida se guarda junto con el resto del perfil, con un
+        // solo botón: dos "Guardar" en la misma pantalla es la forma más
+        // fácil de que alguien cambie una cosa y pierda la otra.
+        ...insulinProfileFields(rapidInsulin, basalInsulin),
+      });
       setTherapyMessage('Parámetros guardados.');
     } catch (error) {
       logSaveError('SettingsModal.saveTherapy', error);
@@ -787,6 +821,14 @@ export function SettingsModal({
             <TherapyField label="Carbs por unidad" unit="g/U" value={carbRatioInput} onChange={setCarbRatioInput} />
           </View>
           <Text style={styles.hint}>"Carbs por unidad" es opcional — déjalo vacío si aún no lo tienes definido con tu equipo clínico. Se usa para el registro combinado de comida + corrección.</Text>
+          <Text style={styles.sectionTitle}>Tus insulinas</Text>
+          <Text style={styles.copy}>
+            Cuál usas y cuánto dura. Sirve para leer mejor tus patrones — no para calcular dosis.
+          </Text>
+          <InsulinPicker category="rapid" selection={rapidInsulin} onChange={setRapidInsulin} />
+          <InsulinPicker category="basal" selection={basalInsulin} onChange={setBasalInsulin} />
+          <InsulinPickerSafetyNote />
+
           <Pressable style={[styles.connectButton, therapyBusy && styles.disabled]} disabled={therapyBusy} onPress={() => { void saveTherapy(); }}>
             <Text style={styles.connectText}>Guardar parámetros de terapia</Text>
           </Pressable>

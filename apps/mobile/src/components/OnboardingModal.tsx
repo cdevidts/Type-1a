@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { colors, radius, spacing } from '../theme';
+import { InsulinPicker, InsulinPickerSafetyNote, type InsulinSelection } from './InsulinPicker';
 
 /**
  * Flujo de primer uso (Fase 13, ítem 10).
@@ -31,6 +32,18 @@ interface Step {
   body: string;
   bullets?: string[];
   warning?: string;
+  /**
+   * `'insulin'` renderiza el selector de insulinas debajo del texto. Es el
+   * único paso interactivo del flujo, y es una excepción consciente a la
+   * regla de arriba de "no pedir parámetros de terapia acá".
+   *
+   * La diferencia es real, no una excusa: **qué insulina usas es un hecho
+   * sobre ti, no un número que la app te propone.** Elegir "NovoRapid" de una
+   * lista no es confirmar de un toque un objetivo de glucosa prellenado. La
+   * duración que aparece es el dato de la ficha técnica del fabricante, y
+   * nada viene preseleccionado.
+   */
+  kind?: 'insulin';
 }
 
 const STEPS: Step[] = [
@@ -102,6 +115,14 @@ const STEPS: Step[] = [
       'Las metas de alimentación son una referencia calculada con ecuaciones poblacionales, no una indicación médica — y menos si vas a bajar de peso usando insulina. Eso se decide con tu equipo clínico.',
   },
   {
+    title: '¿Qué insulinas usas?',
+    body:
+      'Elige las tuyas. Type 1A lo usa para leer mejor tus patrones: cuando una dosis anterior todavía podía estar actuando, ese tramo no se promedia como si fuera limpio.',
+    kind: 'insulin',
+    warning:
+      'Esto no calcula insulina activa ni entra en ninguna calculadora de dosis. Puedes saltarlo ahora y elegirlas después en Ajustes → Terapia.',
+  },
+  {
     title: 'Falta un paso, y lo das tú',
     body:
       'Las calculadoras de dosis quedan bloqueadas hasta que cargues tus parámetros en Ajustes → Terapia: objetivo, factor de corrección e incremento de la pluma.',
@@ -110,8 +131,23 @@ const STEPS: Step[] = [
   },
 ];
 
-export function OnboardingModal({ visible, onFinish }: { visible: boolean; onFinish: () => void }) {
+export function OnboardingModal({
+  visible,
+  onFinish,
+  onSaveInsulins,
+}: {
+  visible: boolean;
+  onFinish: () => void;
+  /**
+   * Persiste lo elegido en el paso de insulinas. Se llama al avanzar de ese
+   * paso, no al final: si alguien cierra la app a mitad del flujo, lo que ya
+   * eligió no se pierde.
+   */
+  onSaveInsulins: (rapid: InsulinSelection, basal: InsulinSelection) => Promise<void>;
+}) {
   const [index, setIndex] = useState(0);
+  const [rapidInsulin, setRapidInsulin] = useState<InsulinSelection>({});
+  const [basalInsulin, setBasalInsulin] = useState<InsulinSelection>({});
   if (!visible) return null;
 
   const step = STEPS[index]!;
@@ -130,6 +166,13 @@ export function OnboardingModal({ visible, onFinish }: { visible: boolean; onFin
               <Text style={styles.bulletText}>{bullet}</Text>
             </View>
           ))}
+          {step.kind === 'insulin' ? (
+            <>
+              <InsulinPicker category="rapid" selection={rapidInsulin} onChange={setRapidInsulin} />
+              <InsulinPicker category="basal" selection={basalInsulin} onChange={setBasalInsulin} />
+              <InsulinPickerSafetyNote />
+            </>
+          ) : null}
           {step.warning === undefined ? null : (
             <View style={styles.warningBox}>
               <Text style={styles.warningText}>{step.warning}</Text>
@@ -159,10 +202,19 @@ export function OnboardingModal({ visible, onFinish }: { visible: boolean; onFin
             )}
             <Pressable
               style={styles.primaryButton}
-              onPress={() => { if (isLast) onFinish(); else setIndex((current) => current + 1); }}
+              onPress={() => {
+                // Guardar antes de avanzar. Si falla, no se bloquea el flujo:
+                // el onboarding no puede dejar a alguien encerrado, y las
+                // insulinas se pueden elegir después en Ajustes.
+                if (step.kind === 'insulin') void onSaveInsulins(rapidInsulin, basalInsulin);
+                if (isLast) onFinish();
+                else setIndex((current) => current + 1);
+              }}
               accessibilityRole="button"
             >
-              <Text style={styles.primaryText}>{isLast ? 'Empezar' : 'Continuar'}</Text>
+              <Text style={styles.primaryText}>
+                {isLast ? 'Empezar' : step.kind === 'insulin' && rapidInsulin.id === undefined && basalInsulin.id === undefined ? 'Saltar por ahora' : 'Continuar'}
+              </Text>
             </Pressable>
           </View>
         </View>

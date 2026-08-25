@@ -429,6 +429,7 @@ export function reportHtml(data: ReportExport, rangeLabel: string): string {
     insulin: data.insulin,
     carbs: data.carbs,
     activity: data.activity,
+    ...(data.rapidLookbackMinutes === undefined ? {} : { rapidLookbackMinutes: data.rapidLookbackMinutes }),
   });
   const dayBuckets = groupReadingsByDay(data.readings);
   const chartsSection = dayBuckets.length === 0
@@ -534,6 +535,7 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
     insulin: data.insulin,
     carbs: data.carbs,
     activity: data.activity,
+    ...(data.rapidLookbackMinutes === undefined ? {} : { rapidLookbackMinutes: data.rapidLookbackMinutes }),
   });
   const outcomeCell = (window: MealWindowInsight, hours: number): string => {
     const found = window.outcomes.find((o) => o.horizonHours === hours);

@@ -30,7 +30,13 @@ export interface SummaryData {
    * muestra silenciosamente recortada es un número inventado, no un dato
    * omitido. Ver `DecodeTally` en `db.ts`.
    */
-  unreadableCount: number;
+  unreadableCount: number;  /**
+   * Cuánto mirar hacia atrás por dosis que siguen actuando, en minutos
+   * (2026-08-25). Sale de la insulina que la usuaria eligió en Ajustes
+   * (`rapidInsulinLookbackMinutes` en `packages/domain`). `undefined`
+   * mientras no haya elegido: sin dato no se excluye por una suposición.
+   */
+  rapidLookbackMinutes?: number | undefined;
 }
 
 /**
@@ -53,6 +59,13 @@ export interface ReportExport {
   meals: MealEvent[];
   /** Solo para descartar episodios confundidos (Fase 23). No se promedia. */
   activity: ActivityEvent[];
+  /**
+   * Cuánto mirar hacia atrás por dosis que siguen actuando, en minutos
+   * (2026-08-25). Sale de la insulina que la usuaria eligió en Ajustes
+   * (`rapidInsulinLookbackMinutes` en `packages/domain`). `undefined`
+   * mientras no haya elegido: sin dato no se excluye por una suposición.
+   */
+  rapidLookbackMinutes?: number | undefined;
   /** Ver la nota homónima en `SummaryData`. El reporte lo declara al médico. */
   unreadableCount: number;
 }
@@ -78,6 +91,13 @@ export interface NutritionDayData {
   patternCarbs: CarbEvent[];
   patternActivity: ActivityEvent[];
   readings: CGMReading[];
+  /**
+   * Cuánto mirar hacia atrás por dosis que siguen actuando, en minutos
+   * (2026-08-25). Sale de la insulina que la usuaria eligió en Ajustes
+   * (`rapidInsulinLookbackMinutes` en `packages/domain`). `undefined`
+   * mientras no haya elegido: sin dato no se excluye por una suposición.
+   */
+  rapidLookbackMinutes?: number | undefined;
   unreadableCount: number;
 }
 

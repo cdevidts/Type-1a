@@ -68,6 +68,12 @@ export const EPISODE_GRACE_MINUTES = 15;
  */
 const MEAL_KINDS: ReadonlySet<EpisodeContextEvent['kind']> = new Set(['meal', 'carbs']);
 
+/** Las clases a las que aplica `lookbackMinutes` (mirar hacia atrás). */
+const INSULIN_KINDS: ReadonlySet<EpisodeContextEvent['kind']> = new Set([
+  'rapid_insulin',
+  'basal_insulin',
+]);
+
 /**
  * Qué clase de evento puede **confundir** una correlación, y cuál es solo
  * contexto.
@@ -103,6 +109,19 @@ export interface EpisodeContextInput {
    * ni a actividad.
    */
   mealGraceMinutes?: number;
+  /**
+   * Cuánto mirar **hacia atrás** para la insulina, en minutos.
+   *
+   * Sale de la duración de la insulina que la usuaria eligió en Ajustes
+   * (`rapidInsulinLookbackMinutes` en `insulin-catalog.ts`), nunca de una
+   * suposición de la app. `undefined` = no mirar hacia atrás, que es el
+   * comportamiento correcto mientras no haya elegido: sin dato no se excluye
+   * por una suposición que nadie confirmó.
+   *
+   * Solo aplica a insulina. Para comida, carbohidratos y actividad no hay un
+   * número de ficha técnica equivalente, así que no se inventa uno.
+   */
+  lookbackMinutes?: number;
   insulin?: readonly InsulinEvent[];
   carbs?: readonly CarbEvent[];
   meals?: readonly MealEvent[];
@@ -184,14 +203,27 @@ export function collectEpisodeContext(input: EpisodeContextInput): EpisodeContex
     ? baseGraceMs
     : input.mealGraceMinutes * 60_000;
   const windowEndMs = anchorMs + input.windowMinutes * 60_000;
+  const lookbackMs = input.lookbackMinutes === undefined || input.lookbackMinutes <= 0
+    ? undefined
+    : input.lookbackMinutes * 60_000;
   const ignore = new Set(input.ignoreIds ?? []);
 
   return candidatesFrom(input)
     .filter((candidate) => !ignore.has(candidate.id))
     .map((candidate) => ({ candidate, atMs: Date.parse(candidate.timestamp) }))
     .filter(({ candidate, atMs }) => {
+      if (!Number.isFinite(atMs)) return false;
+      // Hacia atrás, solo insulina y solo si la usuaria configuró su
+      // duración. Una dosis que empezó antes del ancla y sigue actuando
+      // contamina la curva igual que una posterior — era la limitación
+      // conocida de la Fase 23, y se cierra con un dato elegido, no supuesto.
+      if (atMs < anchorMs) {
+        if (lookbackMs === undefined) return false;
+        if (!INSULIN_KINDS.has(candidate.kind)) return false;
+        return atMs >= anchorMs - lookbackMs;
+      }
       const graceMs = MEAL_KINDS.has(candidate.kind) ? mealGraceMs : baseGraceMs;
-      return Number.isFinite(atMs) && atMs > anchorMs + graceMs && atMs <= windowEndMs;
+      return atMs > anchorMs + graceMs && atMs <= windowEndMs;
     })
     .sort((a, b) => a.atMs - b.atMs)
     .map(({ candidate, atMs }) => ({
@@ -211,13 +243,19 @@ export function collectEpisodeContext(input: EpisodeContextInput): EpisodeContex
  * llama una vez por comida y por horizonte.
  */
 /**
- * ⚠️ **Limitación conocida: la ventana mira solo hacia adelante.** Un evento
- * ANTERIOR al ancla nunca confunde, aunque siga actuando — una dosis rápida
- * 45 min antes de la que se está midiendo contamina su curva igual que una
- * posterior. Mirarlo hacia atrás obliga a asumir cuánto dura la insulina
- * rápida en esta persona, y eso es un parámetro de terapia: `AGENTS.md`
- * prohíbe que la app lo infiera. Queda documentado y pendiente de decisión,
- * no resuelto a ojo. Ver `docs/ROADMAP_V0.2.md` § Fase 23.
+ * **Hacia atrás solo con `lookbackMinutes`, y solo para insulina.**
+ *
+ * Una dosis anterior al ancla que todavía está actuando contamina la curva
+ * igual que una posterior. Esto era la limitación conocida de la Fase 23 y se
+ * cerró el 2026-08-25: la ventana hacia atrás sale de **la insulina que la
+ * usuaria eligió en Ajustes** y su duración de ficha técnica
+ * (`insulin-catalog.ts`), no de una suposición de la app — que es lo que
+ * `AGENTS.md` prohíbe al decir "never infer therapy parameters".
+ *
+ * Mientras no haya elegido, `lookbackMinutes` es `undefined` y no se mira
+ * hacia atrás: sin dato es preferible no excluir a excluir por una
+ * suposición. Comida, carbohidratos y actividad siguen contando solo hacia
+ * adelante, porque para ellos no hay un número de ficha técnica equivalente.
  */
 export function hasConfoundingEvent(input: EpisodeContextInput): boolean {
   return collectEpisodeContext(input).some((event) => CONFOUNDING_KINDS.has(event.kind));

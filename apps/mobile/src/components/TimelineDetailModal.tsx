@@ -29,23 +29,30 @@ const sourceLabel: Record<string, string> = {
  * lleva, justamente para que no salga del teléfono.
  */
 function contextEventLabel(event: EpisodeContextEvent): string {
-  const hours = Math.floor(event.minutesAfterAnchor / 60);
-  const minutes = event.minutesAfterAnchor % 60;
-  const when = hours === 0 ? `${minutes} min` : minutes === 0 ? `${hours} h` : `${hours} h ${minutes} min`;
+  // Negativo = antes del ancla. Pasa desde el 2026-08-25: con la duración de
+  // insulina configurada, una dosis anterior que sigue actuando entra al
+  // contexto. Sin este signo decía "-1 h -30 min después", que además de feo
+  // se leía al revés.
+  const before = event.minutesAfterAnchor < 0;
+  const total = Math.abs(event.minutesAfterAnchor);
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  const span = hours === 0 ? `${minutes} min` : minutes === 0 ? `${hours} h` : `${hours} h ${minutes} min`;
+  const when = `${span} ${before ? 'antes' : 'después'}`;
   const amount = event.amount;
   switch (event.kind) {
     case 'rapid_insulin':
-      return `Insulina rápida${amount === undefined ? '' : ` ${amount} U`} · ${when} después`;
+      return `Insulina rápida${amount === undefined ? '' : ` ${amount} U`} · ${when}`;
     case 'basal_insulin':
-      return `Insulina basal${amount === undefined ? '' : ` ${amount} U`} · ${when} después`;
+      return `Insulina basal${amount === undefined ? '' : ` ${amount} U`} · ${when}`;
     case 'carbs':
-      return `Carbohidratos${amount === undefined ? '' : ` ${amount} g`} · ${when} después`;
+      return `Carbohidratos${amount === undefined ? '' : ` ${amount} g`} · ${when}`;
     case 'meal':
-      return `Otra comida${amount === undefined ? '' : ` (${amount} g)`} · ${when} después`;
+      return `Otra comida${amount === undefined ? '' : ` (${amount} g)`} · ${when}`;
     case 'activity':
-      return `Actividad física${amount === undefined ? '' : ` ${amount} min`} · ${when} después`;
+      return `Actividad física${amount === undefined ? '' : ` ${amount} min`} · ${when}`;
     case 'note':
-      return `Nota registrada · ${when} después`;
+      return `Nota registrada · ${when}`;
   }
 }
 

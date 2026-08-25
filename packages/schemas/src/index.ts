@@ -97,6 +97,22 @@ export const TherapyProfileSchema = z.object({
   carbRatio: z.number().positive().finite().optional(),
   rapidInsulinName: z.string().trim().max(80).optional(),
   basalInsulinName: z.string().trim().max(80).optional(),
+  // Qué insulina usa la persona, elegida de `INSULIN_CATALOG` (domain), y
+  // cuánto dura según la ficha técnica del fabricante.
+  //
+  // ⚠️ Estos campos existen SOLO para higiene de datos: decidir si había otra
+  // dosis actuando dentro de la ventana de un episodio, y por lo tanto si ese
+  // episodio entra a un promedio descriptivo. **No son insulina activa (IOB)
+  // y no pueden alimentar ninguna calculadora de dosis** — `AGENTS.md`
+  // prohíbe IOB y dosificación automática en el MVP. Ver la cabecera de
+  // `packages/domain/src/insulin-catalog.ts`.
+  //
+  // Opcionales a propósito: sin elegir, no se supone ninguna. Un default
+  // silencioso excluiría episodios por una suposición que nadie confirmó.
+  rapidInsulinId: z.string().trim().max(40).optional(),
+  basalInsulinId: z.string().trim().max(40).optional(),
+  rapidInsulinDurationHours: z.number().positive().finite().max(72).optional(),
+  basalInsulinDurationHours: z.number().positive().finite().max(72).optional(),
 });
 export type TherapyProfile = z.infer<typeof TherapyProfileSchema>;
 
@@ -307,11 +323,14 @@ export type MealEvent = z.infer<typeof MealEventSchema>;
 export const EpisodeContextEventSchema = z.object({
   kind: z.enum(['rapid_insulin', 'basal_insulin', 'carbs', 'meal', 'activity', 'note']),
   timestamp: IsoTimestampSchema,
-  // `.positive()` y no solo `.int()`: `collectEpisodeContext` solo puede
-  // emitir valores posteriores al ancla, y dejar la invariante en el esquema
-  // la vuelve estructural en vez de incidental. Un negativo se renderizaría
-  // como "-1 h -30 min después" (ver `contextEventLabel`).
-  minutesAfterAnchor: z.number().int().finite().positive(),
+  // Negativo = **antes** del ancla, y es un caso legítimo desde el
+  // 2026-08-25: con `lookbackMinutes` una dosis anterior que sigue actuando
+  // entra al contexto. `contextEventLabel` lo renderiza como "antes" en vez
+  // de "después"; sin eso decía "-1 h -30 min después".
+  //
+  // El rango sigue acotado para que un dato corrupto no pase: ±72 h en
+  // minutos, el mismo techo que la duración máxima de una insulina.
+  minutesAfterAnchor: z.number().int().finite().min(-4320).max(4320),
   /** Unidades, gramos o minutos según `kind`. Descriptivo, nunca evaluado. */
   amount: z.number().nonnegative().finite().optional(),
 });

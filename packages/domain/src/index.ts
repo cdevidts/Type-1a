@@ -6,6 +6,7 @@ export * from './episode-context';
 export * from './freshness';
 export * from './glucose-metrics';
 export * from './glucose-thresholds';
+export * from './insulin-catalog';
 export * from './ketones';
 export * from './food-catalog';
 export * from './macro-glucose';

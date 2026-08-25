@@ -616,6 +616,7 @@ function PatternsTab({ data }: { data: NutritionDayData | null }) {
       insulin: data.patternInsulin,
       carbs: data.patternCarbs,
       activity: data.patternActivity,
+      ...(data.rapidLookbackMinutes === undefined ? {} : { rapidLookbackMinutes: data.rapidLookbackMinutes }),
     })),
     [data],
   );

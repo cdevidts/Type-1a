@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
-import { buildReportRows, catalogEntriesFrom, catalogEntryFromPortion, latestLiveReading, type CatalogFood } from '@type1a/domain';
+import { buildReportRows, catalogEntriesFrom, catalogEntryFromPortion, latestLiveReading, rapidInsulinLookbackMinutes, type CatalogFood } from '@type1a/domain';
 import type {
   CGMProviderStatus,
   CGMReading,
@@ -32,6 +32,7 @@ import type {
 import { registerBackgroundSync } from './src/backgroundSync';
 import { CorrectionModal } from './src/components/CorrectionModal';
 import { EntryModal, type UnifiedEntryDraft } from './src/components/EntryModal';
+import { insulinProfileFields } from './src/components/InsulinPicker';
 import { GlucoseCard } from './src/components/GlucoseCard';
 import { InsulinAssociationModal } from './src/components/InsulinAssociationModal';
 import type { MealEditResult } from './src/components/MealEditModal';
@@ -602,9 +603,20 @@ function Type1AApp() {
         // describa a la dosis. No entra en ningún promedio.
         getActivityEvents(db, range.from, range.to),
       ]);
-      return { readings, insulin, carbs, meals, activity, unreadableCount: tally.unreadable };
+      return {
+        readings,
+        insulin,
+        carbs,
+        meals,
+        activity,
+        // La insulina que eligió la usuaria decide cuánto se mira hacia atrás
+        // por dosis que siguen actuando. Sin elegir, `undefined`: no se
+        // excluye nada por una suposición de la app (AGENTS.md).
+        rapidLookbackMinutes: rapidInsulinLookbackMinutes(profile),
+        unreadableCount: tally.unreadable,
+      };
     },
-    [db],
+    [db, profile],
   );
 
   /**
@@ -640,9 +652,10 @@ function Type1AApp() {
       patternCarbs,
       patternActivity,
       readings,
+      rapidLookbackMinutes: rapidInsulinLookbackMinutes(profile),
       unreadableCount: tally.unreadable,
     };
-  }, [db]);
+  }, [db, profile]);
 
   async function exportReport(range: { from: Date; to: Date }): Promise<ReportExport> {
     const tally = createDecodeTally();
@@ -664,6 +677,9 @@ function Type1AApp() {
       // Ver la nota de `loadSummary`: solo para descartar confundidos.
       activity: activities,
       rows: buildReportRows({ readings, insulin, carbs, meals, activities, notes, vitals, hba1c }),
+      // El reporte va al control médico: los promedios que imprime tienen que
+      // excluir lo confundido con el mismo criterio que la app en pantalla.
+      rapidLookbackMinutes: rapidInsulinLookbackMinutes(profile),
       unreadableCount: tally.unreadable,
     };
   }
@@ -1105,6 +1121,22 @@ function Type1AApp() {
       <BottomNav active={activeDestination} onSelect={navigateTo} />
       <OnboardingModal
         visible={onboardingDone === false}
+        onSaveInsulins={async (rapid, basal) => {
+          // Guarda SOLO los campos de insulina sobre el perfil actual. No
+          // toca objetivo/factor/incremento ni marca el perfil como
+          // configurado: elegir tu insulina no es haber cargado tus
+          // parámetros de terapia, y las calculadoras siguen bloqueadas.
+          if (rapid.id === undefined && basal.id === undefined) return;
+          try {
+            const next = { ...profile, ...insulinProfileFields(rapid, basal) };
+            // `saveTherapyProfile` sin `markConfigured`: guarda el dato pero
+            // NO desbloquea las calculadoras de dosis.
+            await saveTherapyProfile(db, next);
+            setProfile(next);
+          } catch (error) {
+            logSaveError('App.onboardingInsulins', error);
+          }
+        }}
         onFinish={() => {
           setOnboardingDone(true);
           void setSetting(db, ONBOARDING_SEEN_KEY, 'true').catch((error: unknown) => {
