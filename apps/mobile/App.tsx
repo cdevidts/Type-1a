@@ -82,6 +82,7 @@ import {
   deleteMealEpisode,
   deleteMealEvent,
   deleteNoteEvent,
+  deleteVitalsEvent,
   deleteUnifiedEntryGroup,
   DEFAULT_CAPILLARY_REMINDER_SETTINGS,
   DEFAULT_CORRECTION_REMINDER_OFFSET_MINUTES,
@@ -983,6 +984,8 @@ function Type1AApp() {
       await deleteMealEpisode(db, item.id);
     } else if (item.kind === 'note') {
       await deleteNoteEvent(db, item.id);
+    } else if (item.kind === 'vitals') {
+      await deleteVitalsEvent(db, item.id);
     } else {
       await deleteUnifiedEntryGroup(db, item.id);
     }

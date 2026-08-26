@@ -32,6 +32,7 @@ import {
 } from '@type1a/schemas';
 
 import { hasMealContent, MEAL_FIELDS } from './mealFields';
+import { standaloneVitalsItems } from './timelineVitals';
 import { decodeRow, decodeTherapyProfileRow, safeJsonParse, tallyParsed, type DecodeTally, type TherapyProfileRead } from './rowDecode';
 import type { PendingInsulinAssociation, ReminderAlertStyle, StoredMealEpisode, TimelineItem } from './types';
 
@@ -1357,6 +1358,18 @@ export async function deleteNoteEvent(db: SQLiteDatabase, id: string): Promise<v
   await db.runAsync('DELETE FROM note_events WHERE id = ?', id);
 }
 
+/**
+ * Borra un registro de vitales suelto (cetonas, peso, presión).
+ *
+ * Solo alcanza a los que no pertenecen a una entrada empaquetada: los que sí
+ * se borran con su grupo, en `deleteUnifiedEntryGroup`. Existe desde que las
+ * cetonas sueltas se muestran en el timeline — un ítem que se ve y no se puede
+ * quitar es un callejón sin salida.
+ */
+export async function deleteVitalsEvent(db: SQLiteDatabase, id: string): Promise<void> {
+  await db.runAsync('DELETE FROM vitals_events WHERE id = ? AND entry_group_id IS NULL', id);
+}
+
 export async function getNoteEvents(db: SQLiteDatabase, from: Date, to: Date): Promise<NoteEvent[]> {
   const rows = await db.getAllAsync<{ payload: string }>(
     'SELECT payload FROM note_events WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp ASC',
@@ -1761,15 +1774,16 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
       'SELECT payload, entry_group_id FROM note_events ORDER BY timestamp DESC LIMIT ?',
       limit,
     ),
-    // Solo las que pertenecen a un grupo.
+    // **Todas**, con y sin grupo.
     //
-    // ⚠️ Las cetonas SUELTAS (las del acceso rápido, sin `entry_group_id`)
-    // **no se muestran en el timeline**, ni antes ni ahora: `getTimeline` no
-    // tiene ninguna rama para ellas. Un comentario anterior afirmaba lo
-    // contrario; se corrigió el 2026-08-26 para que la corrida siguiente no
-    // confíe en una garantía que no existe. Queda pendiente mostrarlas.
+    // El `WHERE entry_group_id IS NOT NULL` que había acá hasta el 2026-08-26
+    // hacía que las cetonas del acceso rápido se guardaran bien y no
+    // aparecieran en ninguna parte. Es el dato de triage de cetoacidosis: ella
+    // hacía el gesto de anotarlo, la app lo aceptaba, y después no estaba. Las
+    // agrupadas se muestran dentro de su entrada; las sueltas, como ítem
+    // propio (`standaloneVitalsItems`).
     db.getAllAsync<{ payload: string; entry_group_id: string | null }>(
-      'SELECT payload, entry_group_id FROM vitals_events WHERE entry_group_id IS NOT NULL ORDER BY timestamp DESC LIMIT ?',
+      'SELECT payload, entry_group_id FROM vitals_events ORDER BY timestamp DESC LIMIT ?',
       limit,
     ),
   ]);
@@ -1797,6 +1811,9 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
     if (!event.success) continue;
     groupFor(row.entry_group_id, event.data.timestamp).vitals = event.data;
   }
+  // Las sueltas van como ítem propio. El mapeo vive en un módulo puro para
+  // poder verificarlo sin teléfono: es donde estaba el hueco.
+  items.push(...standaloneVitalsItems(vitalsRows));
 
   for (const row of insulinRows) {
     const event = InsulinEventSchema.safeParse(safeJsonParse(row.payload));

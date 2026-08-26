@@ -1,98 +1,44 @@
 # Active Context
 
-_Última actualización: 2026-08-26 (Pecados Capitales 1 y 2 cerrados)._
+_Última actualización: 2026-08-26 (los tres Pecados Capitales cerrados)._
 
-## Migración de memoria agéntica — fusionada
+## Cerrado y fusionado (2026-08-26)
 
-Cerrada y en la rama principal. La memoria pasó de 16 documentos sueltos en
-`docs/` a cuatro capas con presupuesto verificado: Capa 0 (`CLAUDE.md` router +
-`AGENTS.md`, 83 líneas entre los dos), Capa 1 (`/contracts/`, lo que leen los
-skills), Capa 2 (`/memory-bank/`, con `index.md` de ruteo y `reference/` bajo
-demanda) y Capa 3 (`docs/adr/`, append-only). `verify:contracts` corre dentro de
-`pnpm verify` y rompe el build si un puntero queda muerto o una capa se pasa de
-su techo. El árbol viejo está en el commit `af6c865` — ver `index.md`.
+Cuatro hitos, todos en `main`. El detalle vive en los cuerpos de commit
+(`git log --format=full`), que son la bitácora real; acá queda solo lo que la
+corrida siguiente necesita saber.
 
-## Corrupción de datos de macros — cerrada
+- **Migración de memoria agéntica.** Cuatro capas con presupuesto verificado y
+  `verify:contracts` en `pnpm verify`. El árbol viejo, en el commit `af6c865`.
+- **Corrupción de datos de macros.** `macrosSource` se descartaba en un spread
+  sobre un tipo que no lo declaraba; una entrada de solo macros se perdía
+  entera diciendo "Entrada guardada". Los dos cerrados, con `mealFields.ts`
+  como única lista de qué es una comida.
+- **Pecado Capital 1.** `resolveMacrosSource()` en `packages/domain`; los
+  cuatro sitios que decidían procedencia por su cuenta la consumen.
+- **Pecado Capital 2.** `MacroFields.tsx` reemplazó seis copias del trío de
+  macros, y los `parseBlankAs*` de `format.ts`, 53 chequeos del blanco a mano.
 
-Rama `fix/macros-data-corruption`. Los dos hallazgos que escribían mal en cada
-uso están arreglados:
+## Pecado Capital 3 — cerrado
 
-1. **`macrosSource` se descartaba al crear una entrada.** `UnifiedEntryInput`
-   no declaraba el campo y `App.tsx` sí lo esparcía, así que se perdía en
-   silencio y los macros de la IA llegaban al PDF del control médico como "de
-   procedencia no registrada". Ahora el campo existe y `writeMealWithEpisode`
-   lo persiste.
-2. **Una entrada de solo macros se perdía entera** diciendo "Entrada guardada".
-   `hasMeal` de crear y el de editar eran dos booleanos distintos que ya se
-   habían desincronizado dos veces. Ahora hay **una sola lista**
-   (`src/mealFields.ts`, puro y con test) que usan los dos caminos.
+Las cetonas del acceso rápido ya se ven en el timeline. `getTimeline`
+consultaba `vitals_events WHERE entry_group_id IS NOT NULL` y no tenía rama
+para las sueltas: se guardaban bien y desaparecían. Es el dato de triage de
+cetoacidosis, así que la app aceptaba el gesto de anotarlo y después no estaba.
 
-**Lo que sigue abierto de ese lote** (cuatro hallazgos, en `progress.md`): la
-basal invisible al modelo de Patrones, `amount ?? 0` tratando una comida sin
-carbos confirmados como "no pasó nada", el aviso de fallo al registrar insulina
-que se pisa con un mensaje de éxito, y la insulina de comida escrita sin
-`entryGroupId`.
+- La banda clínica la decide `summarizeVitals` en `packages/domain` — es
+  `assessKetones`, no una decisión de pantalla.
+- El mapeo fila → ítem vive en `src/timelineVitals.ts`, puro y con test,
+  porque es exactamente donde estaba el hueco y `db.ts` no se puede verificar
+  sin teléfono.
+- **La banda va escrita en el texto**, no solo en el tono rojo.
+- Se agregó `deleteVitalsEvent`: un ítem que se ve y no se puede quitar es un
+  callejón sin salida. Solo alcanza a los que no tienen grupo.
 
----
-
-## Pecado Capital 1 — cerrado
-
-`resolveMacrosSource()` vive en `packages/domain/src/macros-source.ts`, pura y
-con 18 tests. Los cuatro sitios que decidían procedencia por su cuenta
-—`MealModal`, `MealEditModal`, `db.ts` y `macrosSourceFor` en `App.tsx`— la
-consumen y ninguno calcula nada. Cero lógica de procedencia en un `.tsx`.
-
-Las cuatro reglas quedaron escritas en un solo lugar: sin macros no hay
-procedencia; lo que escribe la usuaria gana sobre lo de la IA; **desconocido se
-queda desconocido**; y `'user'` no se degrada.
-
-Dos cosas que se arreglaron de paso, porque salieron al unificar:
-
-- **`'mixed'` que debía ser `'ai'`.** Desde que los campos se prellenan con lo
-  estimado por la IA, "el campo tiene valor" dejó de significar "ella lo
-  escribió". Ahora la comparación es contra el valor precargado, no contra la
-  ausencia de valor.
-- **`MealEditModal` inventaba `'user'` desde procedencia desconocida.** Era la
-  dirección peligrosa que el comentario de `db.ts` ya nombraba, pero en el otro
-  camino. Ahora los dos siguen la misma regla.
-
-## Pecado Capital 2 — cerrado
-
-`src/components/MacroFields.tsx` es el trío de macros y el campo numérico de la
-app, en un solo lugar. Reemplazó **seis** copias del bloque proteína/grasa/fibra
-—`EntryModal`, `MealModal`, `MealEditModal` y **dos veces** dentro de
-`TimelineDetailModal`, un bloque de 24 líneas duplicado literalmente entre sus
-dos ramas— más cuatro componentes `Field` locales con tres variantes visuales
-del mismo input.
-
-El chequeo del blanco (`en blanco ≠ 0 g`), que estaba escrito a mano en **53
-lugares**, es ahora `parseBlankAsUnset` / `parseBlankAsUnsetPositive` /
-`parseBlankAsClear` en `format.ts`, con test. Los tres tienen nombre propio
-porque el editor invierte los sentinelas a propósito (`null` = borrar), y un
-ternario suelto no dice cuál convención sigue.
-
-**Un bug de accesibilidad de paso:** los campos de `MealEditModal` estaban en
-`fontSize: 16` + `paddingVertical: spacing.sm` — unos 32 pt de área tocable,
-bajo el mínimo de 44 de `contracts/ux-checklist.md`. El componente compartido
-lo fija con `minHeight` explícito en vez de confiarlo al padding.
-
-**Lo que queda de este pecado:** los cuatro modales siguen siendo cuatro (790 +
-1.146 + 708 + 862 líneas). Eso es correcto y no se toca: son flujos distintos
-con la misma materia prima. Lo que se extrajo es lo que de verdad se repetía.
-`CatalogModal` tiene su propio `Field` y su propio trío, pero edita un alimento
-por 100 g, no una comida: es otro dominio y se deja aparte.
-
-## ⛔ Siguiente: Pecado Capital 3 — cetonas invisibles en el timeline
-
-**Estado:** parcialmente cerrado el 2026-08-26.
-
-Las cetonas registradas desde "Nueva entrada" ya aparecen en el detalle del
-ítem agrupado. Lo que **sigue abierto**: las cetonas del **acceso rápido**
-(sin `entry_group_id`) no se muestran en ninguna parte — `getTimeline` no tiene
-rama para ellas. Es el dato de triage de cetoacidosis.
-
-**Trabajo:** agregar la rama de `vitals_events` sueltas a `getTimeline`, con su
-propio `kind` de `TimelineItem`.
+**Lo que quedó abierto:** editarlas. El formulario de `TimelineDetailModal` no
+tiene campo de cetonas, así que por ahora se ven y se borran. Editarlas es
+trabajo del **Modal Maestro** (`projectbrief.md`), no un parche a ese
+formulario.
 
 ## Regla de proceso que sobrevive a los tres
 
@@ -102,8 +48,8 @@ suelto en un modal es cómo llegamos a tener el mismo bloque seis veces.
 
 ## Backlog de producto priorizado
 
-Notas directas de los fundadores (2026-08-26). Va **después** de cerrar el
-Pecado Capital 3, y en este orden.
+Notas directas de los fundadores (2026-08-26). Con los tres Pecados
+Capitales cerrados, **esto es el foco**. En este orden.
 
 ### 1. 🔴 El informe en Excel falla en silencio
 

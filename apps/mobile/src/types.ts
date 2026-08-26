@@ -7,6 +7,7 @@ import type {
   MealEpisodeMetrics,
   MealEvent,
   NoteEvent,
+  VitalsEvent,
 } from '@type1a/schemas';
 import type { ReportRow } from '@type1a/domain';
 
@@ -215,6 +216,25 @@ export type TimelineItem =
       detail: string;
       tone: 'navy';
       raw: NoteEvent;
+    }
+  | {
+      /**
+       * Un registro de vitales suelto — cetonas, peso o presión anotados desde
+       * su propio acceso rápido, sin pertenecer a una entrada empaquetada.
+       *
+       * Las cetonas son el dato de triage de cetoacidosis: hasta el 2026-08-26
+       * `getTimeline` no tenía rama para estas filas y desaparecían después de
+       * guardarse. `tone: 'red'` marca la banda urgente, pero **la banda va
+       * siempre escrita en `detail`** — un estado no se comunica solo con
+       * color.
+       */
+      id: string;
+      kind: 'vitals';
+      timestamp: string;
+      title: string;
+      detail: string;
+      tone: 'red' | 'navy';
+      raw: VitalsEvent;
     }
   | {
       // A packaged "Nueva entrada" save — glucose, carbs/comida, rápida,

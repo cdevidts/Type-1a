@@ -17,6 +17,9 @@ const toneColors = {
   teal: colors.teal,
   warning: colors.warning,
   muted: colors.muted,
+  // Reservado para lo genuinamente urgente. Hoy lo usa la banda alta de
+  // cetonas, y nunca va solo: el texto del ítem nombra la banda.
+  red: colors.red,
 } as const;
 
 export function Timeline({

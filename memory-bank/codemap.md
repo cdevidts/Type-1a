@@ -51,6 +51,7 @@ Puro, determinístico, con test. **Ningún `.tsx` calcula una métrica de salud.
 | `regression.ts` | OLS por ecuaciones normales. Centra al ajustar; sus β **no salen** de aquí |
 | `nutrition-insights.ts`, `nutrition-targets.ts` | patrones de comida y metas |
 | `macros-source.ts` | `resolveMacrosSource()` — quién puso los macros de una comida. Se imprime en el reporte médico; ningún `.tsx` lo decide |
+| `vitals-summary.ts` | cómo se lee un registro de vitales, con la banda de cetonas de `assessKetones`. El componente elige el color; no decide qué es urgente |
 | `insulin-catalog.ts` | catálogo de insulinas y su duración. Devuelve `undefined` si no está configurada — nunca un default silencioso |
 | `food-catalog.ts` | `foodKey`, `blendCatalogEntry`; misma implementación en teléfono y servidor |
 | `report.ts`, `units.ts`, `ketones.ts`, `meal.ts`, `mysugr-import.ts` | reporte, conversión, cetonas, comida, importación |
@@ -95,6 +96,9 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
   `reportExport.ts` dibuja SVG inline para el PDF.
 - `notifications.ts` — un canal de Android por tipo de alarma. Android congela
   sonido y vibración al crear el canal.
+- `timelineVitals.ts` — las cetonas y demás vitales **sueltos** del timeline.
+  Puro y con test: un `WHERE` de más los escondió una vez, y son el dato de
+  triage de cetoacidosis.
 - `mealFields.ts` — qué campos **son** una comida. Puro y con test porque
   decide si la fila se escribe y si se conserva: un `false` de más borra
   historial. Si agregas un campo de comida a `UnifiedEntryInput`, va acá.

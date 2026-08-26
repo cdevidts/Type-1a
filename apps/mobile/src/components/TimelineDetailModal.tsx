@@ -94,6 +94,16 @@ function rowsFor(item: TimelineItem): { label: string; value: string }[] {
         ...(item.raw.note === undefined || item.raw.note === '' ? [] : [{ label: 'Nota', value: item.raw.note }]),
         { label: 'Hora', value: formatDayTime(item.raw.timestamp) },
       ];
+    case 'vitals':
+      return [
+        ...(item.raw.ketonesMmolL === undefined ? [] : [{ label: 'Cetonas', value: `${item.raw.ketonesMmolL} mmol/L` }]),
+        ...(item.raw.weightKg === undefined ? [] : [{ label: 'Peso', value: `${item.raw.weightKg} kg` }]),
+        ...(item.raw.systolicBP === undefined || item.raw.diastolicBP === undefined
+          ? []
+          : [{ label: 'Presión', value: `${item.raw.systolicBP}/${item.raw.diastolicBP} mmHg` }]),
+        { label: 'Origen', value: item.raw.source === 'imported' ? 'Importado' : 'Ingresado a mano' },
+        { label: 'Hora', value: formatDayTime(item.raw.timestamp) },
+      ];
     case 'glucose':
       return [
         { label: 'Glucosa', value: `${item.raw.glucose} ${item.raw.unit}` },
@@ -159,7 +169,10 @@ function isEditable(item: TimelineItem): boolean {
   // La comida tampoco: tiene su propio editor completo (`MealEditModal`,
   // Fase 17) con macros, foto y los tres modos de IA. El formulario de acá
   // solo llegaba a la nota.
-  return item.kind !== 'episode' && item.kind !== 'meal';
+  // Los vitales tampoco, todavía: este formulario solo llega a glucosa,
+  // carbos, insulina y nota, y no tiene campo de cetonas. Se ven y se pueden
+  // borrar; editarlos es trabajo del Modal Maestro (`projectbrief.md`).
+  return item.kind !== 'episode' && item.kind !== 'meal' && item.kind !== 'vitals';
 }
 
 function deleteLabel(item: TimelineItem): string {

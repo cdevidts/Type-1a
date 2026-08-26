@@ -18,3 +18,4 @@ export * from './nutrition-insights';
 export * from './regression';
 export * from './report';
 export * from './units';
+export * from './vitals-summary';

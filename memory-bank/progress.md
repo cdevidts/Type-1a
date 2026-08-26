@@ -7,7 +7,7 @@ _Última actualización: 2026-08-26._
 | | |
 |---|---|
 | `pnpm verify` | ✅ verde |
-| Tests | **434** — domain 284, mobile 102, ai 15, schemas 13, cgm 10, api 10 |
+| Tests | **446** — domain 290, mobile 108, ai 15, schemas 13, cgm 10, api 10 |
 | Bundle de Metro | **1.333 módulos** (línea base; un salto grande = barrel importado) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
@@ -79,7 +79,6 @@ aunque su comentario promete que sí.
 
 ### 🟡 Menores
 
-- Cetonas del acceso rápido (sin grupo) invisibles en el timeline.
 - Editar una entrada no ofrece foto ni re-análisis de IA.
 - `README.md` sigue en pie (63 líneas). La purga que lo iba a borrar se abortó;
   la decisión tomada es **reescribirlo a ~30 líneas** como puerta de entrada del
@@ -109,6 +108,7 @@ reporte médico. El detalle completo vive en el historial de git
 | Dos booleanos `hasMeal` divergentes borraron y descartaron comidas | una sola lista (`mealFields.ts`), pura y con test |
 | Precargar los macros de la IA volvió `'mixed'` toda comida analizada: "el campo tiene valor" dejó de significar "ella lo escribió" | la procedencia se compara contra el valor precargado, no contra la ausencia |
 | El mismo bloque de macros escrito seis veces; los campos del editor quedaron en ~32 pt de área tocable | `MacroFields` compartido, con `minHeight: 44` explícito |
+| Un `WHERE entry_group_id IS NOT NULL` escondió las cetonas del acceso rápido: se guardaban bien y no se veían | el filtro de una consulta es una decisión de producto, no un detalle de SQL |
 
 ## Redeploy del backend
 
