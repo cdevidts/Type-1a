@@ -19,7 +19,7 @@ import { colors, glucoseBands, radius, spacing } from '../theme';
  * Gráficos de la pantalla "Resumen". Todos son SVG con `react-native-svg`,
  * el mismo motor que ya usa `GlucoseChart` — sin dependencias nuevas.
  *
- * Reglas de diseño aplicadas (skill `dataviz` + `docs/UX_GUIDELINES.md`):
+ * Reglas de diseño aplicadas (skill `dataviz` + `contracts/dataviz-palette.md`):
  * eje único, grilla y ejes recesivos (`colors.line`/`colors.muted`), marcas
  * finas, leyenda presente siempre que haya más de una serie, y **ninguna
  * identidad codificada solo por color** — cada banda lleva su etiqueta y su

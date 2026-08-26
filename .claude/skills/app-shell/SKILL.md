@@ -125,4 +125,4 @@ darlo por hecho — eso fue lo que dejó pasar el bug una corrida entera.
 2. Probar con la barra de navegación de Android **visible** (tres botones) y
    en modo gestos: son dos insets distintos.
 3. `pnpm verify`.
-4. Actualizar `docs/CODE_MAP.md` si agregaste un componente.
+4. Actualizar `memory-bank/codemap.md` si agregaste un componente.

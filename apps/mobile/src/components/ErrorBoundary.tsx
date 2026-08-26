@@ -11,7 +11,7 @@ import { colors, radius, spacing } from '../theme';
  * `await`, donde el `.catch()` la agarra) desmonta el árbol de React entero:
  * la app queda inservible y solo se recupera cerrándola por completo. Es
  * exactamente el síntoma que Verónica reportó en el Resumen —
- * ver `docs/ROADMAP_V0.2.md` § Fase 13, ítem 5.
+ * ver el tag `archive/pre-memory-bank`, § Fase 13, ítem 5.
  *
  * Los cálculos de `packages/domain` lanzan a propósito cuando reciben algo
  * que no pueden interpretar (`convertGlucose` con un valor no positivo,

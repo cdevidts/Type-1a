@@ -123,6 +123,8 @@ reporte médico. El detalle completo vive en el historial de git
 | Exclusión binaria vació la pantalla de Patrones | truncar y ajustar, nunca obviar |
 | `.positive()` en un esquema rompió un caso legítimo una corrida después | Regla 3, hermana |
 | `eas-cli` desde la raíz dejó `app.json`/`eas.json` basura (2 veces) | correr desde `apps/mobile/` |
+| Una purga de docs dejó ciegos a 5 de 7 activos de `.claude/` sin un solo error | `verify:contracts` |
+| El inventario de esa purga solo miraba `.claude/`: el código citaba 17 docs más | el guard escanea **todo** el repo, código incluido |
 
 ## Redeploy del backend
 

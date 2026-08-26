@@ -49,7 +49,7 @@ export interface GlucoseSummary {
   /**
    * HbA1c ESTIMADA (GMI — Glucose Management Indicator), calculada a partir
    * del promedio de glucosa. NO es una medición de laboratorio: separada a
-   * propósito de `HbA1cLabResultSchema` (AGENTS.md, docs/ROADMAP_V0.2.md).
+   * propósito de `HbA1cLabResultSchema` (AGENTS.md).
    * Más confiable con `daysCovered >= 14` (consenso ADA/ATTD) — con menos
    * días, mostrar igual pero con una advertencia de cobertura limitada.
    */

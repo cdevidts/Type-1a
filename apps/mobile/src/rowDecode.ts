@@ -10,7 +10,7 @@
  * lanzaba un `SyntaxError` que rechazaba la consulta **entera**. El efecto
  * era desproporcionado — 90 días de historial ilegibles por una fila mala, y
  * no solo en el Resumen: también en la exportación del reporte, que usa los
- * mismos getters. Ver `docs/ROADMAP_V0.2.md` § Fase 13, ítem 5.
+ * mismos getters. Ver el tag `archive/pre-memory-bank`, § Fase 13, ítem 5.
  *
  * Descartar una fila ilegible no cruza ninguna frontera de `AGENTS.md`: no se
  * inventa ni se corrige un dato, se omite uno que no se puede leer. Lo que sí
@@ -90,7 +90,7 @@ export function tallyParsed<T>(
  *
  * Tampoco alcanza con lanzar: quien llama tiene que poder seguir cargando el
  * resto de la app (glucosa, timeline, registro manual) y avisar. Ver
- * `docs/ROADMAP_V0.2.md` § Fase 13, ítem 5.
+ * el tag `archive/pre-memory-bank`, § Fase 13, ítem 5.
  */
 export type TherapyProfileRead<T> =
   | { kind: 'fresh' }

@@ -36,7 +36,7 @@ const HEADER_TO_FIELD: Record<string, keyof MySugrCsvRow> = {
   'HbA1c (Porcentaje)': 'hba1cPercent',
   Cetonas: 'ketones',
   'Zona horaria': 'timeZone',
-  // Deliberately not imported (see docs/ROADMAP_V0.2.md): "Porcentaje de
+  // Deliberately not imported (see tag archive/pre-memory-bank): "Porcentaje de
   // basal temporal" / "Duración de basal temporal" (pump-only, this MVP
   // models pen injections), "Lugar"/"Latitud"/"Longitud" (no geolocation,
   // by privacy choice), "Tipo de alimento", "Medicamento".

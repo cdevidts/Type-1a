@@ -42,6 +42,25 @@ El subagente `domain-safety-reviewer` encontró **23 hallazgos en dos revisiones
 consecutivas**, dos de los cuales habrían llegado al dispositivo. No es
 opcional.
 
+## Dónde se escribe al cerrar
+
+Obligatorio, en la misma corrida que el código:
+
+| Si en la corrida… | Escribe en |
+|---|---|
+| cambió el foco, se cerró o se abrió algo | `memory-bank/activeContext.md` |
+| corriste `pnpm verify`, o descubriste deuda o una trampa | `memory-bank/progress.md` |
+| agregaste un archivo, componente o módulo | `memory-bank/codemap.md` |
+| agregaste una capacidad que el chat futuro debería alcanzar | `memory-bank/reference/ai-chat-capabilities.md` |
+| cambiaste una constante clínica | `memory-bank/reference/clinical-sources.md`, con la cita |
+| tomaste una decisión cara de revertir cuyo porqué no se deduce del código | un ADR nuevo en `docs/adr/` + su fila en el `README.md` de ahí |
+| cambiaste una regla que un skill verifica | el contrato de `/contracts/`, nunca una copia paralela |
+
+Nada de esto se escribe en `docs/`: ahí solo quedan los ADR (Capa 3,
+append-only) y dos guías operativas de humano —conectar el sensor y redesplegar
+el backend—. Si `pnpm verify` falla con "puntero muerto", es que un documento se
+movió y alguien quedó apuntando al lugar viejo.
+
 ## Auditoría de cambios relacionados (se reporta SIEMPRE al cierre, en texto)
 
 1. **Corrección obligatoria** — rompe `AGENTS.md`, corrompe un dato, deja

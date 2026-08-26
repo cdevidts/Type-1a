@@ -16,7 +16,7 @@
  * las comidas altas en grasa y proteína son justo las que más se corrigen
  * tarde: la muestra que sobrevivía era la que se había portado bien.
  *
- * Lo que hace la literatura, en cambio (ver `docs/RESEARCH_SOURCES.md`):
+ * Lo que hace la literatura, en cambio (ver `memory-bank/reference/clinical-sources.md`):
  *
  * 1. **Truncar, no descartar.** El estándar de iAUC post-prandial mide desde
  *    la comida hasta que empieza la siguiente y corta ahí, en vez de tirar la
@@ -50,7 +50,7 @@
  * corrección inferido en tres líneas.
  *
  * Por eso: **este módulo no se cataloga como alcanzable por el chat de IA**
- * (ver `docs/AI_CHAT_ARCHITECTURE.md`), y cualquier llamador nuevo tiene que
+ * (ver `memory-bank/reference/ai-chat-capabilities.md`), y cualquier llamador nuevo tiene que
  * justificar por qué sus coeficientes no son un parámetro de terapia
  * disfrazado.
  */

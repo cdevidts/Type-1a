@@ -32,7 +32,7 @@
  * técnica del fabricante**, no una estimación de la app sobre esa persona.
  *
  * Fuentes de las duraciones (consultadas 2026-08-25) — ver
- * `docs/RESEARCH_SOURCES.md`.
+ * `memory-bank/reference/clinical-sources.md`.
  */
 
 export type InsulinCategory = 'rapid' | 'basal';

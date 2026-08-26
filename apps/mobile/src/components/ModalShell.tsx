@@ -48,7 +48,7 @@ export function ModalShell({
 }) {
   // "Reduce Motion" del sistema: con la preferencia activa, el modal aparece
   // sin la transición deslizante. Es una regla de las HIG y de
-  // `docs/UX_GUIDELINES.md`, y hasta ahora se leía la preferencia sin usarla
+  // `contracts/ux-checklist.md`, y hasta ahora se leía la preferencia sin usarla
   // para nada.
   const [reduceMotion, setReduceMotion] = useState(false);
   useEffect(() => {

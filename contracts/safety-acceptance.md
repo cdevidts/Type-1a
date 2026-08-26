@@ -1,7 +1,6 @@
 # Contrato — criterios de aceptación de seguridad
 
 > **Capa 1 · consumido por** `domain-safety-reviewer`, `/safety-audit`
-> Extraído de `docs/MVP_IMPLEMENTATION_BRIEF.md` §Safety acceptance criteria.
 > Imperativo, sin historia. El porqué de cada regla vive en `AGENTS.md`.
 
 Un cambio que viole cualquiera de estos puntos es un **hallazgo de seguridad

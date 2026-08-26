@@ -1,9 +1,9 @@
 # Contrato — checklist de pantalla
 
 > **Capa 1 · consumido por** `/ui-screen`, `/app-shell`
-> Extraído de `docs/UX_GUIDELINES.md`. Es lo que se **verifica**; el porqué
-> (tipografía, escalas de espaciado, fuentes) sigue en ese documento y se lee
-> solo al diseñar algo sin patrón previo, nunca para revisar una pantalla.
+> Es lo que se **verifica**; el porqué (tipografía, escalas de espaciado,
+> color) está en `memory-bank/reference/ux-rationale.md` y se lee solo al
+> diseñar algo sin patrón previo, nunca para revisar una pantalla.
 
 Antes de dar por buena una pantalla o modal, nuevo o modificado:
 

@@ -68,6 +68,6 @@ configurar" que ya usa cada integración externa de `apps/api/src/config.ts`.
   estimación mala, pero no lo eliminan. Si en el futuro se ve abuso, la
   respuesta es un piso más alto o una revisión manual, no volver a ADR 0001.
 - La app móvil **todavía no llama a estos endpoints** (backend preparado,
-  no consumido — ver `docs/ROADMAP_V0.2.md`). Cuando esa fase llegue, es
+  no consumido — ver el tag `archive/pre-memory-bank`). Cuando esa fase llegue, es
   trabajo puro de `apps/mobile`: el contrato de red ya existe y ya está
   desplegado.

@@ -34,7 +34,7 @@ export const colors = {
  * rompería la consistencia de toda la app. Se compensa con la regla de
  * abajo.
  *
- * **Regla (HIG + `docs/UX_GUIDELINES.md`): la identidad de una banda nunca
+ * **Regla (HIG + `contracts/ux-checklist.md`): la identidad de una banda nunca
  * descansa solo en el color.** Cada banda se muestra siempre con su etiqueta
  * y su rango en mg/dL al lado.
  */

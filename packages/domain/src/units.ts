@@ -24,7 +24,7 @@ export function convertGlucose(value: number, from: GlucoseUnit, to: GlucoseUnit
  * distinto (45 mg/dL/U = 2,5 mmol/L/U), no el mismo valor reformateado.
  * Mostrar mmol/L sin migrar antes esos parámetros dejaría la calculadora de
  * dosis en una unidad y el resto de la app en otra. Ver
- * `docs/ROADMAP_V0.2.md` § Fase 13, ítem 10b.
+ * el tag `archive/pre-memory-bank`, § Fase 13, ítem 10b.
  *
  * La app calcula siempre en mg/dL: los umbrales clínicos
  * (`glucose-thresholds.ts`), el GMI y el AGP están definidos en mg/dL en la

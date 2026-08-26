@@ -187,7 +187,7 @@ export function buildReportRows(input: ReportInput): ReportRow[] {
       kindLabel: 'Vitales',
       detail: parts.length > 0 ? parts.join(' · ') : '(sin detalle)',
       // Rótulo explícito: nunca puede leerse como una HbA1c estimada por la
-      // app (AGENTS.md / docs/ROADMAP_V0.2.md § mapeo MySugr).
+      // app (AGENTS.md; el mapeo MySugr, en el tag archive/pre-memory-bank).
       provenance: eventProvenance(vitals.source),
     });
   }

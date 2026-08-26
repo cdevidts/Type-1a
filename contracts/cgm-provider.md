@@ -1,7 +1,6 @@
 # Contrato — proveedores de CGM
 
 > **Capa 1 · consumido por** `/new-cgm-provider`
-> Sustituye la narrativa histórica de `docs/CGM_INTEGRATION_DECISION.md`.
 > La decisión formal y su contexto están en `docs/adr/0004-cgm-provider-librelinkup.md`.
 
 ## Estado real de la ruta de datos
@@ -49,4 +48,4 @@ arquitectura equivocada.
 2. Test en `packages/cgm/test/`.
 3. Fila en la tabla de arriba.
 4. ADR nuevo en `docs/adr/` si cambia cuál es el provider de producción.
-5. Entrada en `docs/CODE_MAP.md`.
+5. Entrada en `memory-bank/codemap.md`.

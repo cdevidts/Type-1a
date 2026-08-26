@@ -24,8 +24,9 @@ Lee, en este orden, y no de memoria:
    checklist es obligatorio para cualquier pantalla nueva o revisada, y trae
    además las reglas no negociables y las de texto que toca seguridad. Si
    necesitas el **porqué** (escalas tipográficas, espaciado, fuentes), está en
-   `docs/UX_GUIDELINES.md` — pero el contrato es lo que se verifica, y es lo
-   único que hace falta leer para una pantalla que sigue el patrón existente.
+   `memory-bank/reference/ux-rationale.md` — pero el contrato es lo que se
+   verifica, y es lo único que hace falta leer para una pantalla que sigue el
+   patrón existente.
 2. [`apps/mobile/src/theme.ts`](../../../apps/mobile/src/theme.ts) — los tokens
    reales: `colors`, `spacing`, `radius`, `glucoseBands`. **No inventes un
    `fontSize`, un color hex ni un padding suelto** si ya hay un token.
@@ -105,6 +106,6 @@ strings visibles son parte de la superficie de seguridad, no decoración:
 2. `pnpm verify`.
 3. Si tocaste `packages/domain` o cualquier texto que hable de dosis, corre el
    subagente `domain-safety-reviewer`.
-4. Actualiza `docs/CODE_MAP.md` con el componente nuevo, y
-   `docs/AI_CHAT_ARCHITECTURE.md` si agregaste una capacidad que el chat futuro
-   debería poder alcanzar.
+4. Actualiza `memory-bank/codemap.md` con el componente nuevo, y
+   `memory-bank/reference/ai-chat-capabilities.md` si agregaste una capacidad
+   que el chat futuro debería poder alcanzar.

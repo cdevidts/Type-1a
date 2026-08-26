@@ -112,22 +112,39 @@ grande delata un import de barrel.
 en cada push y PR (Node 24, pnpm 11.16.0).
 `.github/workflows/backend-keepalive.yml` — ping cada 15 min a `/health`.
 
+## Firma de Android — lo que nunca se hace
+
+`apps/mobile/eas.json` usa `"credentialsSource": "local"`: el keystore
+(`apps/mobile/credentials/android/keystore.jks`) y sus contraseñas
+(`apps/mobile/credentials.json`) están **gitignored a propósito** y no viven en
+git. Un checkout nuevo no los tiene y el build falla hasta reprovisionarlos con
+`eas credentials` bajo la cuenta que los tenga.
+
+⛔ **Nunca corras `eas credentials` y elijas "Set up a new keystore" /
+"Generate a new Android Keystore".** Android exige el mismo certificado para
+tratar un APK nuevo como actualización de uno instalado, y esta app es
+local-first **sin backup en la nube** (ADR 0001): firmar con otra llave obliga a
+desinstalar y reinstalar, **borrando todo el historial de Verónica**, sin vuelta
+atrás.
+
+Huella SHA-256 de la llave de producción, para verificar un `credentials.json`
+descargado **antes** de usarlo:
+
+```
+3D:42:7A:25:E7:93:A8:E0:34:31:0E:A5:41:7C:7F:92:CF:33:DE:23:BD:E3:85:24:4E:E1:47:9F:E7:94:62:33
+```
+
+Cuenta EAS `cris-devit`, proyecto `05df8f63-7a23-40b1-96b8-4d40b33d3360`.
+Pendiente no bloqueante: subir ese mismo keystore como credencial administrada
+por EAS, para que un entorno nuevo no dependa del archivo local.
+
 ## Procedencia clínica de las constantes
 
-Los números clínicos del dominio no son inventados. Fuentes consultadas:
-
-- **Duración de insulinas** (`packages/domain/src/insulin-catalog.ts`):
-  Cleveland Clinic, *Injectable insulin medications* — análogas rápidas
-  (lispro/aspart/glulisina) 3-5 h; regular humana 5-8 h; NPH 14-24 h;
-  detemir y glargina U-100 hasta 24 h; glargina U-300 hasta 36 h; degludec
-  hasta 42 h. Fiasp/Lyumjev adelantan inicio y fin ~5-12 min pero **la
-  duración total se queda en el mismo rango**.
-- **Respuesta post-prandial con comidas solapadas**
-  (`macro-glucose.ts`, `regression.ts`): el estándar iAUC **trunca** el tramo
-  solapado, no descarta la comida (PubMed 31569815; AJCN/medRxiv "Imprecision
-  nutrition"). Y ante un confusor **medido** se **ajusta por él**, no se
-  elimina la observación (BMC Medicine 2025; PMC11715647). Descartar solo vale
-  si la pérdida es aleatoria — acá no lo es.
-- **Umbrales de glucosa** 54/70/180/250 mg/dL y HbA1c estimada por GMI
-  (Bergenstal et al., Diabetes Care 2018).
-- **Cetonas en sangre** 0,6 / 1,5 / 3,0 mmol/L.
+Los números clínicos del dominio no son inventados. **Las fuentes completas, con
+cita y con el porqué de cada elección, están en
+`memory-bank/reference/clinical-sources.md`** — se lee al cambiar una constante,
+no en cada corrida. Resumen: duración de insulinas de Cleveland Clinic (rápidas
+3-5 h, degludec hasta 42 h); umbrales 54/70/180/250 mg/dL; HbA1c estimada por
+GMI (Bergenstal 2018); cetonas 0,6/1,5/3,0 mmol/L; y para comidas solapadas el
+estándar iAUC **trunca** el tramo solapado y **ajusta** por el confusor medido,
+nunca descarta la observación.

@@ -1,8 +1,10 @@
 # ADR 0004: LibreLinkUp es la ruta de datos de CGM; Junction queda como alternativa
 
 status: Accepted (2026-08-26)
-supersedes: la narrativa de `docs/CGM_INTEGRATION_DECISION.md` (2026-08-12), que
-describía a Junction como la ruta principal.
+supersedes: la narrativa de `CGM_INTEGRATION_DECISION.md` (2026-08-12), que
+describía a Junction como la ruta principal. Ese documento salió del árbol en la
+migración a Memory Bank; su texto íntegro está en el tag
+`archive/pre-memory-bank`.
 
 ## Contexto
 

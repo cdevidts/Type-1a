@@ -1,32 +1,15 @@
 # Type 1A
 
-Type 1A is an Android-first, local-first diabetes type 1 companion MVP. It connects glucose, meals, confirmed carbohydrates, insulin logging, and descriptive post-meal analysis while keeping dosing decisions outside AI.
+Companion de diabetes tipo 1, Android-first y local-first. Conecta glucosa,
+comidas, carbohidratos confirmados, registro de insulina y análisis descriptivo
+post-comida — **manteniendo toda decisión de dosis fuera de la IA**.
 
-> Development software only. It does not replace FreeStyle Libre alarms, blood glucose confirmation when indicated, or professional medical advice.
+> Software en desarrollo. No reemplaza las alarmas de FreeStyle Libre, ni la
+> confirmación capilar cuando corresponde, ni el criterio de un equipo clínico.
 
-## What works in this repository
+## Correr en local
 
-- deterministic correction math using user-entered therapy parameters;
-- explicit recent-insulin context without insulin-on-board estimation;
-- local SQLite timeline for rapid insulin, basal insulin, carbohydrates, meals, and cached CGM;
-- clearly labelled synthetic CGM provider for development;
-- **real sensor connection: LibreLinkUp, on-device, per-installation** — each
-  install links its own follower account from the phone
-  (`apps/mobile/src/sensorConnection.ts`); the backend never sees another
-  user's glucose. See [docs/CONECTAR_SENSOR.md](docs/CONECTAR_SENSOR.md);
-- Junction/LibreView EU connector — implemented in `packages/cgm` and
-  `apps/api`, kept as an alternate backend-mediated path, **not the one in
-  active use** (see [docs/CGM_INTEGRATION_DECISION.md](docs/CGM_INTEGRATION_DECISION.md)
-  for why the original plan changed);
-- Abacus.AI RouteLLM meal vision and descriptive episode insight services;
-- offline manual logging and manual meal fallback;
-- deep-link-ready Quick Entry routes;
-- local episode notifications and safety tests;
-- explicit insulin-to-meal confirmation whenever the association is ambiguous.
-
-## Start locally
-
-Requirements: Node 24+, pnpm 11+, and an Android phone/emulator for the mobile client.
+Requiere Node 24+, pnpm 11+ y un teléfono o emulador Android.
 
 ```bash
 cp .env.example .env
@@ -37,27 +20,23 @@ pnpm dev:api
 pnpm dev:mobile
 ```
 
-For a physical phone, set `EXPO_PUBLIC_API_BASE_URL` to the backend's LAN URL, for example `http://192.168.1.20:4100`.
+Para un teléfono físico, `EXPO_PUBLIC_API_BASE_URL` apunta a la URL LAN del
+backend (ej. `http://192.168.1.20:4100`).
 
-## External integrations
+El backend funciona **sin credenciales externas**: sin CGM cae a un proveedor
+sintético visiblemente rotulado, sin clave de Abacus el análisis de comida cae a
+registro manual, y sin internet el registro y el timeline local siguen andando.
 
-The backend remains functional without external credentials:
+## Dónde está la documentación
 
-- no `CGM_PROVIDER` credentials configured: it falls back to a visibly
-  labelled synthetic provider (this applies to Junction; the real path,
-  LibreLinkUp, doesn't need backend credentials at all — each user connects
-  their own account from the phone);
-- no Abacus key: meal analysis falls back to manual entry;
-- no internet: Quick Entry and the local timeline continue working.
+| Necesitas | Está en |
+|---|---|
+| las reglas de seguridad que gobiernan todo | [`AGENTS.md`](AGENTS.md) |
+| el contexto del proyecto, el stack y la deuda | [`memory-bank/`](memory-bank/) — empieza por [`index.md`](memory-bank/index.md) |
+| ubicar un archivo en el monorepo | [`memory-bank/codemap.md`](memory-bank/codemap.md) |
+| las decisiones de arquitectura y su porqué | [`docs/adr/`](docs/adr/README.md) |
+| conectar un sensor real | [`docs/CONECTAR_SENSOR.md`](docs/CONECTAR_SENSOR.md) |
 
-See [docs/CGM_INTEGRATION_DECISION.md](docs/CGM_INTEGRATION_DECISION.md) — it
-records why the original plan (Junction) changed to what's actually running
-(LibreLinkUp) — before touching CGM connection code.
-
-Implementation references are recorded in [docs/RESEARCH_SOURCES.md](docs/RESEARCH_SOURCES.md).
-
-## Builds
-
-`apps/mobile/eas.json` defines an internal Android APK profile (the Expo project root is `apps/mobile`, not the repo root — EAS resolves config relative to it). A signed binary requires an Expo account.
-
-**Signing credentials are local, not EAS-managed** (`credentialsSource: "local"` in `eas.json`, `apps/mobile/credentials.json` + `apps/mobile/credentials/android/keystore.jks` — both gitignored, absent from this repository on purpose). This is deliberate: the app has real installs in the field, and Android refuses to install an update signed with a different key than what's already on the device — using the same keystore regardless of which EAS account/project builds it is what keeps future builds installable as updates instead of forcing a reinstall (data loss, since the app is local-first with no cloud backup). See `docs/ROADMAP_V0.2.md` § "Migración de cuenta EAS" for the full story, the exact keystore fingerprint, and — critically — what never to do with `eas credentials` on this project.
+⚠️ Antes de tocar builds o firma de Android, lee
+[`memory-bank/techContext.md`](memory-bank/techContext.md) § Firma de Android:
+regenerar el keystore borra el historial de quien ya tenga la app instalada.

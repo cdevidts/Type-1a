@@ -22,12 +22,24 @@
  *   node scripts/agentic-contracts.mjs check   Falla (exit 1) si algo se rompió.
  *                                              Es lo que corre `pnpm verify`.
  *
- * `check` verifica tres invariantes mecánicos, sin heurísticas — a propósito:
+ * `check` verifica cuatro invariantes mecánicos, sin heurísticas — a propósito:
  * un guard ruidoso termina desactivado.
  *
  *   1. Toda ruta declarada en el manifiesto existe en disco.
  *   2. Toda referencia desde `.claude/` a un documento está declarada.
  *   3. Los presupuestos de líneas por capa se respetan.
+ *   4. NINGÚN archivo del repo —código fuente incluido— referencia un `.md`
+ *      que no existe.
+ *
+ * La cuarta se agregó el 2026-08-26, en la Fase 5, justo antes de borrar. El
+ * escáner original solo miraba `.claude/`, y con eso los 16 documentos daban
+ * "cero referencias entrantes, purgables". Eran 17 más: comentarios de
+ * `packages/domain/src/*.ts` y `apps/mobile/src/components/*.tsx` citando
+ * `ROADMAP_V0.2.md § Fase 13`, `UX_GUIDELINES.md` y `RESEARCH_SOURCES.md`.
+ * Borrarlos habría dejado diecisiete punteros muertos dentro del código —
+ * exactamente el fallo silencioso que este script existe para eliminar, un
+ * nivel más abajo. Un inventario que solo mira donde uno espera encontrar
+ * dependencias no es un inventario.
  */
 
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from 'node:fs';
@@ -81,14 +93,52 @@ function classify(context) {
   return 'citation';
 }
 
-function walk(dir, out = []) {
+function walk(dir, out = [], extensions = ['.md']) {
   if (!existsSync(dir)) return out;
   for (const entry of readdirSync(dir)) {
+    if (entry === 'node_modules' || entry === '.git') continue;
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) walk(full, out);
-    else if (entry.endsWith('.md')) out.push(full);
+    if (statSync(full).isDirectory()) walk(full, out, extensions);
+    else if (extensions.some((extension) => entry.endsWith(extension))) out.push(full);
   }
   return out;
+}
+
+/**
+ * Todo archivo que puede citar un documento: los activos agénticos, el código
+ * fuente (los comentarios citan documentos y esas citas se pudren igual), la
+ * memoria misma y la puerta de entrada del repo.
+ */
+function citingFiles() {
+  return [
+    ...walk(join(ROOT, '.claude')),
+    ...walk(join(ROOT, 'packages'), [], ['.ts', '.tsx']),
+    ...walk(join(ROOT, 'apps', 'mobile', 'src'), [], ['.ts', '.tsx']),
+    ...walk(join(ROOT, 'apps', 'api', 'src'), [], ['.ts', '.tsx']),
+    ...walk(join(ROOT, 'memory-bank')),
+    ...walk(join(ROOT, 'contracts')),
+    ...walk(join(ROOT, 'docs')),
+    ...['README.md', 'CLAUDE.md', 'AGENTS.md'].map((f) => join(ROOT, f)).filter(existsSync),
+  ];
+}
+
+/** Referencias a un `.md` que no existe, desde cualquier parte del repo. */
+function danglingReferences() {
+  const problems = [];
+  for (const file of citingFiles()) {
+    const rel = relative(ROOT, file);
+    readFileSync(file, 'utf8').split('\n').forEach((line, index) => {
+      for (const match of line.matchAll(DOC_PATTERN)) {
+        const target = match[0].replace(/^`|`$/g, '');
+        // Un archivo que se cita a sí mismo no es una referencia rota.
+        if (target === rel) continue;
+        if (!existsSync(join(ROOT, target))) {
+          problems.push(`Puntero muerto: ${rel}:${index + 1} cita ${target}, que no existe`);
+        }
+      }
+    });
+  }
+  return problems;
 }
 
 function lineCount(path) {
@@ -131,9 +181,22 @@ function buildManifest(refs) {
   };
 }
 
-/** Documentos sin ninguna referencia entrante: candidatos seguros a purgar. */
-function orphans(refs) {
-  const referenced = new Set(refs.map((r) => r.target));
+/**
+ * Documentos sin ninguna referencia entrante: candidatos seguros a purgar.
+ *
+ * Mira **todo** el repo, no solo `.claude/`. Ver la nota de la invariante 4:
+ * la primera versión miraba solo los activos agénticos y por eso declaraba
+ * purgables documentos que el código fuente citaba en sus comentarios.
+ */
+function orphans() {
+  const referenced = new Set();
+  for (const file of citingFiles()) {
+    const rel = relative(ROOT, file);
+    for (const match of readFileSync(file, 'utf8').matchAll(DOC_PATTERN)) {
+      const target = match[0].replace(/^`|`$/g, '');
+      if (target !== rel) referenced.add(target);
+    }
+  }
   const docs = walk(join(ROOT, 'docs')).map((f) => relative(ROOT, f));
   const roots = ['README.md', 'CLAUDE.md', 'AGENTS.md'].filter((f) => existsSync(join(ROOT, f)));
   return [...docs, ...roots].filter((d) => !referenced.has(d));
@@ -185,6 +248,9 @@ function check() {
   // 3. Presupuestos.
   problems.push(...checkBudgets());
 
+  // 4. Punteros muertos desde cualquier parte del repo, código incluido.
+  problems.push(...danglingReferences());
+
   if (problems.length > 0) {
     console.error('✗ verify:contracts falló\n');
     for (const problem of problems) console.error(`  · ${problem}`);
@@ -207,7 +273,7 @@ function scan() {
     for (const c of dep.consumers) console.log(`      ${c.kind.padEnd(10)} ${c.asset}  (líneas ${c.lines.join(', ')})`);
   }
 
-  const unreferenced = orphans(refs);
+  const unreferenced = orphans();
   console.log(`\n\nSIN REFERENCIAS ENTRANTES — purgables sin romper ningún activo (${unreferenced.length})`);
   for (const doc of unreferenced) console.log(`  · ${doc}  (${lineCount(join(ROOT, doc))} líneas)`);
 

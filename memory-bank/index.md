@@ -46,7 +46,7 @@ El árbol previo a la migración —incluido `ROADMAP_V0.2.md` con sus 2.833
 líneas de post-mortems— está en el tag `archive/pre-memory-bank`:
 
 ```
-git show archive/pre-memory-bank:docs/ROADMAP_V0.2.md
+git show archive/pre-memory-bank:docs/
 ```
 
 Los cuerpos de commit son la bitácora real del proyecto (`git log --format=full`).

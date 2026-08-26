@@ -2,21 +2,25 @@
 
 _Última actualización: 2026-08-26 (Fases 0-3 de la migración de memoria agéntica)._
 
-## Migración de memoria agéntica — Fases 0-3 cerradas
+## Migración de memoria agéntica — completa (Fases 0-6)
 
-Rama `chore/memory-bank-migration`, **sin push** (política Branch-and-Propose).
+Rama `chore/memory-bank-migration`, **sin push**, lista para revisión y merge.
 
-Hecho: escáner de acoplamiento (`scripts/agentic-contracts.mjs`), cuatro
-contratos de Capa 1 en `contracts/`, los cinco activos de `.claude/` repuntados
-hacia ellos, y `verify:contracts` encadenado a `pnpm verify` y por lo tanto a
-CI. `systemPatterns.md` se partió: el proceso de corrida se fue a `workflow.md`.
+La memoria del proyecto pasó de 16 documentos sueltos en `docs/` a cuatro capas
+con presupuesto verificado: Capa 0 (`CLAUDE.md` router + `AGENTS.md`, 83 líneas
+entre los dos), Capa 1 (`/contracts/`, lo que leen los skills), Capa 2
+(`/memory-bank/`, con `index.md` como ruteo y `reference/` bajo demanda) y
+Capa 3 (`docs/adr/`, append-only). `verify:contracts` corre en `pnpm verify` y
+rompe el build si un puntero queda muerto o una capa excede su techo.
+
+El árbol viejo está íntegro en el tag **`archive/pre-memory-bank`**.
 
 **Validación de comportamiento**: el `domain-safety-reviewer` repuntado se corrió
 contra `d868ece` y `c4ca192` en worktrees a esos commits. Reencontró **todos**
 los hallazgos graves de las revisiones originales (extrapolación sin centrar,
 colinealidad carbos↔unidades, `confoundedCount > sampleSize`, β como factor de
 corrección inferido; y en Fase 21 los cuatro de dosis). Además levantó siete
-que la revisión original no vio, cuatro de ellos vivos hoy — ver `progress.md`.
+que la revisión original no vio, seis de ellos vivos hoy — ver `progress.md`.
 
 ## ⛔ Lo primero después de fusionar esta rama
 

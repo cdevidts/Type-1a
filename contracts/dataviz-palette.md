@@ -1,8 +1,9 @@
 # Contrato — gráficos y visualización de datos
 
 > **Capa 1 · consumido por** `/ui-screen` (junto con la skill global `dataviz`)
-> Extraído de `docs/UX_GUIDELINES.md` §Gráficos. Es cómo el método de `dataviz`
-> quedó instanciado en este repo: **no lo re-derives cada vez.**
+> Es cómo el método de la skill `dataviz` quedó instanciado en este repo:
+> **no lo re-derives cada vez.** El porqué está en
+> `memory-bank/reference/ux-rationale.md`.
 
 ## Motor
 

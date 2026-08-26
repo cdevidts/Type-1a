@@ -38,7 +38,7 @@ Scaffold a new `CGMProvider` implementation for Type 1A.
    - `contracts/cgm-provider.md` — add a row to the provider table and follow
      its rules checklist. This contract is your input: read it before writing
      the provider, not after.
-   - `docs/CODE_MAP.md` — add the new file under "packages/cgm".
+   - `memory-bank/codemap.md` — add the new file under "packages/cgm".
    - `docs/adr/` — a new ADR **only** if this changes which provider is the
      production data path. ADRs are append-only: never renumber, never delete,
      mark a superseded one with `status:` instead.

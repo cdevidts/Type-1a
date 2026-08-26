@@ -24,7 +24,7 @@ import { InsulinPicker, InsulinPickerSafetyNote, type InsulinSelection } from '.
  *   implícito y sin migrarlos la calculadora de dosis quedaría en otra unidad
  *   que el resto de la app. Un selector que no se respeta es peor que no
  *   tenerlo, así que acá se **declara** la unidad en vez de fingir una
- *   opción. Ver `docs/ROADMAP_V0.2.md` § Fase 13, ítem 10b.
+ *   opción. Ver el tag `archive/pre-memory-bank`, § Fase 13, ítem 10b.
  */
 
 interface Step {

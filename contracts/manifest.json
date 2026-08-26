@@ -52,7 +52,7 @@
           "asset": ".claude/skills/ui-screen/SKILL.md",
           "kind": "citation",
           "lines": [
-            47
+            48
           ]
         }
       ]
@@ -76,8 +76,8 @@
           "asset": ".claude/skills/ui-screen/SKILL.md",
           "kind": "hard-read",
           "lines": [
-            64,
-            64
+            65,
+            65
           ]
         }
       ]
@@ -97,7 +97,8 @@
           "asset": ".claude/agents/domain-safety-reviewer.md",
           "kind": "citation",
           "lines": [
-            20
+            20,
+            47
           ]
         },
         {
@@ -126,25 +127,13 @@
           "lines": [
             23,
             23,
-            104
+            105
           ]
         }
       ]
     },
     {
-      "target": "docs/AI_CHAT_ARCHITECTURE.md",
-      "consumers": [
-        {
-          "asset": ".claude/skills/ui-screen/SKILL.md",
-          "kind": "write",
-          "lines": [
-            109
-          ]
-        }
-      ]
-    },
-    {
-      "target": "docs/CODE_MAP.md",
+      "target": "memory-bank/codemap.md",
       "consumers": [
         {
           "asset": ".claude/skills/app-shell/SKILL.md",
@@ -164,13 +153,25 @@
           "asset": ".claude/skills/ui-screen/SKILL.md",
           "kind": "write",
           "lines": [
-            108
+            109
           ]
         }
       ]
     },
     {
-      "target": "docs/UX_GUIDELINES.md",
+      "target": "memory-bank/reference/ai-chat-capabilities.md",
+      "consumers": [
+        {
+          "asset": ".claude/skills/ui-screen/SKILL.md",
+          "kind": "write",
+          "lines": [
+            110
+          ]
+        }
+      ]
+    },
+    {
+      "target": "memory-bank/reference/ux-rationale.md",
       "consumers": [
         {
           "asset": ".claude/skills/ui-screen/SKILL.md",

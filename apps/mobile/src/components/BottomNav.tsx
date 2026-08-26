@@ -107,7 +107,7 @@ export function BottomNav({
 
 /**
  * El estado activo se marca con color **y** con peso de la etiqueta: nunca
- * solo con color (regla de `docs/UX_GUIDELINES.md`).
+ * solo con color (regla de `contracts/ux-checklist.md`).
  */
 function NavButton({
   label,

@@ -87,7 +87,7 @@ export function SummaryModal({
   // mismo rango que ya había fallado, y solo cerrar la app entera —que
   // reinicia el estado a 14 días— lo "arreglaba". Este contador da una
   // salida real: reintentar el mismo rango sin depender del ciclo de vida
-  // del modal. Ver `docs/ROADMAP_V0.2.md` § Fase 13, ítem 5.
+  // del modal. Ver el tag `archive/pre-memory-bank`, § Fase 13, ítem 5.
   const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {

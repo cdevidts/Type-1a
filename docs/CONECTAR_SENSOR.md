@@ -132,5 +132,5 @@ cuenta; **tus registros manuales y lo que importaste se conservan**.
 - El botón viejo "Iniciar conexión LibreView" apuntaba a
   `/v1/provider/junction/link` (Junction/Vital), que **no** es el proveedor en
   uso: no cambiaba de dónde salían los datos. Se eliminó. Ver
-  `docs/CGM_INTEGRATION_DECISION.md` para por qué el plan original era Junction
+  `docs/adr/0004-cgm-provider-librelinkup.md` para por qué el plan original era Junction
   y qué se terminó usando.
