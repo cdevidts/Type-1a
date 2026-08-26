@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
-import { AppState, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AppState, Image, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { assessFreshness, calculateCorrection, calculateMealBolus, convertGlucose, isSensorReading } from '@type1a/domain';
+import type { CatalogFood } from '@type1a/domain';
 import type { CGMReading, MealAnalysisResult, TherapyProfile } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api';
@@ -12,6 +13,7 @@ import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
 import { sectionStartsOpen } from '../masterModal';
 import type { EntryFocus } from '../types';
+import { CatalogQuickAdd } from './CatalogQuickAdd';
 import { EntrySection } from './EntrySection';
 import { MacroFields } from './MacroFields';
 import { ModalShell } from './ModalShell';
@@ -72,6 +74,25 @@ export interface UnifiedEntryDraft {
   carbsG?: number;
   imageUri?: string;
   analysis?: MealAnalysisResult;
+  /**
+   * `false` = no alimentar el catálogo con los alimentos de esta comida.
+   *
+   * Existía solo en el acceso rápido de comida: esta hoja alimentaba el
+   * catálogo **siempre** que hubiera análisis, sin ofrecer la decisión. Dos
+   * caminos para lo mismo con reglas distintas.
+   */
+  saveToCatalog?: boolean;
+  /**
+   * Carbohidratos que sugirió un alimento del catálogo, si se usó uno.
+   *
+   * Se guarda como `aiEstimatedCarbsG` cuando no hubo análisis propio: el
+   * catálogo es una media de estimaciones de IA, así que ese número tiene el
+   * mismo estatus que el de una foto y **no puede pasar por dato confirmado
+   * sin rastro**. Sin esto, transcribir la sugerencia al campo de confirmación
+   * la volvía indistinguible de un valor pesado en balanza, tanto para ella
+   * como para el reporte al médico.
+   */
+  catalogSuggestedCarbsG?: number;
   rapidUnits?: number;
   basalUnits?: number;
   note?: string;
@@ -124,6 +145,7 @@ export function UnifiedEntryModal({
   latest,
   profile,
   therapyConfigured,
+  catalogFoods,
   focus = 'all',
   onClose,
   onSave,
@@ -133,6 +155,8 @@ export function UnifiedEntryModal({
   profile: TherapyProfile;
   /** False while the therapy values are still the placeholders shipped with the app. */
   therapyConfigured: boolean;
+  /** Alimentos ya conocidos, para reusar sin llamar a la IA (Fase 15). */
+  catalogFoods: readonly CatalogFood[];
   /**
    * Con qué sección abierta arranca. Es **lo único** que distingue un acceso
    * rápido de una entrada completa: el mismo formulario, plegado distinto.
@@ -169,6 +193,9 @@ export function UnifiedEntryModal({
   const [note, setNote] = useState('');
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<MealAnalysisResult | null>(null);
+  const [saveToCatalog, setSaveToCatalog] = useState(true);
+  const [catalogSuggestedCarbsG, setCatalogSuggestedCarbsG] = useState<number | null>(null);
+  const [catalogResetToken, setCatalogResetToken] = useState(0);
   const [suggestion, setSuggestion] = useState<DoseSuggestion | null>(null);
   const [correctionIncluded, setCorrectionIncluded] = useState(false);
   const [rapidFromCalculator, setRapidFromCalculator] = useState(false);
@@ -227,6 +254,12 @@ export function UnifiedEntryModal({
       setRapidStale(false);
       setDoseNeedsReconfirm(false);
       setMessage(null);
+      setSaveToCatalog(true);
+      setCatalogSuggestedCarbsG(null);
+      // Remonta `CatalogQuickAdd`, que es donde vive el alimento a medio
+      // elegir. Heredar los números de la comida anterior ya costó una corrida
+      // en `MealModal`; acá se cierra de entrada.
+      setCatalogResetToken((previous) => previous + 1);
       setOpenedAt(new Date().toISOString());
     }
     wasVisibleRef.current = visible;
@@ -558,10 +591,12 @@ export function UnifiedEntryModal({
         ...(fatG === undefined ? {} : { fatG }),
         ...(fiberG === undefined ? {} : { fiberG }),
         ...(ketonesMmolL === undefined ? {} : { ketonesMmolL }),
+        ...(saveToCatalog ? {} : { saveToCatalog: false }),
+        ...(catalogSuggestedCarbsG === null ? {} : { catalogSuggestedCarbsG }),
       });
       onClose();
     } catch (error) {
-      logSaveError('EntryModal.save', error);
+      logSaveError('UnifiedEntryModal.save', error);
       setMessage('No se pudo guardar la entrada. Inténtalo otra vez.');
     } finally {
       setBusy(false);
@@ -652,6 +687,27 @@ export function UnifiedEntryModal({
       </EntrySection>
 
       <EntrySection title="Comida" summary={mealSummary} initiallyOpen={sectionOpen('meal')}>
+        {/*
+          El agregado rápido desde el catálogo. Es **el mismo componente** que
+          monta el acceso rápido de comida, no una versión recortada: esta hoja
+          sabía sacar foto y anotar macros pero no reusar un alimento guardado,
+          así que para lo más frecuente —volver a comer lo de siempre— había
+          que salir e ir por el otro botón.
+        */}
+        <CatalogQuickAdd
+          key={catalogResetToken}
+          foods={catalogFoods}
+          onApply={(portion) => {
+            setProtein(String(portion.proteinG));
+            setFat(String(portion.fatG));
+            setFiber(String(portion.fiberG));
+            // Los carbohidratos NO se escriben solos en el campo de
+            // confirmación: se recuerda de dónde salió la sugerencia para que
+            // el número no pierda su procedencia al transcribirlo.
+            setCatalogSuggestedCarbsG(portion.carbsG);
+          }}
+          onMessage={setMessage}
+        />
         <TextInput
           style={styles.description}
           value={description}
@@ -692,6 +748,26 @@ export function UnifiedEntryModal({
           }}
           hint="Déjalos en blanco si no los anotaste. En blanco no es lo mismo que 0 g."
         />
+        {/*
+          La decisión que solo existía en el acceso rápido. Alimentar el
+          catálogo era automático acá, sin ofrecerla: dos caminos para lo mismo
+          con reglas distintas.
+        */}
+        <View style={styles.choiceRow}>
+          <View style={styles.choiceCopy}>
+            <Text style={styles.choiceTitle}>Guardarla en mi catálogo</Text>
+            <Text style={styles.choiceFoot}>
+              {saveToCatalog
+                ? 'Los alimentos quedan disponibles para reusar sin volver a llamar a la IA.'
+                : 'El catálogo no se toca.'}
+            </Text>
+          </View>
+          <Switch
+            value={saveToCatalog}
+            onValueChange={setSaveToCatalog}
+            trackColor={{ false: colors.line, true: colors.teal }}
+          />
+        </View>
       </EntrySection>
 
       <EntrySection title="Calculadora de dosis" summary={null} initiallyOpen={sectionOpen('insulin')}>
@@ -862,4 +938,8 @@ const styles = StyleSheet.create({
   saveButton: { backgroundColor: colors.orange, borderRadius: radius.md, padding: spacing.lg, alignItems: 'center', marginTop: spacing.xl },
   saveText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
   disabled: { opacity: 0.55 },
+  choiceRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md, marginTop: spacing.lg },
+  choiceCopy: { flex: 1 },
+  choiceTitle: { color: colors.ink, fontSize: 14, fontWeight: '800' },
+  choiceFoot: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: 2 },
 });

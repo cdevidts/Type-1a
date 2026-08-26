@@ -6,13 +6,8 @@ import { Image, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'rea
 import {
   calculateMealBolus,
   catalogEntryFromPortion,
-  MAX_SERVINGS,
-  MIN_SERVINGS,
-  isValidServings,
   resolveMacrosSource,
   scaleCatalogFood,
-  scaleCatalogFoodByServings,
-  servingGramsOf,
   type CatalogFood,
 } from '@type1a/domain';
 import type { MealAnalysisResult } from '@type1a/schemas';
@@ -21,6 +16,7 @@ import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api
 import { parseBlankAsUnset, parseNonNegativeNumber, parsePositiveNumber } from '../format';
 import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
+import { CatalogQuickAdd, type CatalogPortion } from './CatalogQuickAdd';
 import { MacroFields } from './MacroFields';
 import { ModalShell } from './ModalShell';
 
@@ -103,47 +99,6 @@ export interface ConfirmedMealDraft {
   };
 }
 
-/**
- * Alimentos ya conocidos, para volver a registrarlos sin llamar a la IA.
- *
- * Es el retorno del catálogo: la gente come casi siempre lo mismo, y un
- * desayuno repetido no debería costar una foto, una espera y una llamada
- * remota. Al tocar uno se escala desde los valores por 100 g guardados.
- */
-function CatalogPicker({
-  foods,
-  onPick,
-}: {
-  foods: readonly CatalogFood[];
-  onPick: (food: CatalogFood) => void;
-}) {
-  if (foods.length === 0) return null;
-  return (
-    <View style={styles.catalogBox}>
-      <Text style={styles.catalogTitle}>Lo que sueles comer</Text>
-      <Text style={styles.catalogHint}>
-        Alimentos que la IA ya reconoció antes. Tócalos para reusar su estimación sin gastar otra foto.
-      </Text>
-      <View style={styles.catalogRow}>
-        {foods.map((food) => (
-          <Pressable
-            key={food.key}
-            style={styles.catalogChip}
-            onPress={() => { onPick(food); }}
-            accessibilityRole="button"
-            accessibilityLabel={`Reusar ${food.name}`}
-          >
-            <Text style={styles.catalogChipName}>{food.name}</Text>
-            <Text style={styles.catalogChipMeta}>
-              {food.carbsPer100g.toFixed(0)} g carbos/100 g · porción {servingGramsOf(food).toFixed(0)} g
-            </Text>
-          </Pressable>
-        ))}
-      </View>
-    </View>
-  );
-}
-
 export function MealModal({
   visible,
   onClose,
@@ -185,6 +140,7 @@ export function MealModal({
   const [confirmedCarbs, setConfirmedCarbs] = useState('');
   const [busy, setBusy] = useState(false);
   const [macrosOpen, setMacrosOpen] = useState(false);
+  const [catalogResetToken, setCatalogResetToken] = useState(0);
   const [registerToTimeline, setRegisterToTimeline] = useState(true);
   const [saveToCatalog, setSaveToCatalog] = useState(true);
   const [rapidInput, setRapidInput] = useState('');
@@ -205,14 +161,6 @@ export function MealModal({
   const [fiberInput, setFiberInput] = useState('');
   /** Lo que precargó la IA, para saber después si la usuaria lo corrigió. */
   const [aiMacros, setAiMacros] = useState<{ proteinG: number; fatG: number; fiberG: number } | null>(null);
-  const [pendingFood, setPendingFood] = useState<CatalogFood | null>(null);
-  const [portionInput, setPortionInput] = useState('');
-  /**
-   * En qué unidad se pide la porción. Pensar en "dos tazas" es más fácil que
-   * en "300 gramos", pero quien pesa en balanza no debería tener que dividir
-   * mentalmente — por eso las dos puertas quedan abiertas y no se elige una.
-   */
-  const [portionMode, setPortionMode] = useState<'servings' | 'grams'>('servings');
   const [catalogSuggestedCarbsG, setCatalogSuggestedCarbsG] = useState<number | null>(null);
   /**
    * El alimento del catálogo que se aplicó y con cuántos gramos, para poder
@@ -249,9 +197,11 @@ export function MealModal({
     setFiberInput('');
     setAiMacros(null);
     setMacrosOpen(false);
-    setPendingFood(null);
-    setPortionInput('');
-    setPortionMode('servings');
+    // Remonta `CatalogQuickAdd`, que es donde vive ahora el alimento a medio
+    // elegir. Un `key` nuevo garantiza que no quede nada de la comida
+    // anterior: heredar los números de la comida previa ya costó una corrida
+    // en este mismo modal.
+    setCatalogResetToken((previous) => previous + 1);
     setCatalogSuggestedCarbsG(null);
     setAppliedCatalog(null);
     setCatalogQuestion(null);
@@ -343,37 +293,25 @@ export function MealModal({
    * mensaje sin escribirlos en el campo: siguen siendo un valor que confirma
    * la usuaria, igual que con una estimación por foto.
    */
-  function applyCatalogFood(): void {
-    if (pendingFood === null) return;
-    const typed = Number(portionInput.trim().replace(',', '.'));
-    if (!Number.isFinite(typed) || typed <= 0) {
-      setMessage(portionMode === 'servings'
-        ? `Escribe cuántas porciones comiste, entre ${MIN_SERVINGS} y ${MAX_SERVINGS}.`
-        : 'Escribe cuántos gramos comiste.');
-      return;
-    }
-    if (portionMode === 'servings' && !isValidServings(typed)) {
-      setMessage(`Las porciones van de ${MIN_SERVINGS} a ${MAX_SERVINGS}.`);
-      return;
-    }
-    const grams = portionMode === 'servings' ? typed * servingGramsOf(pendingFood) : typed;
-    const scaled = portionMode === 'servings'
-      ? scaleCatalogFoodByServings(pendingFood, typed)
-      : scaleCatalogFood(pendingFood, grams);
-    setProteinInput(String(scaled.proteinG));
-    setFatInput(String(scaled.fatG));
-    setFiberInput(String(scaled.fiberG));
-    setAiMacros({ proteinG: scaled.proteinG, fatG: scaled.fatG, fiberG: scaled.fiberG });
+  /**
+   * Qué hace esta pantalla con una porción del catálogo.
+   *
+   * La elección y el escalado los resuelve `CatalogQuickAdd`; acá solo se
+   * decide dónde aterriza. Los carbohidratos **no** se escriben en el campo de
+   * confirmación: se recuerda de dónde salió la sugerencia. Sin eso, si ella
+   * transcribe el número sin haber sacado foto, la comida queda sin
+   * `aiEstimatedCarbsG` y ese carbo —que viene de una media de estimaciones de
+   * IA— se vuelve indistinguible de uno pesado en balanza, tanto para ella
+   * como para el reporte al médico.
+   */
+  function applyCatalogPortion(portion: CatalogPortion): void {
+    setProteinInput(String(portion.proteinG));
+    setFatInput(String(portion.fatG));
+    setFiberInput(String(portion.fiberG));
+    setAiMacros({ proteinG: portion.proteinG, fatG: portion.fatG, fiberG: portion.fiberG });
     setMacrosOpen(true);
-    // Se recuerda de dónde salió la sugerencia de carbos. Sin esto, si ella
-    // transcribe el número al campo de confirmación sin haber sacado foto, la
-    // comida queda sin `aiEstimatedCarbsG` y ese carbo —que viene de una media
-    // de estimaciones de IA— se vuelve indistinguible de uno pesado en balanza,
-    // tanto para ella como para el reporte al médico.
-    setCatalogSuggestedCarbsG(scaled.carbsG);
-    setAppliedCatalog({ food: pendingFood, grams });
-    setPendingFood(null);
-    setMessage(`${pendingFood.name}, ${grams.toFixed(0)} g: ≈ ${scaled.carbsG} g de carbohidratos. Escríbelos abajo si los confirmas.`);
+    setCatalogSuggestedCarbsG(portion.carbsG);
+    setAppliedCatalog({ food: portion.food, grams: portion.grams });
   }
 
   async function analyzeFromDescription(): Promise<void> {
@@ -641,61 +579,12 @@ export function MealModal({
         </View>
       )}
 
-      {pendingFood === null ? (
-        <CatalogPicker foods={catalogFoods} onPick={(food) => { setPendingFood(food); setPortionInput(''); }} />
-      ) : (
-        <View style={styles.catalogBox}>
-          <Text style={styles.catalogTitle}>{pendingFood.name}</Text>
-          <Text style={styles.catalogHint}>
-            {portionMode === 'servings'
-              ? `¿Cuántas porciones comiste? Una porción son ${servingGramsOf(pendingFood).toFixed(0)} g${pendingFood.servingLabel === undefined ? '' : ` (${pendingFood.servingLabel})`}.`
-              : '¿Cuántos gramos comiste? Se escala desde la estimación guardada.'}
-          </Text>
-          <View style={styles.unitToggle}>
-            <Pressable
-              style={[styles.unitOption, portionMode === 'servings' && styles.unitOptionActive]}
-              onPress={() => { setPortionMode('servings'); setPortionInput(''); }}
-              accessibilityRole="button"
-              accessibilityState={{ selected: portionMode === 'servings' }}
-            >
-              <Text style={[styles.unitOptionText, portionMode === 'servings' && styles.unitOptionTextActive]}>Porciones</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.unitOption, portionMode === 'grams' && styles.unitOptionActive]}
-              onPress={() => { setPortionMode('grams'); setPortionInput(''); }}
-              accessibilityRole="button"
-              accessibilityState={{ selected: portionMode === 'grams' }}
-            >
-              <Text style={[styles.unitOptionText, portionMode === 'grams' && styles.unitOptionTextActive]}>Gramos</Text>
-            </Pressable>
-          </View>
-          <View style={styles.portionRow}>
-            <TextInput
-              value={portionInput}
-              onChangeText={setPortionInput}
-              keyboardType="decimal-pad"
-              style={styles.portionInput}
-              placeholder={portionMode === 'servings' ? `${MIN_SERVINGS} a ${MAX_SERVINGS}` : 'gramos'}
-              placeholderTextColor={colors.muted}
-              accessibilityLabel={portionMode === 'servings' ? 'Cuántas porciones' : 'Porción en gramos'}
-            />
-            <Pressable
-              style={styles.portionButton}
-              onPress={() => { applyCatalogFood(); }}
-              accessibilityRole="button"
-            >
-              <Text style={styles.portionButtonText}>Usar</Text>
-            </Pressable>
-            <Pressable
-              style={styles.portionCancel}
-              onPress={() => { setPendingFood(null); }}
-              accessibilityRole="button"
-            >
-              <Text style={styles.portionCancelText}>Cancelar</Text>
-            </Pressable>
-          </View>
-        </View>
-      )}
+      <CatalogQuickAdd
+        key={catalogResetToken}
+        foods={catalogFoods}
+        onApply={applyCatalogPortion}
+        onMessage={setMessage}
+      />
 
       <Text style={styles.confirmLabel}>CARBOHIDRATOS QUE CONFIRMAS</Text>
       <View style={styles.confirmInputWrap}>

@@ -542,6 +542,14 @@ function Type1AApp() {
                   caloriesKcal: draft.analysis.totals.caloriesKcal,
                 }),
           }),
+      // Un carbo que salió del catálogo conserva su procedencia. El catálogo
+      // es una media de estimaciones de IA, así que transcribir su sugerencia
+      // al campo de confirmación sin este rastro la vuelve indistinguible de
+      // un valor pesado en balanza — para ella y para el reporte al médico.
+      // Un análisis propio manda sobre la sugerencia del catálogo.
+      ...(draft.catalogSuggestedCarbsG === undefined || draft.analysis !== undefined
+        ? {}
+        : { aiEstimatedCarbsG: draft.catalogSuggestedCarbsG }),
       ...(draft.proteinG === undefined ? {} : { proteinG: draft.proteinG }),
       ...(draft.fatG === undefined ? {} : { fatG: draft.fatG }),
       ...(draft.fiberG === undefined ? {} : { fiberG: draft.fiberG }),
@@ -685,7 +693,10 @@ function Type1AApp() {
     // mismo con memorias distintas. Va después de guardar y en su propio
     // try/catch por la misma razón que allá: el catálogo es una comodidad, y
     // un fallo suyo nunca puede impedir que quede registrado lo que se comió.
-    if (draft.analysis !== undefined) {
+    // `saveToCatalog !== false` es la misma condición que aplica `confirmMeal`.
+    // Antes esta hoja alimentaba el catálogo **siempre** que hubiera análisis,
+    // sin ofrecer la decisión: dos caminos para lo mismo con reglas distintas.
+    if (draft.analysis !== undefined && draft.saveToCatalog !== false) {
       try {
         await recordCatalogFoods(db, catalogEntriesFrom(draft.analysis.estimate.foods, draft.timestamp));
       } catch (error) {
@@ -1187,6 +1198,7 @@ function Type1AApp() {
         latest={latest}
         profile={profile}
         therapyConfigured={therapyConfigured}
+        catalogFoods={catalogFoods}
         onClose={() => { setEntryFocus(null); }}
         onSave={saveEntry}
       />

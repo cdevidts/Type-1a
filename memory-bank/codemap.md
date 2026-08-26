@@ -89,7 +89,10 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
   `useSwipeNavigation.ts` + `swipeOrder.ts`.
 - **Modal Maestro**: `UnifiedEntryModal.tsx` es el formulario único de
   creación (`projectbrief.md`). `EntrySection.tsx` pliega sus secciones y
-  `masterModal.ts` tiene sus dos reglas, puras y con test. `MealModal` y
+  `masterModal.ts` tiene sus dos reglas, puras y con test.
+  `CatalogQuickAdd.tsx` es el agregado rápido desde el catálogo, y lo montan
+  **los dos** caminos de comida: si una facultad vive en uno solo, es una
+  asimetría. `MealModal` y
   `MealEditModal` siguen siendo modales hospedados: son las herramientas de
   catálogo e IA, pendientes de absorber.
 - **Formularios de comida**: `UnifiedEntryModal`, `MealModal`, `MealEditModal`,

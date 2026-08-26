@@ -84,11 +84,22 @@ abierta**, no qué componente se monta: `focus` decide qué se ve primero y
 - Las dos reglas viven en `src/masterModal.ts`, puras y con test: son
   arquitectura de `projectbrief.md`, no se verifican a ojo.
 
-**Fase 2 del maestro, pendiente:** absorber `MealModal` (catálogo + IA de
-creación) y `MealEditModal` (IA de edición) como secciones en vez de modales
-hospedados. No se hizo en esta rama a propósito: son ~1.800 líneas de flujo
-asíncrono con estado propio, y reescribirlas sin dispositivo para probar es
-cómo se rompe una app en uso real. La espina ya está y las recibe.
+**Paridad de la sección de comida (2026-08-26).** La sección de comida del
+maestro tenía foto, IA por texto y macros, pero **no** el catálogo ni la
+decisión de guardar en él: para reusar un alimento había que salir e ir por el
+otro botón. `CatalogQuickAdd` se extrajo de `MealModal` —movido, no
+reescrito— y ahora **los dos caminos montan el mismo componente**. Ya no hay
+una versión primitiva.
+
+De paso se cerró una fuga de procedencia: `saveEntry` alimentaba el catálogo
+siempre que hubiera análisis, sin ofrecer la decisión, y un carbo transcrito
+desde el catálogo llegaba sin `aiEstimatedCarbsG` — indistinguible de uno
+pesado en balanza para el reporte médico.
+
+**Fase 2 del maestro, pendiente:** absorber el resto de `MealModal` (la
+pregunta de tres salidas del catálogo, los toggles de registrar/catálogo con su
+interacción) y `MealEditModal` (IA de edición) como secciones en vez de modales
+hospedados. La espina ya está y las recibe.
 
 ### 2. Catálogo multi-porción con foto
 
