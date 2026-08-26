@@ -284,7 +284,7 @@ describe('macronutrientes por franja (Fase 13, ítem 7)', () => {
   });
 });
 
-describe('exclusión de dosis confundidas (Fase 23)', () => {
+describe('dosis confundidas: se declaran, no se descartan (2026-08-25)', () => {
   // Serie de lecturas cada 15 min alrededor de cada dosis, para que
   // `readingNear` siempre encuentre punto y el `n` refleje solo la exclusión.
   function seriesAround(day: number, hour: number, mgDl: number): CGMReading[] {
@@ -307,31 +307,29 @@ describe('exclusión de dosis confundidas (Fase 23)', () => {
       insulin: [rapid(doseAt, 6), rapid(atLocal(18, 13, 45), 2)],
     };
     const midday = windowNamed(buildNutritionInsights(input), 'mediodía');
-    // La primera dosis queda excluida en todos los horizontes: la segunda cae
-    // dentro de su ventana. Antes del arreglo, la gracia de 60 min la tapaba
-    // y la primera dosis entraba al promedio como si fuera limpia.
+    // La primera dosis queda MARCADA en todos los horizontes: la segunda cae
+    // dentro de su ventana. Antes del arreglo de la gracia, los 60 min la
+    // tapaban y la primera dosis se contaba como si fuera limpia.
     //
-    // ⚠️ La SEGUNDA dosis sigue contándose (por eso 1 y no 0). La ventana es
-    // hacia adelante: `collectEpisodeContext` mira qué pasó DESPUÉS del ancla,
-    // nunca antes. Una dosis 45 min ANTERIOR sigue actuando y también
-    // contamina, pero mirarlo hacia atrás exige asumir cuánto dura una
-    // insulina rápida — una suposición clínica que esta app no toma sola.
-    // Queda como limitación conocida y documentada, no como descuido.
-    expect(midday.outcomes.every((outcome) => outcome.sampleSize === 1)).toBe(true);
+    // Las dos siguen en la muestra (2, no 1): desde el 2026-08-25 una dosis
+    // confundida se **declara**, no se descarta.
+    expect(midday.outcomes.every((outcome) => outcome.sampleSize === 2)).toBe(true);
+    expect(midday.outcomes.every((outcome) => outcome.confoundedCount === 1)).toBe(true);
   });
 
   it('el horizonte de 1 h puede marcarse confundido (antes era imposible)', () => {
     // Con grace = window = 60 min el intervalo (anchor+60, anchor+60] era
     // vacío por construcción: el horizonte de 1 h NUNCA podía excluir nada.
-    // Con dos dosis, la primera se excluye y la segunda no (ventana hacia
-    // adelante, ver el test anterior), así que n baja de 2 a 1 — antes del
-    // arreglo eran 2, porque a 1 h no se podía excluir nada nunca.
+    // La detección a 1 h existe: antes `grace === window` dejaba el intervalo
+    // vacío por construcción y esa hora no podía marcarse nunca. Ahora se
+    // marca — y se cuenta, sin sacar la dosis de la muestra.
     const oneHour = buildNutritionInsights({
       ...EMPTY,
       readings: seriesAround(18, 13, 140),
       insulin: [rapid(atLocal(18, 13), 6), rapid(atLocal(18, 13, 30), 2)],
     }).find((w) => w.key === 'mediodía')!.outcomes.find((o) => o.horizonHours === 1);
-    expect(oneHour!.sampleSize).toBe(1);
+    expect(oneHour!.sampleSize).toBe(2);
+    expect(oneHour!.confoundedCount).toBeGreaterThan(0);
   });
 
   it('la comida de la propia dosis NO confunde, aunque se registre 45 min después', () => {
@@ -366,10 +364,12 @@ describe('exclusión de dosis confundidas (Fase 23)', () => {
       }),
       'mediodía',
     );
-    expect(midday.outcomes.every((outcome) => outcome.sampleSize === 0)).toBe(true);
+    expect(midday.outcomes.every((outcome) => outcome.confoundedCount > 0)).toBe(true);
+    // Y la dosis NO se pierde: sigue contando en la muestra.
+    expect(midday.outcomes.every((outcome) => outcome.sampleSize === 1)).toBe(true);
   });
 
-  it('la exclusión nunca publica un porcentaje bajo el mínimo de muestra', () => {
+  it('el mínimo de muestra sigue mandando sobre el porcentaje', () => {
     // Aunque la exclusión deje 1 sola dosis limpia, `MIN_SAMPLE_FOR_RATE`
     // sigue mandando: el número que se lee como patrón no puede nacer de n=1.
     const midday = windowNamed(
@@ -408,10 +408,11 @@ describe('el lookback llega de verdad hasta collectEpisodeContext', () => {
     insulin: [rapid(atLocal(18, 11), 2), rapid(atLocal(18, 13), 6)],
   };
 
-  it('sin lookback, la dosis anterior no confunde: las dos cuentan', () => {
+  it('sin lookback, la dosis anterior no se marca', () => {
     const midday = windowNamed(buildNutritionInsights(base), 'mediodía');
     const oneHour = midday.outcomes.find((outcome) => outcome.horizonHours === 1);
     expect(oneHour!.sampleSize).toBe(2);
+    expect(oneHour!.confoundedCount).toBe(0);
   });
 
   it('con lookback, la corrección anterior sí confunde', () => {
@@ -419,10 +420,11 @@ describe('el lookback llega de verdad hasta collectEpisodeContext', () => {
       buildNutritionInsights({ ...base, rapidLookbackMinutes: 300 }),
       'mediodía',
     );
-    // La dosis de las 13:00 queda excluida por la corrección de las 11:00.
-    // La de las 11:00 sobrevive: no tiene nada antes. Baja de 2 a 1.
+    // La dosis de las 13:00 queda MARCADA por la corrección de las 11:00 —
+    // marcada, no borrada: las dos siguen en la muestra.
     const oneHour = midday.outcomes.find((outcome) => outcome.horizonHours === 1);
-    expect(oneHour!.sampleSize).toBe(1);
+    expect(oneHour!.sampleSize).toBe(2);
+    expect(oneHour!.confoundedCount).toBe(1);
   });
 
   it('el bolo de una comida anterior NO confunde, aunque caiga en la ventana', () => {
@@ -437,9 +439,9 @@ describe('el lookback llega de verdad hasta collectEpisodeContext', () => {
       }),
       'mediodía',
     );
-    // Vuelve a 2: el bolo de las 11:00 pasó a ser "de una comida" y dejó de
-    // contar como confusor.
+    // El bolo de las 11:00 pasó a ser "de una comida" y dejó de marcarse.
     const oneHour = midday.outcomes.find((outcome) => outcome.horizonHours === 1);
     expect(oneHour!.sampleSize).toBe(2);
+    expect(oneHour!.confoundedCount).toBe(0);
   });
 });

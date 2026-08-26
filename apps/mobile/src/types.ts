@@ -252,6 +252,8 @@ export interface TimelineEntryGroupRaw {
   proteinG?: number;
   fatG?: number;
   fiberG?: number;
+  /** Cetonas en sangre del grupo, si las tiene (mmol/L). */
+  ketonesMmolL?: number;
   /**
    * Foto de la comida del grupo, si la tiene.
    *
@@ -308,6 +310,8 @@ export type TimelineEditPayload =
       proteinG?: number;
       fatG?: number;
       fiberG?: number;
+      /** Ver la nota homónima en la variante `'entry'`. */
+      ketonesMmolL?: number;
       rapidUnits?: number;
       basalUnits?: number;
       note?: string;
@@ -325,6 +329,11 @@ export type TimelineEditPayload =
       proteinG?: number;
       fatG?: number;
       fiberG?: number;
+      /**
+       * Cetonas en sangre, mmol/L (2026-08-25). El editor tiene que poder
+       * guardar lo mismo que "Nueva entrada" — pedido repetido de Verónica.
+       */
+      ketonesMmolL?: number;
       rapidUnits?: number;
       basalUnits?: number;
       note?: string;

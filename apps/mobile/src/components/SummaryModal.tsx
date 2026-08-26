@@ -487,6 +487,16 @@ function FoodTab({ insights, rangeDays }: { insights: MealWindowInsight[]; range
                 <Text style={styles.outcomeBreakdown}>
                   Bajo {outcome.belowTargetPct!.toFixed(0)}% · En rango {outcome.inTargetPct.toFixed(0)}% ·
                   {' '}Alto {outcome.aboveTargetPct!.toFixed(0)}%
+                  {/*
+                    Cuántas de esas dosis tuvieron algo registrado en el medio.
+                    Antes esas dosis se descartaban del cálculo, y con comidas
+                    cada 4-5 h eso dejaba la pantalla vacía. Ahora cuentan, y
+                    se declara — un porcentaje mezclado sin esta línea se lee
+                    como uno limpio.
+                  */}
+                  {outcome.confoundedCount > 0
+                    ? ` · ${outcome.confoundedCount} de ${outcome.sampleSize} con otra comida, dosis o actividad de por medio`
+                    : ''}
                 </Text>
               )}
             </View>

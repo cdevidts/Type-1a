@@ -57,6 +57,16 @@ export interface UnifiedEntryDraft {
   rapidUnits?: number;
   basalUnits?: number;
   note?: string;
+  /**
+   * Macros y cetonas (2026-08-25). Pedido explícito de Verónica: "Nueva
+   * entrada" tiene que poder guardar **todo** lo que guardan los accesos
+   * rápidos, sin repetir campos. Faltaban los macros (que sí tenía el modal
+   * de comida) y las cetonas (que solo tenían su acceso rápido).
+   */
+  proteinG?: number;
+  fatG?: number;
+  fiberG?: number;
+  ketonesMmolL?: number;
 }
 
 function Field({
@@ -120,6 +130,10 @@ export function EntryModal({
   const [carbs, setCarbs] = useState('');
   const [rapid, setRapid] = useState('');
   const [basal, setBasal] = useState('');
+  const [protein, setProtein] = useState('');
+  const [fat, setFat] = useState('');
+  const [fiber, setFiber] = useState('');
+  const [ketones, setKetones] = useState('');
   const [note, setNote] = useState('');
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<MealAnalysisResult | null>(null);
@@ -169,6 +183,10 @@ export function EntryModal({
       setRapid('');
       setBasal('');
       setNote('');
+      setProtein('');
+      setFat('');
+      setFiber('');
+      setKetones('');
       setImageUri(null);
       setAnalysis(null);
       setSuggestion(null);
@@ -443,8 +461,28 @@ export function EntryModal({
       setMessage('Las unidades de insulina deben ser 100 U o menos. Revisa si escribiste un punto de más.');
       return;
     }
+    // Macros y cetonas (2026-08-25). En blanco significa "no lo anoté", no
+    // "cero": la misma regla que rige en `MealModal` y en el editor.
+    const optional = (input: string): number | null | undefined =>
+      input.trim() === '' ? undefined : parseNonNegativeNumber(input);
+    const proteinG = optional(protein);
+    const fatG = optional(fat);
+    const fiberG = optional(fiber);
+    const ketonesMmolL = ketones.trim() === '' ? undefined : parseNonNegativeNumber(ketones);
+    if (proteinG === null || fatG === null || fiberG === null
+      || [proteinG, fatG, fiberG].some((value) => value !== undefined && value > 500)) {
+      setMessage('Revisa proteína, grasa y fibra: deben ser números entre 0 y 500 g, o quedar en blanco.');
+      return;
+    }
+    if (ketonesMmolL === null || (ketonesMmolL !== undefined && ketonesMmolL > 20)) {
+      setMessage('Revisa las cetonas: deben estar entre 0 y 20 mmol/L, o quedar en blanco.');
+      return;
+    }
+
     const hasSomething = carbsG !== undefined || rapidUnits !== undefined || basalUnits !== undefined
-      || glucoseValue !== undefined || description.trim() !== '' || note.trim() !== '';
+      || glucoseValue !== undefined || description.trim() !== '' || note.trim() !== ''
+      || proteinG !== undefined || fatG !== undefined || fiberG !== undefined
+      || ketonesMmolL !== undefined;
     if (!hasSomething) {
       setMessage('Completa al menos un campo antes de guardar.');
       return;
@@ -468,6 +506,10 @@ export function EntryModal({
         ...(rapidUnits === undefined ? {} : { rapidUnits }),
         ...(basalUnits === undefined ? {} : { basalUnits }),
         ...(note.trim() === '' ? {} : { note: note.trim() }),
+        ...(proteinG === undefined ? {} : { proteinG }),
+        ...(fatG === undefined ? {} : { fatG }),
+        ...(fiberG === undefined ? {} : { fiberG }),
+        ...(ketonesMmolL === undefined ? {} : { ketonesMmolL }),
       });
       onClose();
     } catch (error) {
@@ -553,6 +595,16 @@ export function EntryModal({
         </View>
       )}
       <Field label="Carbohidratos confirmados" value={carbs} unit="g" onChange={(value) => { setCarbs(value); invalidateSuggestion(); }} />
+      {/*
+        Macros (2026-08-25). Estaban en el modal de comida y no acá, así que
+        "Nueva entrada" guardaba menos que el acceso rápido. En blanco
+        significa "no lo anoté", nunca "0 g" — es la diferencia que impide
+        inventar promedios en la pantalla de Patrones.
+      */}
+      <Field label="Proteína" value={protein} unit="g" onChange={setProtein} />
+      <Field label="Grasa" value={fat} unit="g" onChange={setFat} />
+      <Field label="Fibra" value={fiber} unit="g" onChange={setFiber} />
+      <Text style={styles.hint}>Déjalos en blanco si no los anotaste. En blanco no es lo mismo que 0 g.</Text>
 
       <Text style={styles.sectionTitle}>Calculadora de dosis</Text>
       <View style={styles.warningBox}>
@@ -626,6 +678,20 @@ export function EntryModal({
         </Text>
       ) : null}
       <Text style={styles.hint}>Se guarda exactamente lo que escribas aquí, no lo calculado.</Text>
+
+      {/*
+        Cetonas (2026-08-25). Tenían acceso rápido propio y no estaban acá,
+        que es justo lo que Verónica marcó: "Nueva entrada" tiene que poder
+        guardar todo lo que guardan los botones. Se escribe como
+        `VitalsEvent`, la misma tabla que usa el acceso rápido, así que las
+        dos vías se leen igual.
+      */}
+      <Text style={styles.sectionTitle}>Cetonas</Text>
+      <Field label="En sangre" value={ketones} unit="mmol/L" onChange={setKetones} />
+      <Text style={styles.hint}>
+        Solo si te las mediste. Type 1A registra el valor y te dice en qué banda cae; qué hacer con eso lo
+        decides con tu equipo clínico.
+      </Text>
 
       <Text style={styles.sectionTitle}>Nota</Text>
       <TextInput

@@ -390,6 +390,55 @@ export interface ClockTime {
  * glucose value and computes nothing, same discipline as the correction
  * reminder.
  */
+/**
+ * Manda una de las tres alarmas ahora mismo, para poder verla.
+ *
+ * Existe porque Verónica probó la Fase 19 y dijo "no veo ninguna diferencia
+ * en las notificaciones" — y tenía razón en no verla: lo que cambió (emoji,
+ * color, título y canal propios por tipo) solo aparece cuando una alarma
+ * **se dispara**, y las tres se disparan solas horas después de un evento.
+ * La notificación fija de acceso rápido, que es la que se ve todo el tiempo,
+ * nunca fue parte de ese cambio.
+ *
+ * Un botón de prueba convierte "confía en que cambió" en "míralo".
+ */
+export async function sendTestReminder(kind: ReminderKind, style: ReminderAlertStyle): Promise<boolean> {
+  let permissions = await Notifications.getPermissionsAsync();
+  if (!permissions.granted && permissions.canAskAgain) {
+    permissions = await Notifications.requestPermissionsAsync();
+  }
+  if (!permissions.granted) return false;
+  await ensureReminderChannels(style);
+  const look = REMINDER_PRESENTATION[kind];
+  const body = {
+    meal: 'Así se ve un recordatorio post-comida. Es una prueba: no hay ningún episodio en curso.',
+    correction: 'Así se ve un recordatorio de corrección. Es una prueba: no corresponde a ninguna dosis.',
+    capillary: 'Así se ve un recordatorio de glicemia capilar. Es una prueba.',
+  }[kind];
+  const title = {
+    meal: `${look.emoji} Revisa tu glucosa post-comida`,
+    correction: `${look.emoji} Revisa tu glucosa tras la corrección`,
+    capillary: `${look.emoji} Toca medirte capilar`,
+  }[kind];
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: `${title} · prueba`,
+      body,
+      ...(Platform.OS === 'android' ? { color: look.color } : {}),
+    },
+    // Cinco segundos: lo justo para poder salir de la app y verla llegar a la
+    // bandeja como llega una de verdad. Inmediata se mostraría solo como
+    // banner en primer plano y no sería la misma prueba.
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      seconds: 5,
+      repeats: false,
+      ...(Platform.OS === 'android' ? { channelId: reminderChannelId(kind, style) } : {}),
+    },
+  });
+  return true;
+}
+
 export async function scheduleCapillaryReminders(times: readonly ClockTime[], style: ReminderAlertStyle): Promise<void> {
   await cancelCapillaryReminders();
   if (times.length === 0) return;

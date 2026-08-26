@@ -191,7 +191,11 @@ export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
   // unrelated rows. NULL for anything written outside that flow (the
   // one-datum quick actions, MySugr imports) — those stay standalone
   // Timeline items exactly as before. See saveUnifiedEntry/getTimeline.
-  for (const table of ['insulin_events', 'carb_events', 'cgm_readings', 'note_events', 'meal_events']) {
+  // `vitals_events` se sumó el 2026-08-25, cuando "Nueva entrada" y el
+  // editor ganaron el campo de cetonas: sin la columna, esa medición quedaba
+  // suelta y editarla habría exigido emparejarla por timestamp — exactamente
+  // el acoplamiento frágil que causó el bug de insulina↔comida de la Fase 21.
+  for (const table of ['insulin_events', 'carb_events', 'cgm_readings', 'note_events', 'meal_events', 'vitals_events']) {
     const columns = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
     if (!columns.some((column) => column.name === 'entry_group_id')) {
       await db.execAsync(`ALTER TABLE ${table} ADD COLUMN entry_group_id TEXT;`);
@@ -729,6 +733,15 @@ export interface UnifiedEntryInput {
   timestamp: string;
   /** True when the rapid dose covers a correction as well as carbs. */
   rapidIncludesCorrection?: boolean;
+  /**
+   * Cetonas en sangre, mmol/L (2026-08-25).
+   *
+   * "Nueva entrada" tiene que poder guardar todo lo que guardan los accesos
+   * rápidos — pedido explícito de Verónica. Se escribe como `VitalsEvent`,
+   * que es donde ya viven, no como un campo nuevo: el acceso rápido de
+   * cetonas y este campo terminan en la misma tabla y se leen igual.
+   */
+  ketonesMmolL?: number;
 }
 
 export interface UnifiedEntryOutcome {
@@ -849,6 +862,16 @@ export async function saveUnifiedEntry(
         createdAt: timestamp,
       }, entryGroupId);
       outcome.savedBasal = true;
+    }
+
+    if (input.ketonesMmolL !== undefined) {
+      await saveVitalsEvent(db, {
+        id: Crypto.randomUUID(),
+        timestamp,
+        ketonesMmolL: input.ketonesMmolL,
+        source: 'manual',
+        createdAt: timestamp,
+      }, entryGroupId);
     }
 
     if (input.note !== undefined) {
@@ -986,6 +1009,40 @@ export async function updateUnifiedEntryGroup(
       }
     } else if (existingMeal !== null) {
       await deleteMealEventRows(db, existingMeal.id);
+    }
+
+    // Cetonas del grupo (2026-08-25). Mismo contrato que el resto: el
+    // formulario manda el estado completo, así que vaciarlo borra la fila en
+    // vez de dejar el valor viejo.
+    const existingVitals = await db.getFirstAsync<{ id: string }>(
+      'SELECT id FROM vitals_events WHERE entry_group_id = ?',
+      entryGroupId,
+    );
+    if (input.ketonesMmolL !== undefined) {
+      if (existingVitals === null) {
+        await saveVitalsEvent(db, {
+          id: Crypto.randomUUID(),
+          timestamp,
+          ketonesMmolL: input.ketonesMmolL,
+          source: 'manual',
+          createdAt: timestamp,
+        }, entryGroupId);
+      } else {
+        await db.runAsync(
+          'UPDATE vitals_events SET payload = ?, timestamp = ? WHERE id = ?',
+          JSON.stringify(VitalsEventSchema.parse({
+            id: existingVitals.id,
+            timestamp,
+            ketonesMmolL: input.ketonesMmolL,
+            source: 'manual',
+            createdAt: timestamp,
+          })),
+          timestamp,
+          existingVitals.id,
+        );
+      }
+    } else if (existingVitals !== null) {
+      await db.runAsync('DELETE FROM vitals_events WHERE id = ?', existingVitals.id);
     }
 
     const existingRapid = await db.getFirstAsync<{ id: string }>(
@@ -1149,6 +1206,7 @@ export async function deleteUnifiedEntryGroup(db: SQLiteDatabase, entryGroupId: 
     }
     await db.runAsync('DELETE FROM insulin_events WHERE entry_group_id = ?', entryGroupId);
     await db.runAsync('DELETE FROM note_events WHERE entry_group_id = ?', entryGroupId);
+    await db.runAsync('DELETE FROM vitals_events WHERE entry_group_id = ?', entryGroupId);
   });
 }
 
@@ -1286,14 +1344,19 @@ export async function getNoteEvents(db: SQLiteDatabase, from: Date, to: Date): P
   return rows.flatMap((row) => decodeRow(row.payload, NoteEventSchema));
 }
 
-export async function saveVitalsEvent(db: SQLiteDatabase, vitals: VitalsEvent): Promise<void> {
+export async function saveVitalsEvent(
+  db: SQLiteDatabase,
+  vitals: VitalsEvent,
+  entryGroupId?: string,
+): Promise<void> {
   const parsed = VitalsEventSchema.parse(vitals);
   await db.runAsync(
-    'INSERT OR IGNORE INTO vitals_events (id, timestamp, payload, created_at) VALUES (?, ?, ?, ?)',
+    'INSERT OR IGNORE INTO vitals_events (id, timestamp, payload, created_at, entry_group_id) VALUES (?, ?, ?, ?, ?)',
     parsed.id,
     parsed.timestamp,
     JSON.stringify(parsed),
     parsed.createdAt,
+    entryGroupId ?? null,
   );
 }
 
@@ -1619,6 +1682,7 @@ interface EntryGroupAccumulator {
   rapid?: InsulinEvent;
   basal?: InsulinEvent;
   note?: NoteEvent;
+  vitals?: VitalsEvent;
 }
 
 /**
@@ -1638,7 +1702,7 @@ function glucoseOriginSuffix(origin: CGMReading['origin']): string {
 }
 
 export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<TimelineItem[]> {
-  const [insulinRows, carbRows, mealRows, episodeRows, glucoseRows, noteRows] = await Promise.all([
+  const [insulinRows, carbRows, mealRows, episodeRows, glucoseRows, noteRows, vitalsRows] = await Promise.all([
     db.getAllAsync<{ payload: string; entry_group_id: string | null }>(
       'SELECT payload, entry_group_id FROM insulin_events ORDER BY timestamp DESC LIMIT ?',
       limit,
@@ -1675,7 +1739,14 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
       'SELECT payload, entry_group_id FROM note_events ORDER BY timestamp DESC LIMIT ?',
       limit,
     ),
+    // Solo las que pertenecen a un grupo: las cetonas sueltas del acceso
+    // rápido siguen mostrándose como su propio ítem, igual que antes.
+    db.getAllAsync<{ payload: string; entry_group_id: string | null }>(
+      'SELECT payload, entry_group_id FROM vitals_events WHERE entry_group_id IS NOT NULL ORDER BY timestamp DESC LIMIT ?',
+      limit,
+    ),
   ]);
+
 
   const items: TimelineItem[] = [];
   // Rows sharing a non-null entry_group_id all came from one "Nueva
@@ -1691,6 +1762,13 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
     const created: EntryGroupAccumulator = { timestamp };
     groups.set(entryGroupId, created);
     return created;
+  }
+
+  for (const row of vitalsRows) {
+    if (row.entry_group_id === null) continue;
+    const event = VitalsEventSchema.safeParse(safeJsonParse(row.payload));
+    if (!event.success) continue;
+    groupFor(row.entry_group_id, event.data.timestamp).vitals = event.data;
   }
 
   for (const row of insulinRows) {
@@ -1840,6 +1918,7 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
         ...(group.rapid === undefined ? {} : { rapidUnits: group.rapid.units }),
         ...(group.basal === undefined ? {} : { basalUnits: group.basal.units }),
         ...(group.note === undefined ? {} : { note: group.note.text }),
+        ...(group.vitals?.ketonesMmolL === undefined ? {} : { ketonesMmolL: group.vitals.ketonesMmolL }),
       },
     });
   }

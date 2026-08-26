@@ -7,6 +7,7 @@ import {
   calculateNutritionTargets,
   energyFromMacros,
   MIN_MEALS_PER_GROUP,
+  type MacroGlucosePoint,
   type ActivityLevel,
   type BiologicalSex,
   type NutritionGoal,
@@ -644,10 +645,10 @@ function PatternsTab({ data }: { data: NutritionDayData | null }) {
         grasa más proteína. Se mide el cambio desde el momento de comer, no el valor absoluto.
       </Text>
       <Text style={styles.tabIntro}>
-        Cada horizonte usa solo las comidas que no tuvieron otra cosa registrada en el medio (otra comida,
-        carbohidratos, una dosis o actividad), porque en esas la glucosa ya no describe solo a la comida
-        original. Por eso el <Text style={styles.tabIntroStrong}>n</Text> de cada barra puede ser menor que
-        las comidas del grupo, y suele achicarse en los horizontes más largos.
+        Se usan <Text style={styles.tabIntroStrong}>todas</Text> tus comidas, también las que tuvieron algo
+        registrado en el medio. Cuando hay suficientes, se descuenta de cada una la parte que se explica por
+        esos carbohidratos, dosis o actividad, y recién ahí se promedia. Cada barra dice cuántas comidas usó
+        y cuántas de ellas tenían algo de por medio.
       </Text>
 
       <View style={styles.legendRow}>
@@ -698,7 +699,7 @@ function DeltaRow({
   maxAbs,
   color,
 }: {
-  point: { horizonHours: number; sampleSize: number; meanDeltaMgDl?: number | undefined } | undefined;
+  point: MacroGlucosePoint | undefined;
   maxAbs: number;
   color: string;
 }) {
@@ -726,9 +727,22 @@ function DeltaRow({
         "+62 mg/dL" sin decir que son 3 comidas invita a leerlo como un
         patrón firme. Es el mismo dato que ya se imprime en el reporte.
       */}
-      <Text style={styles.deltaValue}>
-        {delta >= 0 ? '+' : ''}{Math.round(delta)} <Text style={styles.deltaUnit}>mg/dL · n={point.sampleSize}</Text>
-      </Text>
+      <View style={styles.deltaValueWrap}>
+        <Text style={styles.deltaValue}>
+          {delta >= 0 ? '+' : ''}{Math.round(delta)} <Text style={styles.deltaUnit}>mg/dL</Text>
+        </Text>
+        {/*
+          El `n`, cuántas venían con algo de por medio, y si el promedio está
+          ajustado o no. Las tres cosas juntas: un promedio ajustado y uno
+          crudo no significan lo mismo, y presentarlos iguales sería peor que
+          no mostrar el ajuste.
+        */}
+        <Text style={styles.deltaMeta}>
+          n={point.sampleSize}
+          {point.confoundedCount > 0 ? ` · ${point.confoundedCount} con eventos` : ' · sin eventos'}
+          {point.adjusted ? ' · ajustado' : ''}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -827,6 +841,8 @@ const styles = StyleSheet.create({
 
   tabIntro: { color: colors.muted, fontSize: 12, lineHeight: 18, marginBottom: spacing.md },
   tabIntroStrong: { color: colors.ink, fontWeight: '700' },
+  deltaValueWrap: { minWidth: 132, alignItems: 'flex-end' },
+  deltaMeta: { color: colors.muted, fontSize: 10, lineHeight: 14, marginTop: 1 },
   legendRow: { gap: spacing.xs, marginBottom: spacing.md },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   legendSwatch: { width: 12, height: 12, borderRadius: 3 },
@@ -837,7 +853,7 @@ const styles = StyleSheet.create({
   deltaRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: 6 },
   deltaTrack: { flex: 1, height: 8, borderRadius: 4, backgroundColor: colors.line, overflow: 'hidden' },
   deltaFill: { height: '100%', borderRadius: 4 },
-  deltaValue: { color: colors.ink, fontSize: 13, fontWeight: '800', width: 92, textAlign: 'right' },
+  deltaValue: { color: colors.ink, fontSize: 13, fontWeight: '800', textAlign: 'right' },
   deltaUnit: { color: colors.muted, fontSize: 11, fontWeight: '600' },
   deltaInsufficient: { color: colors.muted, fontSize: 11, width: 92, textAlign: 'right' },
 

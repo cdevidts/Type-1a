@@ -1,7 +1,8 @@
 import type { ActivityEvent, CarbEvent, CGMReading, InsulinEvent, MealEvent } from '@type1a/schemas';
 
-import { hasConfoundingEvent } from './episode-context';
+import { collectEpisodeContext } from './episode-context';
 import { findRapidInsulinCandidates } from './meal';
+import { adjustForNuisance, fitOls } from './regression';
 import { readingNear, toGlucoseSeries } from './nutrition-insights';
 
 /**
@@ -55,11 +56,39 @@ export const FAT_PROTEIN_HORIZONS_HOURS = [2, 3, 4, 5] as const;
  */
 export const MIN_MEALS_PER_GROUP = 3;
 
+/**
+ * Observaciones mínimas (los dos grupos juntos) antes de intentar el ajuste
+ * por covariables.
+ *
+ * Ocho para tres covariables más el intercepto. Por debajo, el ajuste
+ * "explica" ruido y puede desplazar el promedio más de lo que lo corrige, así
+ * que se muestra el crudo y se dice que no está ajustado. Nunca se muestra un
+ * ajuste que no se sostiene.
+ */
+export const MIN_OBSERVATIONS_FOR_ADJUSTMENT = 8;
+
 export interface MacroGlucosePoint {
   horizonHours: number;
   sampleSize: number;
-  /** Cambio promedio de glucosa desde el momento de comer, en mg/dL. */
+  /**
+   * Cambio promedio de glucosa desde el momento de comer, en mg/dL.
+   *
+   * **Ajustado por lo que se registró en el medio cuando `adjusted` es
+   * `true`** (2026-08-25): a cada episodio se le descuenta la parte que el
+   * modelo atribuye a los carbohidratos, la insulina y la actividad de esa
+   * ventana, y después se promedia. Cuando no hay material para ajustar
+   * honestamente, es el promedio crudo y `adjusted` es `false` — la pantalla
+   * tiene que decirlo, no presentar los dos como si fueran lo mismo.
+   */
   meanDeltaMgDl?: number | undefined;
+  /** `true` si el promedio está ajustado por covariables. */
+  adjusted: boolean;
+  /**
+   * Cuántos de los `sampleSize` episodios tuvieron algo registrado en el
+   * medio. Se muestra para que un promedio ajustado no se lea como si viniera
+   * de una ventana limpia.
+   */
+  confoundedCount: number;
 }
 
 export interface MacroGlucoseGroup {
@@ -93,41 +122,54 @@ function mean(values: readonly number[]): number | undefined {
 interface EligibleMeal {
   atMs: number;
   fatProteinG: number;
-  /** Devuelve si algo movió la glucosa entre la comida y ese horizonte. */
-  confoundedWithin: (horizonHours: number) => boolean;
+  /**
+   * Cuánto de cada confusor se registró entre la comida y ese horizonte.
+   *
+   * **Magnitudes, no un sí/no** (2026-08-25). Antes esto era
+   * `confoundedWithin(h): boolean` y la comida se descartaba entera. Con
+   * comidas cada 4-5 h, a las 4 y 5 h no quedaba ni un episodio: la exclusión
+   * no filtraba ruido, vaciaba la pantalla. Ahora la magnitud entra al modelo
+   * como covariable y el episodio se conserva.
+   */
+  confoundersWithin: (horizonHours: number) => Confounders;
 }
 
-function groupFor(
+interface Confounders {
+  /** Gramos de carbohidratos registrados en el medio (comida o colación). */
+  carbsG: number;
+  /** Unidades de rápida en el medio, sin contar el bolo de esta comida. */
+  rapidUnits: number;
+  /** Minutos de actividad física en el medio. */
+  activityMinutes: number;
+  /** Si hubo cualquiera de las tres. Solo para poder declararlo en pantalla. */
+  any: boolean;
+}
+
+/** Una observación cruda de un episodio a un horizonte. */
+interface Observation {
+  deltaMgDl: number;
+  confounders: Confounders;
+}
+
+function observationsAt(
   meals: readonly EligibleMeal[],
   series: readonly { atMs: number; mgDl: number }[],
-): MacroGlucoseGroup {
-  const points: MacroGlucosePoint[] = FAT_PROTEIN_HORIZONS_HOURS.map((horizonHours) => {
-    const deltas: number[] = [];
-    for (const meal of meals) {
-      // La exclusión es **por horizonte**, no por comida entera: una colación
-      // a las 4 h no invalida lo que se midió a las 2 h. Descartar la comida
-      // completa tiraría datos limpios, y descartar nada dejaría entrar la
-      // colación al promedio como si fuera efecto tardío de la grasa.
-      // Se nota solo en `sampleSize`, que la pantalla ya muestra.
-      if (meal.confoundedWithin(horizonHours)) continue;
-      const atMeal = readingNear(series, meal.atMs);
-      const atHorizon = readingNear(series, meal.atMs + horizonHours * 60 * 60_000);
-      if (atMeal === undefined || atHorizon === undefined) continue;
-      deltas.push(atHorizon.mgDl - atMeal.mgDl);
-    }
-    const reportable = deltas.length >= MIN_MEALS_PER_GROUP;
-    return {
-      horizonHours,
-      sampleSize: deltas.length,
-      meanDeltaMgDl: reportable ? mean(deltas) : undefined,
-    };
-  });
-
-  return {
-    mealCount: meals.length,
-    avgFatProteinG: mean(meals.map((meal) => meal.fatProteinG)) ?? 0,
-    points,
-  };
+  horizonHours: number,
+): Observation[] {
+  const out: Observation[] = [];
+  for (const meal of meals) {
+    const atMeal = readingNear(series, meal.atMs);
+    const atHorizon = readingNear(series, meal.atMs + horizonHours * 60 * 60_000);
+    // Lo único que sigue descartando un episodio es **no tener lecturas**.
+    // Sin glucosa no hay observación; con glucosa "sucia" sí la hay, y se
+    // ajusta.
+    if (atMeal === undefined || atHorizon === undefined) continue;
+    out.push({
+      deltaMgDl: atHorizon.mgDl - atMeal.mgDl,
+      confounders: meal.confoundersWithin(horizonHours),
+    });
+  }
+  return out;
 }
 
 /**
@@ -204,8 +246,8 @@ export function buildMacroGlucoseComparison(input: {
       return {
         atMs: Date.parse(meal.timestamp),
         fatProteinG: meal.fatG! + meal.proteinG!,
-        confoundedWithin: (horizonHours: number): boolean =>
-          hasConfoundingEvent({
+        confoundersWithin: (horizonHours: number): Confounders => {
+          const events = collectEpisodeContext({
             anchorTimestamp: meal.timestamp,
             windowMinutes: horizonHours * 60,
             ignoreIds: ownIds,
@@ -215,7 +257,19 @@ export function buildMacroGlucoseComparison(input: {
             ...(input.rapidLookbackMinutes === undefined ? {} : { lookbackMinutes: input.rapidLookbackMinutes }),
             ...(input.basalLookbackMinutes === undefined ? {} : { basalLookbackMinutes: input.basalLookbackMinutes }),
             meals: input.meals,
-          }),
+          });
+          let carbsG = 0;
+          let rapidUnits = 0;
+          let activityMinutes = 0;
+          for (const event of events) {
+            // Una nota no mueve la glucosa: no es covariable de nada.
+            if (event.kind === 'carbs' || event.kind === 'meal') carbsG += event.amount ?? 0;
+            else if (event.kind === 'rapid_insulin') rapidUnits += event.amount ?? 0;
+            else if (event.kind === 'activity') activityMinutes += event.amount ?? 0;
+          }
+          const any = carbsG > 0 || rapidUnits > 0 || activityMinutes > 0;
+          return { carbsG, rapidUnits, activityMinutes, any };
+        },
       };
     })
     .filter((meal) => Number.isFinite(meal.atMs));
@@ -234,10 +288,66 @@ export function buildMacroGlucoseComparison(input: {
 
   const series = toGlucoseSeries(input.readings);
 
+  // ── Ajuste por covariables, horizonte por horizonte ─────────────────────
+  //
+  // El modelo se ajusta sobre **los dos grupos juntos**, no uno por grupo: el
+  // efecto de 20 g de carbohidratos de más sobre la glucosa a las 3 h es el
+  // mismo haya sido la comida alta o baja en grasa, y estimarlo dos veces con
+  // la mitad de los datos solo agrega ruido. Después se descuenta ese aporte
+  // de cada episodio y recién ahí se separa por grupo.
+  const higher = { ...emptyGroup(higherMeals), points: [] as MacroGlucosePoint[] };
+  const lower = { ...emptyGroup(lowerMeals), points: [] as MacroGlucosePoint[] };
+
+  for (const horizonHours of FAT_PROTEIN_HORIZONS_HOURS) {
+    const higherObs = observationsAt(higherMeals, series, horizonHours);
+    const lowerObs = observationsAt(lowerMeals, series, horizonHours);
+    const all = [...higherObs, ...lowerObs];
+
+    const predictors = all.map((observation) => [
+      observation.confounders.carbsG,
+      observation.confounders.rapidUnits,
+      observation.confounders.activityMinutes,
+    ]);
+    // `MIN_OBSERVATIONS_FOR_ADJUSTMENT` es el piso para que el ajuste
+    // signifique algo; `fitOls` devuelve `null` además cuando una covariable
+    // es constante (nadie registró actividad, por ejemplo) o el sistema queda
+    // mal condicionado. En cualquiera de esos casos se cae al promedio crudo
+    // y `adjusted` queda en `false`, que la pantalla declara.
+    const fit = fitOls(
+      all.map((observation) => observation.deltaMgDl),
+      predictors,
+      MIN_OBSERVATIONS_FOR_ADJUSTMENT,
+    );
+    const adjustedAll = fit === null
+      ? all.map((observation) => observation.deltaMgDl)
+      : adjustForNuisance(all.map((observation) => observation.deltaMgDl), predictors, [0, 1, 2], fit);
+
+    higher.points.push(pointFor(horizonHours, higherObs, adjustedAll.slice(0, higherObs.length), fit !== null));
+    lower.points.push(pointFor(horizonHours, lowerObs, adjustedAll.slice(higherObs.length), fit !== null));
+  }
+
+  return { splitAtFatProteinG, higher, lower, eligibleMealCount: eligible.length };
+}
+
+function emptyGroup(meals: readonly EligibleMeal[]): Omit<MacroGlucoseGroup, 'points'> {
   return {
-    splitAtFatProteinG,
-    higher: groupFor(higherMeals, series),
-    lower: groupFor(lowerMeals, series),
-    eligibleMealCount: eligible.length,
+    mealCount: meals.length,
+    avgFatProteinG: mean(meals.map((meal) => meal.fatProteinG)) ?? 0,
+  };
+}
+
+function pointFor(
+  horizonHours: number,
+  observations: readonly Observation[],
+  adjustedDeltas: readonly number[],
+  adjusted: boolean,
+): MacroGlucosePoint {
+  const reportable = observations.length >= MIN_MEALS_PER_GROUP;
+  return {
+    horizonHours,
+    sampleSize: observations.length,
+    confoundedCount: observations.filter((observation) => observation.confounders.any).length,
+    adjusted: adjusted && reportable,
+    meanDeltaMgDl: reportable ? mean(adjustedDeltas) : undefined,
   };
 }

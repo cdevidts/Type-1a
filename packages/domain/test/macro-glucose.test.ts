@@ -150,7 +150,7 @@ describe('buildMacroGlucoseComparison', () => {
   });
 });
 
-describe('exclusión de episodios confundidos (Fase 23)', () => {
+describe('episodios confundidos: se conservan y se ajustan (2026-08-25)', () => {
   /**
    * Seis comidas idénticas en carga y en curva: la comparación existe y sus
    * puntos tienen muestra completa. Es la base contra la que se mide qué
@@ -175,7 +175,7 @@ describe('exclusión de episodios confundidos (Fase 23)', () => {
     expect(result!.higher.points.every((point) => point.sampleSize === 3)).toBe(true);
   });
 
-  it('una colación a las 2 h saca esa comida de los horizontes posteriores, no de los previos', () => {
+  it('una colación a las 2 h queda registrada como confusor del horizonte posterior', () => {
     // Es el caso que motivó la fase: sin esto, la subida a las 3 h de la
     // colación se leía como efecto tardío de la grasa de la comida original.
     const { meals, readings } = baseline();
@@ -188,13 +188,19 @@ describe('exclusión de episodios confundidos (Fase 23)', () => {
     });
 
     expect(result).not.toBeNull();
-    const puntos = Object.fromEntries(result!.higher.points.map((p) => [p.horizonHours, p.sampleSize]));
+    // La muestra NO se achica: las tres comidas siguen contando en todos los
+    // horizontes. Lo que cambia es `confoundedCount`, que declara cuántas
+    // tuvieron algo en el medio para que el promedio no se lea como limpio.
+    const n = Object.fromEntries(result!.higher.points.map((p) => [p.horizonHours, p.sampleSize]));
+    const sucias = Object.fromEntries(result!.higher.points.map((p) => [p.horizonHours, p.confoundedCount]));
+    expect(n[2]).toBe(3);
+    expect(n[5]).toBe(3);
     // La comida 0 es de carga alta. A las 2 h todavía está limpia (la colación
     // es un minuto después); a las 3/4/5 h ya no.
-    expect(puntos[2]).toBe(3);
-    expect(puntos[3]).toBe(2);
-    expect(puntos[4]).toBe(2);
-    expect(puntos[5]).toBe(2);
+    expect(sucias[2]).toBe(0);
+    expect(sucias[3]).toBe(1);
+    expect(sucias[4]).toBe(1);
+    expect(sucias[5]).toBe(1);
   });
 
   it('el bolo de la propia comida no la confunde', () => {
@@ -215,7 +221,7 @@ describe('exclusión de episodios confundidos (Fase 23)', () => {
     expect(result!.higher.points.every((point) => point.sampleSize === 3)).toBe(true);
   });
 
-  it('una corrección tardía sí confunde, aunque el bolo de la comida no', () => {
+  it('una corrección tardía queda marcada, aunque el bolo de la comida no', () => {
     const { meals, readings } = baseline();
     const boloAt = new Date(START + 0 * DAY_MS).toISOString();
     const correccionAt = new Date(START + 0 * DAY_MS + 150 * 60_000).toISOString();
@@ -230,9 +236,12 @@ describe('exclusión de episodios confundidos (Fase 23)', () => {
     });
 
     expect(result).not.toBeNull();
-    const puntos = Object.fromEntries(result!.higher.points.map((p) => [p.horizonHours, p.sampleSize]));
-    expect(puntos[2]).toBe(3);
-    expect(puntos[3]).toBe(2);
+    const n = Object.fromEntries(result!.higher.points.map((p) => [p.horizonHours, p.sampleSize]));
+    const sucias = Object.fromEntries(result!.higher.points.map((p) => [p.horizonHours, p.confoundedCount]));
+    expect(n[2]).toBe(3);
+    expect(n[3]).toBe(3);
+    expect(sucias[2]).toBe(0);
+    expect(sucias[3]).toBe(1);
   });
 });
 
@@ -262,7 +271,7 @@ describe('el bolo propio de la comida vs. una corrección posterior', () => {
     for (const point of comparison!.higher.points) expect(point.sampleSize).toBe(MIN_MEALS_PER_GROUP);
   });
 
-  it('una SEGUNDA dosis 40 min después sí confunde', () => {
+  it('una SEGUNDA dosis 40 min después queda marcada como confusor', () => {
     // Éste es el bug que encontró la revisión de seguridad: `ownIds` usaba
     // `candidateIds` (TODAS las dosis rápidas de la ventana -90/+60) en vez
     // del bolo recomendado, así que una corrección real 40 min después se
@@ -274,8 +283,35 @@ describe('el bolo propio de la comida vs. una corrección posterior', () => {
       insulin: [0, 1, 2, 3, 4, 5].flatMap((i) => [insulinAt(i, 0, 6), insulinAt(i, 40, 2)]),
     });
     expect(comparison).not.toBeNull();
-    // Con la segunda dosis dentro de la ventana, ningún horizonte queda limpio.
-    for (const point of comparison!.higher.points) expect(point.sampleSize).toBe(0);
-    for (const point of comparison!.lower.points) expect(point.sampleSize).toBe(0);
+    // Ninguna ventana queda limpia — pero **la muestra se conserva entera**.
+    // Éste es el cambio del 2026-08-25: antes acá había `sampleSize === 0` en
+    // todos los horizontes, o sea la pantalla vacía, que es lo que Verónica
+    // vio en el dispositivo.
+    for (const point of comparison!.higher.points) {
+      expect(point.sampleSize).toBe(MIN_MEALS_PER_GROUP);
+      expect(point.confoundedCount).toBe(MIN_MEALS_PER_GROUP);
+    }
+    for (const point of comparison!.lower.points) expect(point.sampleSize).toBe(MIN_MEALS_PER_GROUP);
+  });
+
+  it('con seis comidas y confusores variados, el promedio sale ajustado', () => {
+    // El ajuste necesita variación en las covariables: si todas las comidas
+    // tienen exactamente el mismo confusor, el sistema es singular y
+    // `fitOls` devuelve null (y `adjusted` queda en false, declarado).
+    const comparison = buildMacroGlucoseComparison({
+      meals: sixMeals(),
+      readings: readingsForAll(),
+      insulin: [0, 1, 2, 3, 4, 5].map((i) => insulinAt(i, 0, 6)),
+      carbs: [0, 1, 2, 3, 4, 5].map((i) => {
+        const at = new Date(START + i * DAY_MS + 100 * 60_000).toISOString();
+        return { id: `c-${i}`, timestamp: at, carbsG: 10 + i * 5, source: 'manual' as const, createdAt: at };
+      }),
+    });
+    expect(comparison).not.toBeNull();
+    // Seis observaciones por horizonte: por debajo de
+    // MIN_OBSERVATIONS_FOR_ADJUSTMENT (8), así que NO se ajusta y se dice.
+    for (const point of comparison!.higher.points) expect(point.adjusted).toBe(false);
+    // Pero el dato sigue estando.
+    for (const point of comparison!.higher.points) expect(point.meanDeltaMgDl).toBeDefined();
   });
 });

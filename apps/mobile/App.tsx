@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import * as Crypto from 'expo-crypto';
 import * as Linking from 'expo-linking';
 import * as Notifications from 'expo-notifications';
 import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
+import Calculator from 'lucide-react-native/icons/calculator';
+import FlaskConical from 'lucide-react-native/icons/flask-conical';
 import Settings from 'lucide-react-native/icons/settings';
+import Syringe from 'lucide-react-native/icons/syringe';
+import UtensilsCrossed from 'lucide-react-native/icons/utensils-crossed';
 import {
   AppState,
   Pressable,
@@ -635,6 +639,20 @@ function Type1AApp() {
     await loadLocalState();
   }
 
+  /**
+   * Procedencia de los macros de una entrada de "Nueva entrada".
+   *
+   * `'ai'` solo si vinieron enteros del análisis y ella no escribió ninguno;
+   * `'mixed'` si hubo análisis y además escribió algo; `'user'` si los
+   * escribió sin análisis de por medio; y `undefined` si no hay ninguno, que
+   * es "no anotado" y **no** debe leerse como confirmado por ella.
+   */
+  function macrosSourceFor(draft: UnifiedEntryDraft): 'ai' | 'user' | 'mixed' | undefined {
+    const typed = draft.proteinG !== undefined || draft.fatG !== undefined || draft.fiberG !== undefined;
+    if (draft.analysis !== undefined) return typed ? 'mixed' : 'ai';
+    return typed ? 'user' : undefined;
+  }
+
   async function saveEntry(draft: UnifiedEntryDraft): Promise<void> {
     const outcome = await saveUnifiedEntry(db, {
       timestamp: draft.timestamp,
@@ -646,6 +664,13 @@ function Type1AApp() {
       ...(draft.rapidUnits === undefined ? {} : { rapidUnits: draft.rapidUnits }),
       ...(draft.basalUnits === undefined ? {} : { basalUnits: draft.basalUnits }),
       ...(draft.note === undefined ? {} : { note: draft.note }),
+      // El análisis va PRIMERO y lo que ella escribió después, para que lo
+      // suyo gane. Desde el 2026-08-25 esta hoja SÍ tiene campos de macros
+      // editables, así que el bloque anterior —que los tomaba enteros del
+      // análisis y los marcaba `macrosSource: 'ai'`— habría pisado en
+      // silencio la proteína que ella corrigiera y encima la habría
+      // etiquetado como estimación de IA. Es el mismo error que ya se había
+      // corregido en `confirmMeal`.
       ...(draft.analysis === undefined
         ? {}
         : {
@@ -655,12 +680,12 @@ function Type1AApp() {
             fatG: draft.analysis.totals.fatG,
             fiberG: draft.analysis.totals.fiberG,
             caloriesKcal: draft.analysis.totals.caloriesKcal,
-            // Esta hoja no tiene campos de macros que la usuaria pueda tocar:
-            // vienen enteros del análisis. Marcarlo es obligatorio — si no,
-            // "ausente" mezclaría comidas viejas con comidas 100 % IA
-            // guardadas hoy, y la semántica del campo sería falsa.
-            macrosSource: 'ai' as const,
           }),
+      ...(draft.proteinG === undefined ? {} : { proteinG: draft.proteinG }),
+      ...(draft.fatG === undefined ? {} : { fatG: draft.fatG }),
+      ...(draft.fiberG === undefined ? {} : { fiberG: draft.fiberG }),
+      ...(macrosSourceFor(draft) === undefined ? {} : { macrosSource: macrosSourceFor(draft) }),
+      ...(draft.ketonesMmolL === undefined ? {} : { ketonesMmolL: draft.ketonesMmolL }),
     });
     // Mismo trato que `confirmMeal`: una comida analizada por IA alimenta el
     // catálogo, venga del formulario que venga. Esta hoja no lo hacía, así que
@@ -867,7 +892,8 @@ function Type1AApp() {
     } else if (payload.kind === 'glucose') {
       const hasAttachments = payload.carbsG !== undefined || payload.description !== undefined
         || payload.rapidUnits !== undefined || payload.basalUnits !== undefined || payload.note !== undefined
-        || payload.proteinG !== undefined || payload.fatG !== undefined || payload.fiberG !== undefined;
+        || payload.proteinG !== undefined || payload.fatG !== undefined || payload.fiberG !== undefined
+        || payload.ketonesMmolL !== undefined;
       if (hasAttachments) {
         // Turn the standalone reading into a packaged entry anchored on it.
         const outcome = await attachEntryToReading(db, item.id, {
@@ -880,6 +906,7 @@ function Type1AApp() {
           ...(payload.proteinG === undefined ? {} : { proteinG: payload.proteinG }),
           ...(payload.fatG === undefined ? {} : { fatG: payload.fatG }),
           ...(payload.fiberG === undefined ? {} : { fiberG: payload.fiberG }),
+          ...(payload.ketonesMmolL === undefined ? {} : { ketonesMmolL: payload.ketonesMmolL }),
           ...(payload.rapidUnits === undefined ? {} : { rapidUnits: payload.rapidUnits }),
           ...(payload.basalUnits === undefined ? {} : { basalUnits: payload.basalUnits }),
           ...(payload.note === undefined ? {} : { note: payload.note }),
@@ -910,6 +937,7 @@ function Type1AApp() {
         ...(payload.proteinG === undefined ? {} : { proteinG: payload.proteinG }),
         ...(payload.fatG === undefined ? {} : { fatG: payload.fatG }),
         ...(payload.fiberG === undefined ? {} : { fiberG: payload.fiberG }),
+        ...(payload.ketonesMmolL === undefined ? {} : { ketonesMmolL: payload.ketonesMmolL }),
         ...(payload.rapidUnits === undefined ? {} : { rapidUnits: payload.rapidUnits }),
         ...(payload.basalUnits === undefined ? {} : { basalUnits: payload.basalUnits }),
         ...(payload.note === undefined ? {} : { note: payload.note }),
@@ -1078,40 +1106,76 @@ function Type1AApp() {
 
 
         <View style={styles.quickHeader}>
-          <View>
+          <View style={styles.flex}>
             <Text style={styles.sectionTitle}>Registro rápido</Text>
-            <Text style={styles.sectionSubtitle}>Atajos de un solo dato</Text>
+            {/*
+              Ya no dice "atajos de un solo dato": desde la Fase 21 "Comida"
+              no es un dato suelto, es el registro completo con foto, IA,
+              catálogo e insulina. La bajada describe lo que hay.
+            */}
+            <Text style={styles.sectionSubtitle}>Lo que registras a diario, a un toque</Text>
           </View>
           {refreshing ? <Text style={styles.syncing}>Sincronizando…</Text> : null}
         </View>
 
-        <View style={styles.quickGrid}>
-          {/*
-            Fase 21: "Carbos" y "Rápida" se fusionaron en "Comida". Los dos
-            escribían filas sueltas con timestamps propios, y por eso después
-            la app no encontraba qué dosis era de qué comida. Corrección queda
-            aparte: es una acción clínica distinta, no ligada a un plato.
-          */}
-          <QuickButton label="Comida" value="+" color={colors.orange} soft={colors.orangeSoft} onPress={() => { setMealOpen(true); }} />
-          <QuickButton label="Basal" value="+ U" color={colors.navy} soft="#E7EDF2" onPress={() => { setQuickRoute('basal'); }} />
-          <QuickButton label="Corrección" value="ƒ(x)" color={colors.teal} soft={colors.tealSoft} onPress={() => { setQuickRoute('correction'); }} />
-          {/*
-            Cetonas va acá y no dentro de "Nueva entrada" porque el momento en
-            que se mide —enfermedad, glucosa alta sostenida— es justo cuando
-            no se quiere navegar. Cae en su propia fila por el `flexWrap`, lo
-            que además la separa visualmente de las cuatro rutinarias.
-          */}
-          <QuickButton label="Cetonas" value="mmol/L" color={colors.red} soft={colors.redSoft} onPress={() => { setKetonesOpen(true); }} />
-        </View>
+        {/*
+          Cuatro destinos, uno por acción real. Rediseñado el 2026-08-25 con
+          dos correcciones que Verónica pidió:
 
-        <Pressable style={styles.mealButton} onPress={() => { setMealOpen(true); }}>
-          <View style={styles.mealIcon}><Text style={styles.mealIconText}>◎</Text></View>
-          <View style={styles.mealButtonCopy}>
-            <Text style={styles.mealTitle}>Foto o registro manual de comida</Text>
-            <Text style={styles.mealSubtitle}>IA opcional · carbohidratos siempre confirmados por ti</Text>
-          </View>
-          <Text style={styles.chevron}>›</Text>
-        </Pressable>
+          1. **Se fue la tarjeta "Foto o registro manual de comida"**, que
+             abría exactamente lo mismo que el botón "Comida". Dos entradas al
+             mismo lugar es ruido, y la que sobra es la que no es par de las
+             demás. Su explicación ("IA opcional · carbohidratos siempre
+             confirmados por ti") se mudó al pie del propio botón, donde
+             sigue diciendo lo mismo sin ocupar una fila entera.
+          2. **Se fueron los glifos Unicode** (`ƒ(x)`, `mmol/L`, `◎`), que la
+             skill `/iconography` prohíbe desde hace tiempo: se renderizan
+             distinto en cada Android, no tienen grosor controlable y no
+             comunican nada a quien no los reconozca. Ahora son iconos de
+             Lucide, la familia que ya usa la barra inferior.
+
+          Cada botón lleva icono + etiqueta + una línea de qué hace: un icono
+          nunca comunica solo.
+        */}
+        <View style={styles.quickGrid}>
+          <QuickButton
+            label="Comida"
+            hint="Foto o texto · IA opcional"
+            Icon={UtensilsCrossed}
+            color={colors.orange}
+            soft={colors.orangeSoft}
+            onPress={() => { setMealOpen(true); }}
+          />
+          <QuickButton
+            label="Corrección"
+            hint="Calcular con tus parámetros"
+            Icon={Calculator}
+            color={colors.teal}
+            soft={colors.tealSoft}
+            onPress={() => { setQuickRoute('correction'); }}
+          />
+          <QuickButton
+            label="Basal"
+            hint="Tu dosis de base del día"
+            Icon={Syringe}
+            color={colors.navy}
+            soft="#E7EDF2"
+            onPress={() => { setQuickRoute('basal'); }}
+          />
+          {/*
+            Cetonas queda acá y no dentro de "Nueva entrada" porque el momento
+            en que se mide —enfermedad, glucosa alta sostenida— es justo
+            cuando no se quiere navegar.
+          */}
+          <QuickButton
+            label="Cetonas"
+            hint="Medición en sangre"
+            Icon={FlaskConical}
+            color={colors.red}
+            soft={colors.redSoft}
+            onPress={() => { setKetonesOpen(true); }}
+          />
+        </View>
 
         <Timeline items={timeline} onSaveItem={saveTimelineItem} onDeleteItem={deleteTimelineItem} onSaveMealEdit={saveMealEdit} />
 
@@ -1313,21 +1377,46 @@ function Type1AApp() {
 
 function QuickButton({
   label,
-  value,
+  hint,
+  Icon,
   color,
   soft,
   onPress,
 }: {
   label: string;
-  value: string;
+  /** Qué hace, en una línea. Un icono nunca comunica solo (`/iconography`). */
+  hint: string;
+  /**
+   * Icono de Lucide, importado por subpath. Nunca un glifo Unicode.
+   *
+   * `ComponentType` y no una firma de función: los iconos de Lucide son
+   * `ForwardRefExoticComponent`, que no encaja en un tipo de función simple.
+   */
+  Icon: ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
   color: string;
   soft: string;
   onPress: () => void;
 }) {
   return (
-    <Pressable style={({ pressed }) => [styles.quickButton, { backgroundColor: soft }, pressed && styles.pressed]} onPress={onPress} accessibilityRole="button">
-      <Text style={[styles.quickValue, { color }]}>{value}</Text>
-      <Text style={[styles.quickLabel, { color }]}>{label}</Text>
+    <Pressable
+      style={({ pressed }) => [styles.quickButton, { backgroundColor: soft }, pressed && styles.pressed]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}. ${hint}`}
+    >
+      {/*
+        El icono va en su propio disco blanco: sobre el fondo suave del botón
+        el trazo de 2 px de Lucide pierde contraste, y el disco lo devuelve
+        sin tener que engrosarlo (lo que rompería la consistencia con la barra
+        inferior, que usa el mismo grosor).
+      */}
+      <View style={styles.quickIcon}>
+        <Icon size={22} color={color} strokeWidth={2} />
+      </View>
+      <View>
+        <Text style={[styles.quickLabel, { color }]}>{label}</Text>
+        <Text style={styles.quickHint}>{hint}</Text>
+      </View>
     </Pressable>
   );
 }
@@ -1368,17 +1457,25 @@ const styles = StyleSheet.create({
   sectionSubtitle: { color: colors.muted, fontSize: 13, marginTop: 2 },
   syncing: { color: colors.teal, fontSize: 11, fontWeight: '700' },
   quickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
-  quickButton: { width: '48%', minHeight: 108, borderRadius: radius.md, padding: spacing.lg, justifyContent: 'space-between' },
-  quickValue: { fontSize: 29, fontWeight: '900' },
-  quickLabel: { fontSize: 15, fontWeight: '800' },
+  quickButton: {
+    width: '48%',
+    minHeight: 112,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  quickIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickLabel: { fontSize: 16, fontWeight: '800' },
+  quickHint: { color: colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
   pressed: { opacity: 0.68, transform: [{ scale: 0.98 }] },
-  mealButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.md, borderColor: colors.line, borderWidth: 1 },
-  mealIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.orangeSoft, alignItems: 'center', justifyContent: 'center' },
-  mealIconText: { color: colors.orange, fontSize: 24 },
-  mealButtonCopy: { flex: 1, paddingHorizontal: spacing.md },
-  mealTitle: { color: colors.ink, fontSize: 14, fontWeight: '800' },
-  mealSubtitle: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: 2 },
-  chevron: { color: colors.muted, fontSize: 30 },
   footerSafety: { backgroundColor: colors.redSoft, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.xl },
   footerTitle: { color: colors.red, fontSize: 13, fontWeight: '900' },
   footerText: { color: colors.red, fontSize: 11, lineHeight: 17, marginTop: 3 },

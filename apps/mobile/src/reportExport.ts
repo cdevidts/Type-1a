@@ -318,7 +318,10 @@ function nutritionSectionHtml(insights: MealWindowInsight[], meals: readonly Mea
         // Los tres lados, no solo el "en rango": un único porcentaje al lado
         // del promedio de insulina de la franja se lee como una nota de
         // desempeño, y esconde si los fallos fueron hipos o hipers.
-        return `<td class="num">${found.inTargetPct.toFixed(0)}%<br /><span class="muted">↓${found.belowTargetPct!.toFixed(0)} ↑${found.aboveTargetPct!.toFixed(0)} · n=${found.sampleSize}</span></td>`;
+        // `c=` declara cuántas de esas dosis tuvieron otra comida, dosis o
+        // actividad de por medio. Va al reporte médico porque un porcentaje
+        // mezclado leído como limpio es peor que no tener el número.
+        return `<td class="num">${found.inTargetPct.toFixed(0)}%<br /><span class="muted">↓${found.belowTargetPct!.toFixed(0)} ↑${found.aboveTargetPct!.toFixed(0)} · n=${found.sampleSize}${found.confoundedCount > 0 ? ` · c=${found.confoundedCount}` : ''}</span></td>`;
       };
       return `<tr>
         <td>${escapeHtml(w.label)} <span class="muted">${String(w.startHour).padStart(2, '0')}–${String(w.endHour % 24).padStart(2, '0')} h</span></td>
@@ -382,7 +385,7 @@ function macroGlucoseSectionHtml(comparison: MacroGlucoseComparison | null): str
       return `<td class="num muted">n=${point?.sampleSize ?? 0}</td>`;
     }
     const sign = point.meanDeltaMgDl >= 0 ? '+' : '';
-    return `<td class="num">${sign}${point.meanDeltaMgDl.toFixed(0)}<br /><span class="muted">n=${point.sampleSize}</span></td>`;
+    return `<td class="num">${sign}${point.meanDeltaMgDl.toFixed(0)}<br /><span class="muted">n=${point.sampleSize}${point.confoundedCount > 0 ? ` · c=${point.confoundedCount}` : ''}${point.adjusted ? ' · aj.' : ''}</span></td>`;
   };
   const row = (label: string, group: MacroGlucoseComparison['higher']): string =>
     `<tr>
@@ -598,7 +601,7 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
   const outcomeCell = (window: MealWindowInsight, hours: number): string => {
     const found = window.outcomes.find((o) => o.horizonHours === hours);
     if (found === undefined || found.inTargetPct === undefined) return `sin dato (n=${found?.sampleSize ?? 0})`;
-    return `en rango ${found.inTargetPct.toFixed(0)}% / bajo ${found.belowTargetPct!.toFixed(0)}% / alto ${found.aboveTargetPct!.toFixed(0)}% (n=${found.sampleSize})`;
+    return `en rango ${found.inTargetPct.toFixed(0)}% / bajo ${found.belowTargetPct!.toFixed(0)}% / alto ${found.aboveTargetPct!.toFixed(0)}% (n=${found.sampleSize}${found.confoundedCount > 0 ? `, ${found.confoundedCount} con eventos de por medio` : ''})`;
   };
   const patternsSheetData: (string | number)[][] = [
     ['Franja', 'Horario', 'Carbos confirmados prom. (g)', 'Proteína prom. (g)', 'Grasa prom. (g)', 'Fibra prom. (g)', 'Rápida prom. (U)', 'Basal prom. (U)', 'Glucosa a 1 h', 'Glucosa a 2 h', 'Glucosa a 3 h'],
@@ -634,7 +637,7 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
       const point = group.points.find((p) => p.horizonHours === hours);
       if (point === undefined || point.meanDeltaMgDl === undefined) return `sin dato (n=${point?.sampleSize ?? 0})`;
       const sign = point.meanDeltaMgDl >= 0 ? '+' : '';
-      return `${sign}${point.meanDeltaMgDl.toFixed(0)} (n=${point.sampleSize})`;
+      return `${sign}${point.meanDeltaMgDl.toFixed(0)} (n=${point.sampleSize}${point.confoundedCount > 0 ? `, ${point.confoundedCount} con eventos de por medio` : ''}${point.adjusted ? ', ajustado por covariables' : ''})`;
     }),
   ];
   const macroGlucoseSheetData: (string | number)[][] = macroGlucose === null

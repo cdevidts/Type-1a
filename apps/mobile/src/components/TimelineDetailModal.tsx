@@ -220,6 +220,7 @@ export function TimelineDetailModal({
   const [entryProteinG, setEntryProteinG] = useState('');
   const [entryFatG, setEntryFatG] = useState('');
   const [entryFiberG, setEntryFiberG] = useState('');
+  const [entryKetones, setEntryKetones] = useState('');
 
   // Re-seed the edit fields (and drop any in-progress edit/error) every time
   // a different item is opened. Keyed on the item's identity, not on
@@ -246,6 +247,7 @@ export function TimelineDetailModal({
       setEntryProteinG('');
       setEntryFatG('');
       setEntryFiberG('');
+      setEntryKetones('');
     } else if (item.kind === 'note') {
       setNote(item.raw.text);
     } else if (item.kind === 'entry') {
@@ -258,6 +260,7 @@ export function TimelineDetailModal({
       setEntryProteinG(item.raw.proteinG === undefined ? '' : String(item.raw.proteinG));
       setEntryFatG(item.raw.fatG === undefined ? '' : String(item.raw.fatG));
       setEntryFiberG(item.raw.fiberG === undefined ? '' : String(item.raw.fiberG));
+      setEntryKetones(item.raw.ketonesMmolL === undefined ? '' : String(item.raw.ketonesMmolL));
     }
   }, [item]);
 
@@ -268,6 +271,13 @@ export function TimelineDetailModal({
    * afirmación distinta de "0 g". Confundirlas hace que el reporte al médico
    * muestre promedios de ceros que nadie midió.
    */
+  function parseKetones(): { ketonesMmolL?: number } | null {
+    if (entryKetones.trim() === '') return {};
+    const value = parseNonNegativeNumber(entryKetones);
+    if (value === null || value > 20) return null;
+    return { ketonesMmolL: value };
+  }
+
   function parseMacros(): { proteinG?: number; fatG?: number; fiberG?: number } | null {
     const one = (input: string): number | null | undefined =>
       input.trim() === '' ? undefined : parseNonNegativeNumber(input);
@@ -337,7 +347,9 @@ export function TimelineDetailModal({
         return;
       }
       const hasAttachments = carbsValue !== undefined || entryDescription.trim() !== ''
-        || rapidValue !== undefined || basalValue !== undefined || entryNote.trim() !== '';
+        || rapidValue !== undefined || basalValue !== undefined || entryNote.trim() !== ''
+        || entryProteinG.trim() !== '' || entryFatG.trim() !== '' || entryFiberG.trim() !== ''
+        || entryKetones.trim() !== '';
       // For a read-only sensor value, editing only makes sense to attach
       // something — there's no value change to save on its own.
       if (!isManual && !hasAttachments) {
@@ -349,12 +361,18 @@ export function TimelineDetailModal({
         setError('Revisa proteína, grasa y fibra: deben ser números entre 0 y 500 g, o quedar en blanco.');
         return;
       }
+      const ketones = parseKetones();
+      if (ketones === null) {
+        setError('Revisa las cetonas: deben estar entre 0 y 20 mmol/L, o quedar en blanco.');
+        return;
+      }
       payload = {
         kind: 'glucose',
         ...(glucoseValue === undefined ? {} : { glucose: glucoseValue }),
         ...(carbsValue === undefined ? {} : { carbsG: carbsValue }),
         ...(entryDescription.trim() === '' ? {} : { description: entryDescription.trim() }),
         ...macros,
+        ...ketones,
         ...(rapidValue === undefined ? {} : { rapidUnits: rapidValue }),
         ...(basalValue === undefined ? {} : { basalUnits: basalValue }),
         ...(entryNote.trim() === '' ? {} : { note: entryNote.trim() }),
@@ -396,7 +414,9 @@ export function TimelineDetailModal({
         return;
       }
       const hasSomething = glucoseValue !== undefined || carbsValue !== undefined || entryDescription.trim() !== ''
-        || rapidValue !== undefined || basalValue !== undefined || entryNote.trim() !== '';
+        || rapidValue !== undefined || basalValue !== undefined || entryNote.trim() !== ''
+        || entryProteinG.trim() !== '' || entryFatG.trim() !== '' || entryFiberG.trim() !== ''
+        || entryKetones.trim() !== '';
       if (!hasSomething) {
         setError('Completa al menos un campo, o usa el botón de eliminar de abajo.');
         return;
@@ -406,12 +426,18 @@ export function TimelineDetailModal({
         setError('Revisa proteína, grasa y fibra: deben ser números entre 0 y 500 g, o quedar en blanco.');
         return;
       }
+      const ketones = parseKetones();
+      if (ketones === null) {
+        setError('Revisa las cetonas: deben estar entre 0 y 20 mmol/L, o quedar en blanco.');
+        return;
+      }
       payload = {
         kind: 'entry',
         ...(glucoseValue === undefined ? {} : { manualGlucose: glucoseValue }),
         ...(carbsValue === undefined ? {} : { carbsG: carbsValue }),
         ...(entryDescription.trim() === '' ? {} : { description: entryDescription.trim() }),
         ...macros,
+        ...ketones,
         ...(rapidValue === undefined ? {} : { rapidUnits: rapidValue }),
         ...(basalValue === undefined ? {} : { basalUnits: basalValue }),
         ...(entryNote.trim() === '' ? {} : { note: entryNote.trim() }),
@@ -551,6 +577,18 @@ export function TimelineDetailModal({
                 </View>
               </View>
               <Text style={styles.hint}>Déjalos en blanco si no los anotaste. En blanco no es lo mismo que 0 g.</Text>
+              {/*
+                Cetonas (2026-08-25). El editor tiene que poder guardar lo
+                mismo que "Nueva entrada" — pedido repetido de Verónica. Se
+                guardan agrupadas con la entrada (`entry_group_id`), no
+                emparejadas por hora: emparejar por timestamp es justo lo que
+                rompió la asociación insulina↔comida en la Fase 21.
+              */}
+              <Text style={styles.fieldLabel}>Cetonas en sangre</Text>
+              <View style={styles.inputWrap}>
+                <TextInput value={entryKetones} onChangeText={setEntryKetones} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
+                <Text style={styles.inputUnit}>mmol/L</Text>
+              </View>
               <View style={styles.fieldRow}>
                 <View style={styles.fieldRowItem}>
                   <Text style={styles.fieldLabel}>Rápida</Text>
@@ -657,6 +695,18 @@ export function TimelineDetailModal({
                 </View>
               </View>
               <Text style={styles.hint}>Déjalos en blanco si no los anotaste. En blanco no es lo mismo que 0 g.</Text>
+              {/*
+                Cetonas (2026-08-25). El editor tiene que poder guardar lo
+                mismo que "Nueva entrada" — pedido repetido de Verónica. Se
+                guardan agrupadas con la entrada (`entry_group_id`), no
+                emparejadas por hora: emparejar por timestamp es justo lo que
+                rompió la asociación insulina↔comida en la Fase 21.
+              */}
+              <Text style={styles.fieldLabel}>Cetonas en sangre</Text>
+              <View style={styles.inputWrap}>
+                <TextInput value={entryKetones} onChangeText={setEntryKetones} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
+                <Text style={styles.inputUnit}>mmol/L</Text>
+              </View>
               <View style={styles.fieldRow}>
                 <View style={styles.fieldRowItem}>
                   <Text style={styles.fieldLabel}>Rápida</Text>

@@ -103,6 +103,17 @@ export interface HorizonOutcome {
   aboveTargetPct?: number | undefined;
   /** Dosis con una lectura utilizable en ese horizonte. */
   sampleSize: number;
+  /**
+   * Cuántas de esas dosis tuvieron algo registrado en el medio (otra comida,
+   * carbohidratos, otra dosis, actividad).
+   *
+   * **Se declara en vez de descartarse** (2026-08-25). Excluirlas vaciaba la
+   * pantalla, porque en diabetes tipo 1 con múltiples dosis casi ninguna
+   * ventana de 3 h queda limpia. Quien muestre el porcentaje tiene que
+   * mostrar también este número: sin él, un resultado mezclado se lee como
+   * uno limpio.
+   */
+  confoundedCount: number;
 }
 
 export interface MealWindowInsight {
@@ -300,15 +311,25 @@ export function buildNutritionInsights(input: NutritionInsightsInput): MealWindo
 
     const outcomes: HorizonOutcome[] = RESPONSE_HORIZONS_HOURS.map((horizonHours) => {
       let sampleSize = 0;
+      let confoundedCount = 0;
       let belowCount = 0;
       let inTargetCount = 0;
       let aboveCount = 0;
       for (const dose of rapidDoses) {
-        // Exclusión por horizonte (Fase 23): una corrección a los 90 min
-        // invalida el "% en rango" a 2 y 3 h de ESTA dosis, pero no el de 1 h.
-        // Sin esto, el resultado de la segunda dosis se le atribuía a la
-        // primera — y este número se lee como patrón, y se imprime en el
-        // reporte que va al control médico.
+        // ── Se DECLARA, no se descarta (2026-08-25) ──────────────────────
+        //
+        // Acá la salida es un porcentaje, no un promedio, así que no se le
+        // puede descontar la contribución de un confusor como hace
+        // `macro-glucose.ts`. La alternativa honesta no es excluir —con
+        // comidas cada 4-5 h eso vaciaba la pantalla— sino **contar aparte**
+        // cuántas dosis tuvieron algo registrado en el medio y mostrarlo al
+        // lado del porcentaje.
+        //
+        // Un "% en rango" acompañado de "de 12 dosis, 7 con eventos de por
+        // medio" es información; el mismo número sin esa línea invita a leer
+        // como patrón limpio lo que no lo es; y no mostrar nada no le sirve a
+        // nadie. Verónica lo pidió textualmente: nada de obviar el dato que
+        // no viene en formato fácil.
         if (hasConfoundingEvent({
           anchorTimestamp: dose.timestamp,
           windowMinutes: horizonHours * 60,
@@ -320,7 +341,7 @@ export function buildNutritionInsights(input: NutritionInsightsInput): MealWindo
           ...(input.activity === undefined ? {} : { activity: input.activity }),
           ...(input.rapidLookbackMinutes === undefined ? {} : { lookbackMinutes: input.rapidLookbackMinutes }),
           ...(input.basalLookbackMinutes === undefined ? {} : { basalLookbackMinutes: input.basalLookbackMinutes }),
-        })) continue;
+        })) confoundedCount += 1;
         const targetMs = Date.parse(dose.timestamp) + horizonHours * 60 * 60_000;
         const point = readingNear(series, targetMs);
         if (point === undefined) continue;
@@ -333,6 +354,7 @@ export function buildNutritionInsights(input: NutritionInsightsInput): MealWindo
       return {
         horizonHours,
         sampleSize,
+        confoundedCount,
         inTargetPct: reportable ? (inTargetCount / sampleSize) * 100 : undefined,
         belowTargetPct: reportable ? (belowCount / sampleSize) * 100 : undefined,
         aboveTargetPct: reportable ? (aboveCount / sampleSize) * 100 : undefined,

@@ -2314,6 +2314,103 @@ un test que va de punta a punta.
 
 ---
 
+## Hallazgos en dispositivo (2026-08-26) — el build 1 de la Fase 21
+
+Verónica instaló el `.apk` y encontró cinco cosas. Vale la pena dejar las
+cinco escritas porque tres son errores de criterio míos, no bugs sueltos.
+
+### 1. Patrones y Comidas quedaron VACÍAS — el error de fondo de la corrida
+
+Su diagnóstico, textual: *"fuiste muy binario con esta solución, esperaría que
+buscaras en internet para dar con fórmulas matemáticas que permitieran
+solucionar este tema, no que decidieras obviar cualquier dato que no venga en
+formato fácil"*. Tenía razón, y la revisión de seguridad ya lo había avisado
+en la corrida anterior — se parcheó (eximir bolos de comidas) en vez de
+cambiar el enfoque.
+
+**Por qué la exclusión estaba mal, no solo mal calibrada:**
+
+- En diabetes tipo 1 con múltiples dosis se come cada 4-5 h. A las 4 y 5 h
+  **ningún** episodio queda limpio. La exclusión no filtraba ruido: borraba
+  la pantalla.
+- Y sesgaba. Las comidas altas en grasa y proteína son justo las que más se
+  corrigen tarde, así que la muestra que sobrevivía era la que se había
+  portado bien: se subestimaba precisamente la subida tardía que la
+  comparación existe para describir.
+
+**Lo que hace la literatura** (fuentes en `docs/RESEARCH_SOURCES.md`):
+
+1. **Truncar, no descartar.** El estándar de iAUC post-prandial recorta el
+   tramo solapado entre comidas para no contar dos veces la misma excursión —
+   nunca tira la comida entera.
+2. **Ajustar por el confusor medido, no eliminar la observación.** Eliminar
+   solo es válido si la pérdida es aleatoria, y acá no lo es.
+
+**Cómo quedó:**
+
+| Pantalla | Salida | Episodio confundido |
+|---|---|---|
+| Patrones | promedio mg/dL | Se conserva; se le descuenta por OLS el aporte de carbohidratos, insulina y actividad de esa ventana |
+| Comidas | % en rango | Un porcentaje no se puede residualizar: se cuenta y se declara |
+
+Módulo nuevo `packages/domain/src/regression.ts` (OLS por ecuaciones
+normales). **La parte que más importa no es el ajuste, es cuándo se niega a
+hacerlo**: `fitOls` devuelve `null` con muestra insuficiente
+(`MIN_OBSERVATIONS_FOR_ADJUSTMENT = 8`), con una covariable constante (nadie
+registró actividad) o con un sistema mal condicionado — y entonces se muestra
+el promedio **crudo** y se declara `adjusted: false`. Un ajuste que no se
+sostiene desplaza el número más de lo que lo corrige, y este número se lee
+como patrón clínico y se imprime en el reporte médico.
+
+Lo único que sigue sacando un episodio del cálculo es **no tener lecturas de
+glucosa**: sin glucosa no hay observación que ajustar.
+
+**Lección:** cuando una regla de limpieza empieza a borrar la mayoría de los
+datos, el problema es la regla, no los datos. La pregunta correcta no era
+"¿cómo excluyo mejor?" sino "¿cómo mido esto sin excluir?".
+
+### 2. "No veo ninguna diferencia en las notificaciones"
+
+No era un bug: la notificación que ella miraba es la **pegajosa de acceso
+rápido**, que la Fase 19 nunca tocó a propósito. Lo que cambió (emoji, color,
+título y canal propios) vive en las **tres alarmas**, que se disparan horas
+después de un evento. Sí se veía un cambio suyo: el botón pasó de "+ Carbos" y
+"+ Rápida" a un solo "+ Comida".
+
+Corregido de todos modos, porque "confía en que cambió" no es verificable:
+**Ajustes → Alarmas → "Probar cómo se ven"** manda una alarma de prueba de
+cada tipo a los 5 segundos (`sendTestReminder`).
+
+### 3. Dos entradas al mismo modal de comida
+
+El botón "Comida" y la tarjeta "Foto o registro manual de comida" abrían lo
+mismo. Se fue la tarjeta: la que sobra es la que no es par de las demás, y su
+explicación se mudó al pie del propio botón.
+
+De paso se rediseñaron los cuatro accesos rápidos, y **se fueron los glifos
+Unicode** (`ƒ(x)`, `mmol/L`, `◎`) que la skill `/iconography` prohíbe desde
+hace tiempo y que seguían ahí. Ahora son iconos de Lucide, la misma familia de
+la barra inferior, cada uno con etiqueta y una línea de qué hace.
+
+### 4 y 5. "Nueva entrada" y el editor tenían menos que los accesos rápidos
+
+Pedido repetido de Verónica, y con razón: "Nueva entrada" no tenía **cetonas**
+(solo existían en su acceso rápido) ni **macros** (solo existían en el modal
+de comida), y el editor tampoco. Los dos formularios los tienen ahora.
+
+Las cetonas se guardan como `VitalsEvent` **agrupado por `entry_group_id`**
+(columna nueva, con migración), no emparejado por hora: emparejar por
+timestamp es exactamente lo que rompió la asociación insulina↔comida y motivó
+la Fase 21 entera.
+
+Y un error que esto destapó: `saveEntry` tomaba los macros **enteros del
+análisis de IA** y los marcaba `macrosSource: 'ai'`. Con campos editables en
+la hoja, eso habría pisado en silencio la proteína que ella corrigiera y
+encima la habría etiquetado como estimación de IA. Es el mismo error que ya se
+había corregido en `confirmMeal`; estaba vivo en el otro camino.
+
+---
+
 ## Fase 22 — Animación del swipe entre pantallas (planificada 2026-08-21)
 
 El gesto de swipe ya navega correctamente (corregido el 2026-08-21, ver el

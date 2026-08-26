@@ -94,8 +94,13 @@ docs/
   la energía (rango ISPAD para T1D), proteína por kg de peso (sube en
   déficit, ADA). `energyFromMacros` devuelve `partial`: un total sin todos los
   macros es un piso, no el valor real.
-- `macro-glucose.ts` (2026-08-20, Fase 14) — **el módulo más delicado del
-  repo.** Compara las comidas de mayor y menor carga de grasa+proteína contra
+- `macro-glucose.ts` (2026-08-20, Fase 14; **rehecho el 2026-08-26**) — **el
+  módulo más delicado del repo.** Desde el 2026-08-26 **no excluye episodios**:
+  mide la magnitud de los confusores por horizonte (gramos, unidades, minutos),
+  ajusta por OLS (`regression.ts`) y promedia el residual. `MacroGlucosePoint`
+  lleva `adjusted` y `confoundedCount` para que la pantalla y el reporte puedan
+  decir de qué está hecho el número. Lo único que descarta una observación es
+  no tener lecturas de glucosa. Compara las comidas de mayor y menor carga de grasa+proteína contra
   el cambio de glucosa a 2/3/4/5 h. Horizontes distintos a los de
   `nutrition-insights.ts` a propósito: la evidencia en T1D describe una subida
   **retrasada y prolongada** (1,5–6 h, aditiva cuando la comida es alta en
@@ -198,6 +203,16 @@ docs/
   un evento anterior al ancla nunca confunde, limitación conocida y
   documentada (ver roadmap § Fase 23), porque resolverla exige asumir cuánto
   dura la insulina rápida, que es un parámetro de terapia.
+- `regression.ts` — **2026-08-26**. Mínimos cuadrados ordinarios (ecuaciones
+  normales + eliminación gaussiana con pivoteo parcial). Existe para **ajustar
+  por covariables en vez de excluir observaciones**: la versión anterior
+  descartaba todo episodio con algo registrado en su ventana, y con comidas
+  cada 4-5 h eso vaciaba la pantalla de Patrones — Verónica lo vio en el
+  dispositivo. `fitOls` devuelve `null` ante muestra insuficiente, covariable
+  constante o sistema mal condicionado, y entonces quien llama **muestra el
+  promedio crudo y lo declara**; nunca un ajuste inventado. No predice, no
+  extrapola y ningún coeficiente se muestra ni entra a una calculadora.
+  Fuentes en `docs/RESEARCH_SOURCES.md`.
 - `insulin-catalog.ts` — **2026-08-25 (Fase 23/21)**. Qué insulina usa la
   persona y cuánto dura, según ficha técnica del fabricante. Rápidas
   (NovoRapid, Fiasp, Humalog, Lyumjev, Apidra: 5 h; regular humana: 8 h) y

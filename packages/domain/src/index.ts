@@ -14,5 +14,6 @@ export * from './nutrition-targets';
 export * from './meal';
 export * from './mysugr-import';
 export * from './nutrition-insights';
+export * from './regression';
 export * from './report';
 export * from './units';

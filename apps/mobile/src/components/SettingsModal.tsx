@@ -16,6 +16,7 @@ import { API_BASE_URL } from '../api';
 import type { CapillaryReminderSettings, CorrectionReminderSettings, MySugrImportOutcome } from '../db';
 import { capillaryReminderTimes, formatMinutesAsClock, parseMinuteOffsets, parsePositiveNumber } from '../format';
 import { logSaveError } from '../log';
+import { sendTestReminder } from '../notifications';
 import { reportHtml, reportWorkbookBytes } from '../reportExport';
 import {
   clearSensorCredentials,
@@ -756,6 +757,48 @@ export function SettingsModal({
               </Pressable>
             ))}
           </View>
+
+          {/*
+            Probar cada alarma (2026-08-25). Verónica probó la Fase 19 y dijo
+            "no veo ninguna diferencia": lo que cambió —emoji, color, título y
+            un canal de Android propios por tipo— solo se ve cuando una alarma
+            se dispara, y las tres se disparan horas después de un evento. Sin
+            esto no había forma de verlas más que esperando.
+          */}
+          <Text style={styles.subheading}>Probar cómo se ven</Text>
+          <Text style={styles.copy}>
+            Cada tipo de alarma llega con su propio símbolo, color y título, y con su propio interruptor en los
+            ajustes de Android — así puedes silenciar uno sin perder los otros. Toca para recibir una de prueba
+            en 5 segundos: sal de la app para verla como llega de verdad.
+          </Text>
+          <View style={styles.styleGrid}>
+            {([
+              { kind: 'meal' as const, label: '🍽️ Post-comida' },
+              { kind: 'correction' as const, label: '💧 Corrección' },
+              { kind: 'capillary' as const, label: '🩸 Capilar' },
+            ]).map((option) => (
+              <Pressable
+                key={option.kind}
+                style={styles.styleChip}
+                accessibilityRole="button"
+                accessibilityLabel={`Enviar una alarma de prueba de tipo ${option.label}`}
+                onPress={() => {
+                  void (async () => {
+                    const sent = await sendTestReminder(option.kind, alertStyle);
+                    setAlarmMessage(sent
+                      ? 'Te llega en 5 segundos. Sal de la app para verla en la bandeja.'
+                      : 'Android tiene bloqueadas las notificaciones de Type 1A. Actívalas en los ajustes del sistema.');
+                  })();
+                }}
+              >
+                <Text style={styles.styleChipText}>{option.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={styles.hint}>
+            La prueba usa el estilo que tengas elegido arriba. Si cambiaste el estilo recién, guarda las alarmas
+            antes de probar.
+          </Text>
 
           <View style={styles.switchRow}>
             <View style={styles.switchCopy}>

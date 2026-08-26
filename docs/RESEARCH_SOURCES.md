@@ -57,3 +57,48 @@ que esta exclusión existe para evitar.
 parámetros de terapia. Estos números son el dato del fabricante, no una
 estimación de la app sobre esa persona, y se pueden sobrescribir con lo que
 haya indicado su equipo clínico.
+
+## Cómo se mide una respuesta post-prandial cuando las comidas se solapan (2026-08-26)
+
+Fuentes del rediseño de `macro-glucose.ts` y `nutrition-insights.ts`. Verónica
+pidió explícitamente investigar esto después de que la pantalla de Patrones le
+quedara vacía: *"esperaría que buscaras en internet para dar con fórmulas
+matemáticas que permitieran solucionar este tema, no que decidieras obviar
+cualquier dato que no venga en formato fácil"*.
+
+**El estándar de la literatura CGM no es descartar: es truncar y ajustar.**
+
+- [Determination of Postprandial Glycemic Responses by CGM in a Real-World Setting (PubMed)](https://pubmed.ncbi.nlm.nih.gov/31569815/)
+  y [Imprecision nutrition? (AJCN / medRxiv)](https://www.medrxiv.org/content/10.1101/2023.06.14.23291406v2.full):
+  la respuesta post-prandial se cuantifica como **iAUC** por regla del
+  trapecio sobre una ventana fija desde la comida, con la glucosa basal
+  tomada inmediatamente antes. **Para comidas solapadas, el iAUC de la
+  primera se calcula desde su inicio hasta el fin de su ventana y el tramo
+  solapado se excluye de la comida siguiente** — se *recorta*, para que cada
+  excursión se cuente una sola vez. Nunca se tira la comida entera.
+- [Indiscriminate adjustment for confounders is worse than you think (PMC11715647)](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC11715647/)
+  y [Confounder adjustment in observational studies (BMC Medicine)](https://link.springer.com/article/10.1186/s12916-025-03957-8):
+  la respuesta estándar a un confusor **medido** es **ajustar por él**, no
+  eliminar la observación. Eliminar solo es válido si la pérdida es aleatoria
+  — y acá no lo es: las comidas altas en grasa y proteína son justo las que
+  más se corrigen tarde, así que la muestra que sobrevivía a la exclusión era
+  la que se había portado bien. Sesgo de selección, no limpieza.
+  Estas mismas fuentes advierten que ajustar por todo tampoco es gratis, así
+  que las covariables se eligen a mano y son tres: carbohidratos, insulina
+  rápida y actividad dentro de la ventana.
+- [Assessing Covariate Balance with Small Sample Sizes (PMC11071580)](https://pmc.ncbi.nlm.nih.gov/articles/PMC11071580/):
+  con muestras chicas el ajuste se vuelve inestable. De ahí
+  `MIN_OBSERVATIONS_FOR_ADJUSTMENT = 8` y el que `fitOls` devuelva `null`
+  ante una covariable constante o un sistema mal condicionado: **cuando el
+  ajuste no se sostiene se muestra el promedio crudo y se declara**, en vez
+  de mostrar un número ajustado que no aguanta.
+
+**Cómo quedó aplicado:**
+
+| Pantalla | Salida | Qué se hace con un episodio confundido |
+|---|---|---|
+| Patrones (grasa+proteína) | promedio de mg/dL | Se **conserva** y se le descuenta por OLS el aporte de los confusores. Se declara `n`, cuántos traían eventos, y si el promedio está ajustado. |
+| Comidas (% en rango) | porcentaje | Un porcentaje no se puede residualizar, así que se **cuenta y se declara** (`confoundedCount`) junto al número. |
+
+Lo único que sigue sacando un episodio del cálculo es **no tener lecturas de
+glucosa**: sin glucosa no hay observación que ajustar.
