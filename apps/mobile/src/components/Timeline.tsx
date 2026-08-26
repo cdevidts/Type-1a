@@ -52,7 +52,13 @@ export function Timeline({
           style={styles.item}
           onPress={() => { setSelected(item); }}
           accessibilityRole="button"
-          accessibilityLabel={`Ver detalle de ${item.title}`}
+          // El label incluye el detalle y la hora **a propósito**. Un
+          // `accessibilityLabel` explícito REEMPLAZA el texto que el lector de
+          // pantalla juntaría de los hijos, así que con solo el título
+          // TalkBack anunciaba "Ver detalle de Cetonas" y se perdían el valor
+          // y la banda — dejando el punto de color como único diferenciador,
+          // que es justo lo que `contracts/ux-checklist.md` prohíbe.
+          accessibilityLabel={`${item.title}. ${item.detail}. ${formatDayTime(item.timestamp)}. Ver detalle`}
         >
           <View style={[styles.dot, { backgroundColor: toneColors[item.tone] }]} />
           <View style={styles.itemBody}>

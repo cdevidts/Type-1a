@@ -45,10 +45,20 @@ export function summarizeVitals(event: VitalsEvent): VitalsSummary {
     if (title === 'Registro') title = 'Presión';
   }
 
+  // Un dato importado no puede leerse igual que uno que ella acaba de medir.
+  // Es el mismo motivo por el que la glucosa arrastra su `origin` en la fila
+  // del timeline (`glucoseOriginSuffix`), y vale doble acá: la importación de
+  // MySugr toma su columna de cetonas al pie de la letra, sin verificar
+  // unidad, mientras las bandas de `assessKetones` son de cetonas en sangre.
+  // Se cuenta ANTES de agregar el origen: el sufijo no es una medida, y
+  // contarlo convertía unas cetonas importadas en "Cetonas y otros".
+  const measurements = parts.length;
+  if (event.source === 'imported') parts.push('importado');
+
   return {
     // Un evento con varias medidas se nombra por la más grave: las cetonas
     // mandan sobre el peso, no al revés.
-    title: parts.length > 1 && event.ketonesMmolL !== undefined ? 'Cetonas y otros' : title,
+    title: measurements > 1 && event.ketonesMmolL !== undefined ? 'Cetonas y otros' : title,
     detail: parts.join(' · '),
     urgent,
   };

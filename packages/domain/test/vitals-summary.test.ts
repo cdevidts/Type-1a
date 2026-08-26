@@ -53,6 +53,14 @@ describe('summarizeVitals', () => {
     });
   });
 
+  it('rotula el origen importado, para que no se lea como una medición de ahora', () => {
+    const importado = summarizeVitals({ ...base, source: 'imported', ketonesMmolL: 3.2 });
+    expect(importado.detail).toContain('importado');
+    // El sufijo de origen no es una medida: no puede volverlo "Cetonas y otros".
+    expect(importado.title).toBe('Cetonas');
+    expect(summarizeVitals({ ...base, ketonesMmolL: 3.2 }).detail).not.toContain('importado');
+  });
+
   it('un evento con varias medidas se nombra por las cetonas, que son las graves', () => {
     const summary = summarizeVitals({ ...base, ketonesMmolL: 2, weightKg: 62 });
     expect(summary.title).toBe('Cetonas y otros');

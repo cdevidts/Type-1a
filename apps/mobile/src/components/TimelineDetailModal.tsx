@@ -188,6 +188,16 @@ function deleteConfirmMessage(item: TimelineItem): string {
   if (item.kind === 'meal') {
     return 'Se borra esta comida y el seguimiento post-comida asociado. Los carbohidratos confirmados también se borran.';
   }
+  if (item.kind === 'vitals') {
+    // Una sola fila puede traer cetonas, peso y presión juntos, y el borrado
+    // se las lleva todas. El resto de los tipos con varias partes ya lo dicen.
+    const partes = [
+      item.raw.ketonesMmolL === undefined ? null : 'las cetonas',
+      item.raw.weightKg === undefined ? null : 'el peso',
+      item.raw.systolicBP === undefined ? null : 'la presión',
+    ].filter((parte): parte is string => parte !== null);
+    return `Se borra ${partes.join(', ')} de este registro. Esta acción no se puede deshacer.`;
+  }
   if (item.kind === 'entry') {
     return hasReadOnlyGlucoseAnchor(item)
       ? 'Se quitan los carbohidratos, la insulina y la nota de esta entrada. La glucosa del sensor se conserva.'
@@ -292,8 +302,12 @@ export function TimelineDetailModal({
    * afirmación distinta de "0 g". Confundirlas hace que el reporte al médico
    * muestre promedios de ceros que nadie midió.
    */
-  function parseKetones(): { ketonesMmolL?: number } | null {
-    if (entryKetones.trim() === '') return {};
+  function parseKetones(): { ketonesMmolL?: number; clearKetones?: true } | null {
+    // Vaciar el campo es **pedir** que se borren, y se dice explícitamente.
+    // Que la ausencia significara borrado hacía indistinguible "lo vació" de
+    // "el formulario nunca lo cargó", y por esa rendija se perdían cetonas al
+    // guardar cualquier otro cambio.
+    if (entryKetones.trim() === '') return { clearKetones: true };
     const value = parseNonNegativeNumber(entryKetones);
     if (value === null || value > 20) return null;
     return { ketonesMmolL: value };

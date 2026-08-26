@@ -332,6 +332,8 @@ export type TimelineEditPayload =
       fiberG?: number;
       /** Ver la nota homónima en la variante `'entry'`. */
       ketonesMmolL?: number;
+      /** La usuaria vació el campo: borrar las cetonas de esta entrada. */
+      clearKetones?: true;
       rapidUnits?: number;
       basalUnits?: number;
       note?: string;

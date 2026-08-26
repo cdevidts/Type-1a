@@ -62,6 +62,24 @@ describe('standaloneVitalsItems', () => {
     expect(items[0]?.title).toBe('Peso');
   });
 
+  /**
+   * El hallazgo de la revisión de seguridad: la primera versión quitaba el
+   * `WHERE` a secas y ponía a competir agrupadas y sueltas por los mismos 80
+   * cupos. Con 80 filas sueltas más nuevas —una importación de MySugr escribe
+   * una por día— la agrupada se caía de la ventana, la entrada se dibujaba sin
+   * sus cetonas y editarla las borraba de la base.
+   *
+   * `getTimeline` ahora usa dos consultas con su propio `LIMIT`. Este test fija
+   * la mitad verificable sin SQLite: por muchas sueltas que haya, ninguna
+   * agrupada se cuela ni desplaza a otra.
+   */
+  it('un lote lleno de sueltas no arrastra ninguna agrupada', () => {
+    const muchas = Array.from({ length: 100 }, (_, i) => fila(null, evento({ id: `v${i}` })));
+    const items = standaloneVitalsItems([...muchas, fila('grupo-1')]);
+    expect(items).toHaveLength(100);
+    expect(items.every((item) => item.kind === 'vitals')).toBe(true);
+  });
+
   it('una fila ilegible se descarta sin tumbar el resto del timeline', () => {
     const items = standaloneVitalsItems([fila(null, '{no es json'), fila(null), fila(null, '{"id":"x"}')]);
     expect(items.map((item) => item.id)).toEqual(['v1']);

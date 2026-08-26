@@ -914,6 +914,7 @@ function Type1AApp() {
           ...(payload.fatG === undefined ? {} : { fatG: payload.fatG }),
           ...(payload.fiberG === undefined ? {} : { fiberG: payload.fiberG }),
           ...(payload.ketonesMmolL === undefined ? {} : { ketonesMmolL: payload.ketonesMmolL }),
+        ...(payload.clearKetones === true ? { clearKetones: true } : {}),
           ...(payload.rapidUnits === undefined ? {} : { rapidUnits: payload.rapidUnits }),
           ...(payload.basalUnits === undefined ? {} : { basalUnits: payload.basalUnits }),
           ...(payload.note === undefined ? {} : { note: payload.note }),

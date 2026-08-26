@@ -751,6 +751,14 @@ export interface UnifiedEntryInput {
    * un spread**, y por eso `pnpm verify` seguía en verde.
    */
   macrosSource?: MealEvent['macrosSource'];
+  /**
+   * `true` = la usuaria vació el campo de cetonas y quiere que se borren.
+   *
+   * Existe para que "borrar" sea una petición y no una deducción. Ver la rama
+   * de borrado en `updateUnifiedEntryGroup`: sin esto, cualquier llamador que
+   * simplemente no maneje cetonas las destruye al guardar cualquier otra cosa.
+   */
+  clearKetones?: boolean;
 }
 
 /**
@@ -1064,7 +1072,14 @@ export async function updateUnifiedEntryGroup(
           existingVitals.id,
         );
       }
-    } else if (existingVitals !== null) {
+    } else if (existingVitals !== null && input.clearKetones === true) {
+      // **Solo con la señal explícita.** Antes bastaba con que
+      // `ketonesMmolL` viniera ausente, y "ausente" es indistinguible de "el
+      // formulario nunca cargó el valor" — que es exactamente lo que pasó
+      // cuando la fila se caía de la ventana del timeline: guardar una
+      // corrección de carbohidratos borraba las cetonas que ella nunca vio ni
+      // tocó. Un dato guardado se borra porque alguien lo pidió, no porque un
+      // campo llegó vacío.
       await db.runAsync('DELETE FROM vitals_events WHERE id = ?', existingVitals.id);
     }
 
@@ -1737,7 +1752,7 @@ function glucoseOriginSuffix(origin: CGMReading['origin']): string {
 }
 
 export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<TimelineItem[]> {
-  const [insulinRows, carbRows, mealRows, episodeRows, glucoseRows, noteRows, vitalsRows] = await Promise.all([
+  const [insulinRows, carbRows, mealRows, episodeRows, glucoseRows, noteRows, groupedVitalsRows, looseVitalsRows] = await Promise.all([
     db.getAllAsync<{ payload: string; entry_group_id: string | null }>(
       'SELECT payload, entry_group_id FROM insulin_events ORDER BY timestamp DESC LIMIT ?',
       limit,
@@ -1774,16 +1789,25 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
       'SELECT payload, entry_group_id FROM note_events ORDER BY timestamp DESC LIMIT ?',
       limit,
     ),
-    // **Todas**, con y sin grupo.
+    // Dos consultas, con su propio `LIMIT` cada una, y **eso es la parte que
+    // importa**.
     //
-    // El `WHERE entry_group_id IS NOT NULL` que había acá hasta el 2026-08-26
-    // hacía que las cetonas del acceso rápido se guardaran bien y no
-    // aparecieran en ninguna parte. Es el dato de triage de cetoacidosis: ella
-    // hacía el gesto de anotarlo, la app lo aceptaba, y después no estaba. Las
-    // agrupadas se muestran dentro de su entrada; las sueltas, como ítem
-    // propio (`standaloneVitalsItems`).
+    // Hasta el 2026-08-26 acá había un `WHERE entry_group_id IS NOT NULL` que
+    // hacía desaparecer las cetonas del acceso rápido. Quitarlo a secas —el
+    // primer intento— las mostraba pero ponía a competir las agrupadas y las
+    // sueltas por los mismos 80 cupos, y cada importación de MySugr escribe
+    // una fila suelta por día con peso o presión. Con 80 filas sueltas más
+    // nuevas, la fila agrupada se caía de la ventana, la entrada se dibujaba
+    // sin sus cetonas, **y editar esa entrada las borraba de la base**: el
+    // formulario sembraba el campo vacío y guardar interpretaba el vacío como
+    // "bórralas". Una ventana de visualización no puede destruir un dato
+    // guardado, y menos el de triage de cetoacidosis.
     db.getAllAsync<{ payload: string; entry_group_id: string | null }>(
-      'SELECT payload, entry_group_id FROM vitals_events ORDER BY timestamp DESC LIMIT ?',
+      'SELECT payload, entry_group_id FROM vitals_events WHERE entry_group_id IS NOT NULL ORDER BY timestamp DESC LIMIT ?',
+      limit,
+    ),
+    db.getAllAsync<{ payload: string; entry_group_id: string | null }>(
+      'SELECT payload, entry_group_id FROM vitals_events WHERE entry_group_id IS NULL ORDER BY timestamp DESC LIMIT ?',
       limit,
     ),
   ]);
@@ -1805,7 +1829,7 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
     return created;
   }
 
-  for (const row of vitalsRows) {
+  for (const row of groupedVitalsRows) {
     if (row.entry_group_id === null) continue;
     const event = VitalsEventSchema.safeParse(safeJsonParse(row.payload));
     if (!event.success) continue;
@@ -1813,7 +1837,7 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
   }
   // Las sueltas van como ítem propio. El mapeo vive en un módulo puro para
   // poder verificarlo sin teléfono: es donde estaba el hueco.
-  items.push(...standaloneVitalsItems(vitalsRows));
+  items.push(...standaloneVitalsItems(looseVitalsRows));
 
   for (const row of insulinRows) {
     const event = InsulinEventSchema.safeParse(safeJsonParse(row.payload));

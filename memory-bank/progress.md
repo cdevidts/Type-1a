@@ -7,7 +7,7 @@ _Última actualización: 2026-08-26._
 | | |
 |---|---|
 | `pnpm verify` | ✅ verde |
-| Tests | **446** — domain 290, mobile 108, ai 15, schemas 13, cgm 10, api 10 |
+| Tests | **448** — domain 291, mobile 109, ai 15, schemas 13, cgm 10, api 10 |
 | Bundle de Metro | **1.333 módulos** (línea base; un salto grande = barrel importado) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
@@ -109,6 +109,8 @@ reporte médico. El detalle completo vive en el historial de git
 | Precargar los macros de la IA volvió `'mixed'` toda comida analizada: "el campo tiene valor" dejó de significar "ella lo escribió" | la procedencia se compara contra el valor precargado, no contra la ausencia |
 | El mismo bloque de macros escrito seis veces; los campos del editor quedaron en ~32 pt de área tocable | `MacroFields` compartido, con `minHeight: 44` explícito |
 | Un `WHERE entry_group_id IS NOT NULL` escondió las cetonas del acceso rápido: se guardaban bien y no se veían | el filtro de una consulta es una decisión de producto, no un detalle de SQL |
+| Quitar ese `WHERE` a secas puso a competir agrupadas y sueltas por el mismo `LIMIT`, y una fila caída de la ventana se borraba al editar la entrada | una ventana de visualización **nunca** puede destruir un dato guardado; el borrado exige señal explícita, no una ausencia |
+| Un `accessibilityLabel` explícito reemplaza el texto de los hijos: TalkBack anunciaba el título y no el valor ni la banda | la etiqueta lleva detalle y hora, o el color queda como único diferenciador |
 
 ## Redeploy del backend
 
