@@ -31,6 +31,7 @@ import {
   type VitalsEvent,
 } from '@type1a/schemas';
 
+import { hasMealContent, MEAL_FIELDS } from './mealFields';
 import { decodeRow, decodeTherapyProfileRow, safeJsonParse, tallyParsed, type DecodeTally, type TherapyProfileRead } from './rowDecode';
 import type { PendingInsulinAssociation, ReminderAlertStyle, StoredMealEpisode, TimelineItem } from './types';
 
@@ -742,7 +743,29 @@ export interface UnifiedEntryInput {
    * cetonas y este campo terminan en la misma tabla y se leen igual.
    */
   ketonesMmolL?: number;
+  /**
+   * Procedencia de los macros: `'ai'`, `'user'` o `'mixed'`.
+   *
+   * **Se imprime en el reporte del control médico**, así que perderlo no es
+   * cosmético: un macro estimado por IA que llega sin procedencia se lee como
+   * "no registrada" en vez de "estimada por IA sin corregir".
+   *
+   * Faltaba en esta interfaz mientras `App.tsx` sí lo esparcía en la llamada,
+   * así que se descartaba en silencio en cada creación desde "Nueva entrada".
+   * TypeScript no lo atrapó: el chequeo de propiedades en exceso **no aplica a
+   * un spread**, y por eso `pnpm verify` seguía en verde.
+   */
+  macrosSource?: MealEvent['macrosSource'];
 }
+
+/**
+ * Chequeo de que `MEAL_FIELDS` sigue siendo un subconjunto de lo que una
+ * entrada puede traer. Si alguien renombra un campo en `UnifiedEntryInput`, el
+ * typecheck falla acá en vez de que el predicado empiece a devolver `false` en
+ * silencio — y un `false` de más borra la comida.
+ */
+const _mealFieldsAreEntryFields: readonly (keyof UnifiedEntryInput)[] = MEAL_FIELDS;
+void _mealFieldsAreEntryFields;
 
 export interface UnifiedEntryOutcome {
   /** Set when the entry created a meal episode worth scheduling follow-ups for. */
@@ -785,7 +808,7 @@ export async function saveUnifiedEntry(
   if (input.carbsG !== undefined) CarbGramsSchema.parse(input.carbsG);
   if (input.manualGlucose !== undefined) GlucoseValueSchema.parse(input.manualGlucose);
 
-  const hasMeal = input.carbsG !== undefined || input.description !== undefined || input.imageUri !== undefined;
+  const hasMeal = hasMealContent(input);
 
   // Every row this save produces shares one id, so the pieces can be shown
   // and edited later as the single packaged thing they were entered as —
@@ -831,6 +854,7 @@ export async function saveUnifiedEntry(
         ...(input.fiberG === undefined ? {} : { fiberG: input.fiberG }),
         ...(input.caloriesKcal === undefined ? {} : { caloriesKcal: input.caloriesKcal }),
         ...(input.aiAnalysisId === undefined ? {} : { aiAnalysisId: input.aiAnalysisId }),
+        ...(input.macrosSource === undefined ? {} : { macrosSource: input.macrosSource }),
       }, entryGroupId);
     }
 
@@ -916,19 +940,13 @@ export async function updateUnifiedEntryGroup(
     if (macro !== undefined) MacroGramsSchema.parse(macro);
   }
 
-  // ⚠️ Los macros y la foto CUENTAN para decidir si hay comida (corregido
-  // 2026-08-25 tras la revisión de seguridad). Cuando esto es falso, más
-  // abajo se **borra la fila de la comida entera**: vaciar los carbohidratos
-  // de una entrada keto que tenía proteína, grasa, nota y análisis de IA
-  // borraba todo eso en silencio, y el formulario decía que había guardado
-  // bien. El camino de creación (`saveUnifiedEntry`) ya contaba `imageUri`,
-  // así que además los dos estaban en desacuerdo.
-  const hasMeal = input.carbsG !== undefined
-    || input.description !== undefined
-    || input.imageUri !== undefined
-    || input.proteinG !== undefined
-    || input.fatG !== undefined
-    || input.fiberG !== undefined;
+  // ⚠️ Cuando esto es falso, más abajo se **borra la fila de la comida
+  // entera**, así que la lista de qué cuenta como comida es la misma que usa
+  // el camino de creación — ver `MEAL_FIELDS`. Tenerla duplicada acá fue el
+  // bug: vaciar los carbohidratos de una entrada keto se llevaba proteína,
+  // grasa, nota y análisis de IA en silencio, y el formulario decía que había
+  // guardado bien.
+  const hasMeal = hasMealContent(input);
   const outcome: UnifiedEntryOutcome = {
     episodeId: null,
     savedGlucose: false,

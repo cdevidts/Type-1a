@@ -654,6 +654,7 @@ function Type1AApp() {
   }
 
   async function saveEntry(draft: UnifiedEntryDraft): Promise<void> {
+    const macrosSource = macrosSourceFor(draft);
     const outcome = await saveUnifiedEntry(db, {
       timestamp: draft.timestamp,
       rapidIncludesCorrection: draft.rapidIncludesCorrection,
@@ -684,7 +685,11 @@ function Type1AApp() {
       ...(draft.proteinG === undefined ? {} : { proteinG: draft.proteinG }),
       ...(draft.fatG === undefined ? {} : { fatG: draft.fatG }),
       ...(draft.fiberG === undefined ? {} : { fiberG: draft.fiberG }),
-      ...(macrosSourceFor(draft) === undefined ? {} : { macrosSource: macrosSourceFor(draft) }),
+      // `UnifiedEntryInput` declara `macrosSource` desde el 2026-08-26. Antes
+      // no, y como esto es un spread, TypeScript lo dejaba pasar y `db.ts` lo
+      // descartaba: los macros de la IA llegaban al reporte médico sin
+      // procedencia. No agregues un campo acá sin verlo en esa interfaz.
+      ...(macrosSource === undefined ? {} : { macrosSource }),
       ...(draft.ketonesMmolL === undefined ? {} : { ketonesMmolL: draft.ketonesMmolL }),
     });
     // Mismo trato que `confirmMeal`: una comida analizada por IA alimenta el

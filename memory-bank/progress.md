@@ -7,7 +7,7 @@ _Última actualización: 2026-08-26._
 | | |
 |---|---|
 | `pnpm verify` | ✅ verde |
-| Tests | **382** — domain 266, mobile 68, ai 15, schemas 13, cgm 10, api 10 |
+| Tests | **405** — domain 266, mobile 91, ai 15, schemas 13, cgm 10, api 10 |
 | Bundle de Metro | **1.333 módulos** (línea base; un salto grande = barrel importado) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
@@ -48,33 +48,23 @@ obvio— el bundle rompe con `pnpm verify` en verde. Ahora `verify:bundle` lo
 atraparía, pero **la causa sigue ahí**: la regla se aplica de forma
 inconsistente entre paquetes. Arreglarlo cuesta tres líneas y elimina la mina.
 
-### 🔴 Seis hallazgos vivos que la revisión repuntada encontró (2026-08-26)
+### 🔴 Cuatro hallazgos vivos que la revisión repuntada encontró (2026-08-26)
 
 Salieron de correr el `domain-safety-reviewer` contra `d868ece` y `c4ca192`.
-**Ninguno está arreglado.** Los dos primeros corrompen datos hoy.
+Los dos que corrompían datos en cada uso **están cerrados** (rama
+`fix/macros-data-corruption`); estos cuatro siguen abiertos.
 
-1. **`macrosSource` se descarta en silencio al crear desde "Nueva entrada".**
-   `App.tsx:saveEntry` lo esparce en la llamada, pero `UnifiedEntryInput`
-   (`db.ts:713-745`) no tiene el campo y `writeMealWithEpisode` (`db.ts:821-834`)
-   nunca lo lee. TypeScript no lo atrapa: el chequeo de propiedades en exceso
-   **no aplica a un spread**. Consecuencia: los macros estimados por IA se
-   guardan sin procedencia y el PDF del control médico dice "de procedencia no
-   registrada" en vez de "estimada(s) por IA sin corregir".
-2. **Una entrada solo de macros se descarta y dice "Entrada guardada".**
-   `hasMeal` de `saveUnifiedEntry` (`db.ts:788`) sigue mirando solo
-   carbos/descripción/imagen. El de `updateUnifiedEntryGroup` (`db.ts:926`) sí
-   incluye macros: se arregló el camino de edición y no el de creación.
-3. **La basal es invisible al modelo y al aviso de ventana sucia.**
+1. **La basal es invisible al modelo y al aviso de ventana sucia.**
    `macro-glucose.ts:281-287` no tiene rama para `basal_insulin`, así que 20 U
    de Tresiba en la ventana no entran como covariable **ni** marcan
    `confoundedCount`. La pantalla imprime "sin eventos".
-4. **Cantidad ausente = "no pasó nada".** `event.amount ?? 0` con
+2. **Cantidad ausente = "no pasó nada".** `event.amount ?? 0` con
    `any = ... > 0`: una comida real sin carbos confirmados desaparece del conteo.
-5. **Un fallo al registrar la insulina se pisa con un mensaje de éxito.**
+3. **Un fallo al registrar la insulina se pisa con un mensaje de éxito.**
    `App.tsx:620` pone el aviso de error y `App.tsx:636` lo sobrescribe
    incondicionalmente con "Comida guardada". Ella cierra la app creyendo que la
    dosis quedó registrada.
-6. **La insulina de la comida se escribe sin `entryGroupId`.**
+4. **La insulina de la comida se escribe sin `entryGroupId`.**
    `App.tsx:608` no pasa el tercer argumento que `saveInsulinEvent`
    (`db.ts:266-270`) acepta, y el timeline agrupa solo por `entry_group_id`.
    Tres horas después `getPendingInsulinAssociations` le vuelve a preguntar qué
@@ -126,6 +116,8 @@ reporte médico. El detalle completo vive en el historial de git
 | Una purga de docs dejó ciegos a 5 de 7 activos de `.claude/` sin un solo error | `verify:contracts` |
 | Un documento de arquitectura abandonado en el código indujo a error a varias corridas | ADR en la misma corrida que el cambio (0004) |
 | El inventario de esa purga solo miraba `.claude/`: el código citaba 17 docs más | el guard escanea **todo** el repo, código incluido |
+| `macrosSource` se caía en un spread sobre un tipo que no lo declaraba, con verify en verde | el chequeo de propiedades en exceso **no aplica a un spread**: el campo se declara o se pierde |
+| Dos booleanos `hasMeal` divergentes borraron y descartaron comidas | una sola lista (`mealFields.ts`), pura y con test |
 
 ## Redeploy del backend
 

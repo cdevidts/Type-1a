@@ -1,46 +1,37 @@
 # Active Context
 
-_Última actualización: 2026-08-26 (Fases 0-3 de la migración de memoria agéntica)._
+_Última actualización: 2026-08-26 (migración fusionada + corrupción de macros)._
 
-## Migración de memoria agéntica — completa (Fases 0-6)
+## Migración de memoria agéntica — fusionada
 
-Rama `chore/memory-bank-migration`, **sin push**, lista para revisión y merge.
+Cerrada y en la rama principal. La memoria pasó de 16 documentos sueltos en
+`docs/` a cuatro capas con presupuesto verificado: Capa 0 (`CLAUDE.md` router +
+`AGENTS.md`, 83 líneas entre los dos), Capa 1 (`/contracts/`, lo que leen los
+skills), Capa 2 (`/memory-bank/`, con `index.md` de ruteo y `reference/` bajo
+demanda) y Capa 3 (`docs/adr/`, append-only). `verify:contracts` corre dentro de
+`pnpm verify` y rompe el build si un puntero queda muerto o una capa se pasa de
+su techo. El árbol viejo está en el commit `af6c865` — ver `index.md`.
 
-La memoria del proyecto pasó de 16 documentos sueltos en `docs/` a cuatro capas
-con presupuesto verificado: Capa 0 (`CLAUDE.md` router + `AGENTS.md`, 83 líneas
-entre los dos), Capa 1 (`/contracts/`, lo que leen los skills), Capa 2
-(`/memory-bank/`, con `index.md` como ruteo y `reference/` bajo demanda) y
-Capa 3 (`docs/adr/`, append-only). `verify:contracts` corre en `pnpm verify` y
-rompe el build si un puntero queda muerto o una capa excede su techo.
+## Corrupción de datos de macros — cerrada
 
-El árbol viejo está íntegro en el tag **`archive/pre-memory-bank`**.
+Rama `fix/macros-data-corruption`. Los dos hallazgos que escribían mal en cada
+uso están arreglados:
 
-**Validación de comportamiento**: el `domain-safety-reviewer` repuntado se corrió
-contra `d868ece` y `c4ca192` en worktrees a esos commits. Reencontró **todos**
-los hallazgos graves de las revisiones originales (extrapolación sin centrar,
-colinealidad carbos↔unidades, `confoundedCount > sampleSize`, β como factor de
-corrección inferido; y en Fase 21 los cuatro de dosis). Además levantó siete
-que la revisión original no vio, seis de ellos vivos hoy — ver `progress.md`.
+1. **`macrosSource` se descartaba al crear una entrada.** `UnifiedEntryInput`
+   no declaraba el campo y `App.tsx` sí lo esparcía, así que se perdía en
+   silencio y los macros de la IA llegaban al PDF del control médico como "de
+   procedencia no registrada". Ahora el campo existe y `writeMealWithEpisode`
+   lo persiste.
+2. **Una entrada de solo macros se perdía entera** diciendo "Entrada guardada".
+   `hasMeal` de crear y el de editar eran dos booleanos distintos que ya se
+   habían desincronizado dos veces. Ahora hay **una sola lista**
+   (`src/mealFields.ts`, puro y con test) que usan los dos caminos.
 
-## ⛔ Lo primero después de fusionar esta rama
-
-**Crear `fix/macros-data-corruption` y arreglar los hallazgos 1 y 2 de
-`progress.md`.** Antes que cualquier fase nueva, antes que los tres Pecados
-Capitales de abajo.
-
-Los dos corrompen datos **hoy, en cada uso**:
-
-1. `macrosSource` se descarta en silencio al crear una entrada, así que los
-   macros estimados por IA llegan al PDF del control médico sin procedencia.
-2. Una entrada solo de macros se pierde entera mientras la pantalla dice
-   "Entrada guardada".
-
-Los dos son de una línea o dos. Ninguno lo atrapa `pnpm verify` —el primero
-justamente porque TypeScript no chequea propiedades en exceso sobre un
-spread—, así que el arreglo va **con test**, no solo con el cambio.
-
-Esta rama es de infraestructura arquitectónica: no se tocan acá. Decisión
-explícita de Verónica, 2026-08-26.
+**Lo que sigue abierto de ese lote** (cuatro hallazgos, en `progress.md`): la
+basal invisible al modelo de Patrones, `amount ?? 0` tratando una comida sin
+carbos confirmados como "no pasó nada", el aviso de fallo al registrar insulina
+que se pisa con un mensaje de éxito, y la insulina de comida escrita sin
+`entryGroupId`.
 
 ---
 

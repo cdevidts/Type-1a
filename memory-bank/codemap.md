@@ -92,6 +92,9 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
   `reportExport.ts` dibuja SVG inline para el PDF.
 - `notifications.ts` — un canal de Android por tipo de alarma. Android congela
   sonido y vibración al crear el canal.
+- `mealFields.ts` — qué campos **son** una comida. Puro y con test porque
+  decide si la fila se escribe y si se conserva: un `false` de más borra
+  historial. Si agregas un campo de comida a `UnifiedEntryInput`, va acá.
 - `theme.ts` — todos los tokens. `branding.ts` — el logo, en una variable.
 - `sensorConnection.ts` — cada usuaria conecta su propia cuenta LibreLinkUp.
 
