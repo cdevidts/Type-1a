@@ -1,6 +1,27 @@
 # Active Context
 
-_Última actualización: 2026-08-26 (migración a Memory Bank)._
+_Última actualización: 2026-08-26 (Fases 0-3 de la migración de memoria agéntica)._
+
+## Migración de memoria agéntica — Fases 0-3 cerradas
+
+Rama `chore/memory-bank-migration`, **sin push** (política Branch-and-Propose).
+
+Hecho: escáner de acoplamiento (`scripts/agentic-contracts.mjs`), cuatro
+contratos de Capa 1 en `contracts/`, los cinco activos de `.claude/` repuntados
+hacia ellos, y `verify:contracts` encadenado a `pnpm verify` y por lo tanto a
+CI. `systemPatterns.md` se partió: el proceso de corrida se fue a `workflow.md`.
+
+**Validación de comportamiento**: el `domain-safety-reviewer` repuntado se corrió
+contra `d868ece` y `c4ca192` en worktrees a esos commits. Reencontró **todos**
+los hallazgos graves de las revisiones originales (extrapolación sin centrar,
+colinealidad carbos↔unidades, `confoundedCount > sampleSize`, β como factor de
+corrección inferido; y en Fase 21 los cuatro de dosis). Además levantó siete
+que la revisión original no vio, cuatro de ellos vivos hoy — ver `progress.md`.
+
+Pendiente: Fases 4-6 (Memory Bank completo, README a ~30 líneas, ADR 0004 de
+CGM, purga verificada, loop de escritura). **No empezar sin aprobación.**
+
+---
 
 ## Foco inmediato: los tres Pecados Capitales
 

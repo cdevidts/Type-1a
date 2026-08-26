@@ -48,6 +48,45 @@ obvio— el bundle rompe con `pnpm verify` en verde. Ahora `verify:bundle` lo
 atraparía, pero **la causa sigue ahí**: la regla se aplica de forma
 inconsistente entre paquetes. Arreglarlo cuesta tres líneas y elimina la mina.
 
+### 🔴 Seis hallazgos vivos que la revisión repuntada encontró (2026-08-26)
+
+Salieron de correr el `domain-safety-reviewer` contra `d868ece` y `c4ca192`.
+**Ninguno está arreglado.** Los dos primeros corrompen datos hoy.
+
+1. **`macrosSource` se descarta en silencio al crear desde "Nueva entrada".**
+   `App.tsx:saveEntry` lo esparce en la llamada, pero `UnifiedEntryInput`
+   (`db.ts:713-745`) no tiene el campo y `writeMealWithEpisode` (`db.ts:821-834`)
+   nunca lo lee. TypeScript no lo atrapa: el chequeo de propiedades en exceso
+   **no aplica a un spread**. Consecuencia: los macros estimados por IA se
+   guardan sin procedencia y el PDF del control médico dice "de procedencia no
+   registrada" en vez de "estimada(s) por IA sin corregir".
+2. **Una entrada solo de macros se descarta y dice "Entrada guardada".**
+   `hasMeal` de `saveUnifiedEntry` (`db.ts:788`) sigue mirando solo
+   carbos/descripción/imagen. El de `updateUnifiedEntryGroup` (`db.ts:926`) sí
+   incluye macros: se arregló el camino de edición y no el de creación.
+3. **La basal es invisible al modelo y al aviso de ventana sucia.**
+   `macro-glucose.ts:281-287` no tiene rama para `basal_insulin`, así que 20 U
+   de Tresiba en la ventana no entran como covariable **ni** marcan
+   `confoundedCount`. La pantalla imprime "sin eventos".
+4. **Cantidad ausente = "no pasó nada".** `event.amount ?? 0` con
+   `any = ... > 0`: una comida real sin carbos confirmados desaparece del conteo.
+5. **Un fallo al registrar la insulina se pisa con un mensaje de éxito.**
+   `App.tsx:620` pone el aviso de error y `App.tsx:636` lo sobrescribe
+   incondicionalmente con "Comida guardada". Ella cierra la app creyendo que la
+   dosis quedó registrada.
+6. **La insulina de la comida se escribe sin `entryGroupId`.**
+   `App.tsx:608` no pasa el tercer argumento que `saveInsulinEvent`
+   (`db.ts:266-270`) acepta, y el timeline agrupa solo por `entry_group_id`.
+   Tres horas después `getPendingInsulinAssociations` le vuelve a preguntar qué
+   insulina fue con qué comida — justo lo que la Fase 21 dijo que eliminaba.
+
+Menores del mismo lote: la calculadora de `MealModal` no recibe glucosa, así
+que `isHypoglycemic` nunca puede dispararse ahí (`EntryModal` sí lo avisa); las
+unidades tecleadas se descartan sin avisar si se apaga "Registrarla como comida
+de ahora" (`MealModal.tsx:454`); y la lista de validación previa de
+`attachEntryToReading` (`db.ts:1173-1176`) no creció con cetonas ni macros,
+aunque su comentario promete que sí.
+
 ### 🟠 Sin refactor: componentes de formulario compartidos
 
 No existe `MacroFields` ni ningún componente compartido entre los cuatro
