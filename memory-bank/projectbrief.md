@@ -46,6 +46,29 @@ LibreLinkUp** (`packages/cgm/src/librelinkup.ts`, instanciado en
 documentación histórica que lo describe como la ruta principal y **está
 desactualizada**. Otros providers: `libreview-csv` (importación), `mock`.
 
+## Arquitectura del Modal Maestro (regla inquebrantable)
+
+Decisión de producto de los fundadores. **No se negocia por corrida.**
+
+- **Los accesos rápidos individuales se quedan.** Están bien como están: son la
+  vía de registro en pocos toques y no se tocan para "unificar".
+- **"Nueva entrada" y TODOS los modales de edición consumen un mismo componente
+  maestro** que agrupa toda la potencia de los accesos rápidos. Un flujo de
+  edición nunca puede ser más pobre que uno de creación — ya pasó, y costó una
+  fase entera.
+- **La edición es retroactiva y sin límite de tipo.** Editar una glucosa
+  aislada tiene que permitir agregarle una comida después. El tipo con el que
+  se creó un evento no restringe lo que se le puede sumar más tarde.
+- **Las herramientas potentes aparecen condicionalmente.** Si el evento ya
+  tiene comida, el modal muestra la edición de comida con IA; si no, no la
+  ofrece. Condicional por contenido, nunca por qué botón la abrió.
+- **Antes de agregar una capacidad a un modal, se audita dónde más vive.** El
+  Modal Maestro se construye consolidando lo mejor de los cuatro formularios
+  actuales, no escribiendo un quinto.
+
+Lo que ya está en esa dirección: `MacroFields.tsx` (el trío de macros y el
+campo numérico, compartidos) y `resolveMacrosSource` en `packages/domain`.
+
 ## Estado del producto
 
 MVP entregado y en uso. El trabajo en curso es post-MVP: rediseño de UX,

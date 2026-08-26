@@ -100,10 +100,44 @@ Antes de agregar un campo a cualquiera de los formularios de comida, **primero**
 se mira si va en `MacroFields` o en un componente compartido nuevo. Escribirlo
 suelto en un modal es cómo llegamos a tener el mismo bloque seis veces.
 
+## Backlog de producto priorizado
+
+Notas directas de los fundadores (2026-08-26). Va **después** de cerrar el
+Pecado Capital 3, y en este orden.
+
+### 1. 🔴 El informe en Excel falla en silencio
+
+Bug crítico y el primero de la lista: la exportación no produce archivo y no lo
+dice. Un fallo silencioso en la vía que va al control médico es peor que uno
+ruidoso — ella se entera cuando ya está en la consulta. Diagnosticar antes de
+tocar nada (`src/reportExport.ts`, `xlsx`), y **el arreglo incluye que un
+fallo se vea**.
+
+### 2. Catálogo multi-porción con foto
+
+Hoy se agrega un alimento a la vez. Debe poder:
+- guardar **fotos** de los alimentos del catálogo;
+- elegirlos con un **dropdown con búsqueda**, no la lista de chips actual;
+- **agregar varias comidas/porciones de una vez**, con macros y carbohidratos
+  tentativos **sumándose en vivo** antes de confirmar.
+
+Se integra al **Modal Maestro** (`projectbrief.md`), no como pantalla aparte.
+Los carbohidratos tentativos siguen siendo estimación: se sugieren, no se
+guardan como confirmados sin que ella confirme.
+
+### 3. Reportes PDF más ricos
+
+Legibilidad, **iconografía en los gráficos** para identificar de un vistazo qué
+evento es cada marca, y una síntesis clínica al cierre. Ojo con la frontera:
+una conclusión describe lo que pasó, **nunca** evalúa si una dosis fue adecuada
+ni sugiere cambiarla (`contracts/safety-acceptance.md`). Y las marcas nuevas no
+pueden distinguirse solo por color.
+
 ## Fuera de foco pero pendiente
 
 - Editar una entrada todavía no ofrece **foto ni re-análisis de IA** (lo único
-  que quedó de la Fase 21). La capa de datos ya lo aguanta: es trabajo de UI.
+  que quedó de la Fase 21). La capa de datos ya lo aguanta: es trabajo de UI, y
+  es parte del Modal Maestro.
 - **Fase 22** — animación del swipe entre pantallas. JS puro, no necesita build.
 - **Fase 20** — widget de pantalla de inicio. **Sí** necesita build (config
   plugin).
