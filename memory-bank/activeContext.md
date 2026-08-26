@@ -1,6 +1,6 @@
 # Active Context
 
-_Última actualización: 2026-08-26 (migración fusionada + corrupción de macros)._
+_Última actualización: 2026-08-26 (migración y fix de macros fusionados)._
 
 ## Migración de memoria agéntica — fusionada
 
@@ -35,28 +35,58 @@ que se pisa con un mensaje de éxito, y la insulina de comida escrita sin
 
 ---
 
-## Foco inmediato: los tres Pecados Capitales
+## ⛔ Siguiente tarea prioritaria: `resolveMacrosSource()` a dominio
 
-Salieron de la auditoría arquitectónica del 2026-08-26. Los tres son deuda de
-diseño que **ya causó bugs reales que llegaron al dispositivo**, no limpieza
-estética. En orden de daño.
+Es el Pecado Capital 1, y va **antes que los otros dos**. La rama
+`fix/macros-data-corruption` arregló que el valor se perdiera; no arregló que se
+calcule en cuatro sitios distintos, que es de donde salieron los tres bugs.
 
-### 1. `macrosSource` reimplementado en 4 capas
+### Por qué es dominio y no UI
 
-**Estado:** abierto. **Daño confirmado:** 3 bugs, uno por camino.
+`macrosSource` (`'ai' | 'user' | 'mixed' | undefined`) dice si los macros de una
+comida los estimó la IA o los escribió la usuaria, y **se imprime en el reporte
+del control médico**. Es una decisión determinística con consecuencia clínica:
+Regla 1 de `systemPatterns.md` la pone en `packages/domain`, pura y con test.
+Hoy vive en cuatro implementaciones divergentes:
 
-La misma decisión de dominio vive en `MealModal.tsx`, `MealEditModal.tsx`,
-`db.ts` y `App.tsx` (`macrosSourceFor`), con reglas distintas en cada una. Se
-imprime en el reporte médico.
+| Dónde | Qué hace hoy |
+|---|---|
+| `apps/mobile/src/components/MealModal.tsx` | comparación campo a campo contra `aiMacros` |
+| `apps/mobile/src/components/MealEditModal.tsx` | otra lógica campo a campo |
+| `apps/mobile/src/db.ts` | `existing.macrosSource === 'user' ? 'user' : 'mixed'`, y un `'user'` fijo al crear comida desde una edición |
+| `apps/mobile/App.tsx` (`macrosSourceFor`) | cuarta variante |
 
-**Trabajo:** extraer `resolveMacrosSource()` a `packages/domain`, con test que
-cubra los tres casos que ya fallaron:
-- lo que escribe la usuaria gana sobre lo de la IA;
-- `undefined` (procedencia desconocida) **nunca** se convierte en `'user'`;
-- `'user'` no degrada a `'mixed'` al editar.
+### El trabajo
 
-Después, los cuatro sitios llaman a esa función y ninguno decide por su cuenta.
-Ver Regla 1 en `systemPatterns.md`.
+1. **`resolveMacrosSource()` en `packages/domain`**, pura y determinística. Su
+   entrada es lo que la IA propuso y lo que hay ahora; su salida, la procedencia.
+   Los tests comparan contra una verdad escrita a mano —nunca contra lo que la
+   implementación devuelve hoy— y cubren los tres fallos ya vistos:
+   - lo que escribe la usuaria **gana** sobre lo de la IA;
+   - `undefined` (procedencia desconocida) **nunca** se convierte en `'user'`;
+   - `'user'` **no** degrada a `'mixed'` al editar.
+2. **Los cuatro sitios la llaman y ninguno decide por su cuenta.** Incluye el
+   `'user'` fijo de `db.ts` al crear una comida desde una edición: hoy es
+   correcto solo porque ningún llamador pasa procedencia, y eso es una
+   coincidencia, no una garantía.
+3. **Cerrar el `'mixed'` que debería ser `'ai'`.** Desde que los campos de
+   macros se **prellenan** con lo que estimó la IA, "el campo tiene valor" ya no
+   significa "ella lo escribió": una comida analizada y no corregida queda
+   `'mixed'`. Nunca miente hacia `'user'`, así que no es peligroso, pero
+   sobreestima su participación en un dato que lee su equipo clínico. La
+   función tiene que comparar **contra el valor precargado**, no contra
+   `undefined`: si coincide con lo que propuso la IA, es `'ai'`.
+
+**Criterio de salida:** una sola implementación, sus tests en
+`packages/domain`, cero lógica de procedencia en un `.tsx`, y una comida
+analizada y no tocada guardada como `'ai'`.
+
+---
+
+## Los otros dos Pecados Capitales
+
+Salieron de la misma auditoría del 2026-08-26. Son deuda de diseño que **ya
+causó bugs que llegaron al dispositivo**, no limpieza estética.
 
 ### 2. Divergencia de los cuatro formularios de comida
 
