@@ -51,13 +51,19 @@ suelto en un modal es cómo llegamos a tener el mismo bloque seis veces.
 Notas directas de los fundadores (2026-08-26). Con los tres Pecados
 Capitales cerrados, **esto es el foco**. En este orden.
 
-### 1. 🔴 El informe en Excel falla en silencio
+### 1. ✅ El informe en Excel — reparado
 
-Bug crítico y el primero de la lista: la exportación no produce archivo y no lo
-dice. Un fallo silencioso en la vía que va al control médico es peor que uno
-ruidoso — ella se entera cuando ya está en la consulta. Diagnosticar antes de
-tocar nada (`src/reportExport.ts`, `xlsx`), y **el arreglo incluye que un
-fallo se vea**.
+`XLSX.write(…, { type: 'array' })` devuelve un `ArrayBuffer`, no un
+`Uint8Array`, y un `as Uint8Array` se lo ocultaba a TypeScript. `File.write()`
+de `expo-file-system` declara `string | Uint8Array`. Los tests no podían verlo
+porque pasaban el resultado a `XLSX.read`, que acepta los dos.
+
+Reparado en tres capas: el tipo, un test que comprueba el envase y la firma
+`PK\x03\x04`, y la verificación de que lo escrito en disco pesa lo que debía
+antes de compartirlo. El mensaje de error ahora lleva la causa real.
+
+**Sin tocar datos ni columnas**, a propósito: la estructura cambia con el Modal
+Maestro y rediseñarla ahora sería trabajo tirado.
 
 ### 2. Catálogo multi-porción con foto
 

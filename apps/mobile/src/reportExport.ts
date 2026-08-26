@@ -668,5 +668,15 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(patternsSheetData), 'Patrones');
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(macroGlucoseSheetData), 'Grasa y proteína');
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(reportSheetData), 'Reporte');
-  return XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as Uint8Array;
+  // ⚠️ `type: 'array'` devuelve un **`ArrayBuffer`**, no un `Uint8Array`, por
+  // más que el nombre de la opción sugiera lo contrario. El `as Uint8Array`
+  // que había acá le mentía a TypeScript y el archivo nunca se escribía:
+  // `File.write()` de `expo-file-system` declara `string | Uint8Array`, y el
+  // puente nativo rechaza un `ArrayBuffer` crudo.
+  //
+  // Los tests no lo veían porque `XLSX.read(bytes, { type: 'array' })` acepta
+  // los dos, así que verificaban el contenido y nunca el envase. De ahí el
+  // test de tipo y de firma que ahora los acompaña.
+  const buffer = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+  return new Uint8Array(buffer);
 }

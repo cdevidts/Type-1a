@@ -119,6 +119,33 @@ describe('reportHtml', () => {
 });
 
 describe('reportWorkbookBytes', () => {
+  /**
+   * El bug que dejó el Excel sin generarse: `XLSX.write(..., { type: 'array' })`
+   * devuelve un `ArrayBuffer`, y un `as Uint8Array` lo disfrazaba. `File.write()`
+   * de `expo-file-system` declara `string | Uint8Array` y el puente nativo
+   * rechaza el buffer crudo.
+   *
+   * Los demás tests de este bloque no podían verlo: pasan el resultado a
+   * `XLSX.read(bytes, { type: 'array' })`, que acepta los dos. Verificaban el
+   * contenido y nunca el envase — el corolario de `systemPatterns.md` sobre
+   * tests que confirman lo que la implementación devuelve hoy.
+   */
+  it('devuelve un Uint8Array de verdad, no un ArrayBuffer disfrazado', () => {
+    const bytes = reportWorkbookBytes({ readings: [], rows: [], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 0 });
+    expect(bytes).toBeInstanceOf(Uint8Array);
+    expect(bytes).not.toBeInstanceOf(ArrayBuffer);
+    // `.length` existe en un Uint8Array y es `undefined` en un ArrayBuffer:
+    // es exactamente la diferencia por la que el archivo salía vacío.
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it('empieza con la firma de un archivo xlsx, que es un zip', () => {
+    const bytes = reportWorkbookBytes({ readings: [], rows: [], insulin: [], carbs: [], meals: [], activity: [], unreadableCount: 0 });
+    // 'PK\x03\x04'. Sin esto, un archivo de cero bytes o de basura pasaría
+    // igual: ella lo descubriría al abrirlo en la consulta.
+    expect([bytes[0], bytes[1], bytes[2], bytes[3]]).toEqual([0x50, 0x4b, 0x03, 0x04]);
+  });
+
   it('writes a Resumen sheet with the GMI estimate, distinct from lab HbA1c rows in Reporte', () => {
     const readings: CGMReading[] = [
       reading({ id: 'real-1', origin: 'real', glucose: 110 }),

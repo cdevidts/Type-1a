@@ -49,6 +49,22 @@ async function shareGeneratedFile(uri: string, mimeType: string): Promise<boolea
   return true;
 }
 
+/**
+ * Qué se le dice a la usuaria cuando una exportación falla.
+ *
+ * Lleva la causa real, recortada. "No se pudo generar, inténtalo otra vez" es
+ * inútil dos veces: no le dice si reintentar sirve de algo, y a la corrida que
+ * venga a arreglarlo no le deja nada más que una suposición. La causa técnica
+ * no es información sensible —es el mensaje del sistema de archivos, no un
+ * dato de glucosa— y es lo único que convierte "falla" en algo diagnosticable
+ * desde el dispositivo, sin `adb logcat`.
+ */
+function exportFailureMessage(what: string, error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error);
+  const trimmed = detail.length > 160 ? `${detail.slice(0, 160)}…` : detail;
+  return `No se pudo generar ${what}. Tus datos están intactos; esto solo afectó al archivo. Detalle: ${trimmed}`;
+}
+
 const ALERT_STYLE_OPTIONS: { value: ReminderAlertStyle; label: string }[] = [
   { value: 'both', label: 'Sonido y vibración' },
   { value: 'sound', label: 'Solo sonido' },
@@ -541,7 +557,7 @@ export function SettingsModal({
       setReportMessage(shared ? null : 'PDF generado, pero este dispositivo no puede compartir archivos.');
     } catch (error) {
       logSaveError('SettingsModal.exportReportPdf', error);
-      setReportMessage('No se pudo generar el PDF. Inténtalo otra vez.');
+      setReportMessage(exportFailureMessage('el PDF', error));
     } finally {
       setReportBusy(false);
     }
@@ -557,10 +573,19 @@ export function SettingsModal({
         setReportMessage('No hay datos guardados en ese rango.');
         return;
       }
+      const bytes = reportWorkbookBytes(data);
       const file = new File(Paths.cache, `type1a-reporte-${Date.now()}.xlsx`);
       if (file.exists) file.delete();
       file.create();
-      file.write(reportWorkbookBytes(data));
+      file.write(bytes);
+      // **Se comprueba lo que quedó en disco, no lo que se creía escribir.**
+      // El fallo que esto cierra no era una excepción: el archivo se creaba y
+      // quedaba vacío, así que la hoja de compartir se abría con un adjunto
+      // roto y ella se enteraba al intentar abrirlo — en la consulta. Un
+      // archivo de cero bytes es peor que un error, porque parece un éxito.
+      if (file.size !== bytes.length) {
+        throw new Error(`El archivo quedó en ${file.size ?? 0} bytes y debía tener ${bytes.length}.`);
+      }
       const shared = await shareGeneratedFile(
         file.uri,
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -568,7 +593,7 @@ export function SettingsModal({
       setReportMessage(shared ? null : 'Excel generado, pero este dispositivo no puede compartir archivos.');
     } catch (error) {
       logSaveError('SettingsModal.exportReportXlsx', error);
-      setReportMessage('No se pudo generar el Excel. Inténtalo otra vez.');
+      setReportMessage(exportFailureMessage('el Excel', error));
     } finally {
       setReportBusy(false);
     }
