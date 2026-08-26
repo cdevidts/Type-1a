@@ -43,10 +43,17 @@ completos se leen solo cuando hace falta el contexto de una decisión vieja.
 ## Historia anterior a esta estructura
 
 El árbol previo a la migración —incluido `ROADMAP_V0.2.md` con sus 2.833
-líneas de post-mortems— está en el tag `archive/pre-memory-bank`:
+líneas de post-mortems— está en el commit **`af6c865`**, etiquetado
+`archive/pre-memory-bank`:
 
 ```
-git show archive/pre-memory-bank:docs/
+git show af6c865 --stat          # qué había
+git checkout af6c865 -- docs/    # traerlo de vuelta
 ```
+
+**Usa el SHA, no el tag, si el tag no aparece.** `af6c865` es ancestro de la
+rama principal, así que viaja con la historia y está en cualquier clon. El tag
+es solo un alias cómodo, y el proxy git de los entornos remotos no relaya refs
+de tags: puede existir localmente y no en el remoto.
 
 Los cuerpos de commit son la bitácora real del proyecto (`git log --format=full`).
