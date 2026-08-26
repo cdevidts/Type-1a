@@ -35,6 +35,24 @@
  * se usan para **descontar de un promedio descriptivo** la parte atribuible a
  * lo que pasó en el medio. Ningún coeficiente se muestra, ninguno entra a una
  * calculadora de dosis.
+ *
+ * ## ⚠️ Los coeficientes no pueden salir de `macro-glucose.ts`
+ *
+ * Éste es un módulo genérico, y ahí está el riesgo: el coeficiente de la
+ * columna de unidades de insulina es, dimensionalmente, **un factor de
+ * corrección empírico derivado de los datos de la usuaria**. `AGENTS.md`
+ * prohíbe inferir parámetros de terapia — objetivo, factor de corrección e
+ * incremento son valores que ella ingresa.
+ *
+ * Hoy no se viola: el único llamador es `macro-glucose.ts`, que usa los
+ * coeficientes para residualizar y los descarta. Pero un
+ * `fitOls(deltas, [[unidades]])` desde otro lado produce un factor de
+ * corrección inferido en tres líneas.
+ *
+ * Por eso: **este módulo no se cataloga como alcanzable por el chat de IA**
+ * (ver `docs/AI_CHAT_ARCHITECTURE.md`), y cualquier llamador nuevo tiene que
+ * justificar por qué sus coeficientes no son un parámetro de terapia
+ * disfrazado.
  */
 
 export interface OlsFit {
@@ -171,16 +189,34 @@ export function fitOlsOnVaryingColumns(
 }
 
 /**
- * Descuenta de cada observación la parte que el modelo atribuye a las
- * covariables, dejando el resto.
+ * Descuenta de cada observación su **desbalance** respecto del promedio en
+ * las covariables de confusión.
  *
- * Es la operación que permite conservar un episodio "sucio" en vez de
- * tirarlo: si a las 2 h se comieron 20 g de más, se resta lo que el modelo
- * dice que aportan esos 20 g y el episodio sigue contando.
+ * ## Por qué se centra (2026-08-26) — el error que esto corrige
  *
- * **El intercepto y el predictor de interés no se tocan** — solo se
- * descuentan las columnas que quien llama declara como confusores en
- * `nuisanceColumns` (índices dentro de `predictors`, base 0).
+ * La primera versión restaba `β_j · x_ij` a secas. Eso no produce un promedio
+ * ajustado: produce **la predicción del modelo para una ventana con cero
+ * carbohidratos, cero insulina y cero actividad**. Ese contrafáctico casi no
+ * existe en los datos —a las 4-5 h toda ventana tiene la comida siguiente
+ * adentro—, así que era extrapolar fuera del rango observado y publicar el
+ * resultado bajo la etiqueta "cambio promedio de glucosa desde el momento de
+ * comer". Con datos donde la verdad era +10 mg/dL, la pantalla llegaba a
+ * mostrar +57, y ese número se imprime en el reporte que va al control
+ * médico.
+ *
+ * Centrando (`x_ij − x̄_j`) el promedio ajustado queda **anclado en el
+ * promedio observado**: el ajuste corrige el desbalance *entre* episodios sin
+ * mover el nivel general a un régimen que nunca se midió. Es lo que en la
+ * literatura se llama media marginal estimada, y es la forma estándar de
+ * "ajustar por una covariable" precisamente por esto.
+ *
+ * Y lo importante para esta pantalla: **la diferencia entre dos grupos se
+ * conserva exacta**. Centrar suma la misma constante a los dos, así que la
+ * comparación —que es lo que la pantalla existe para mostrar— no se toca,
+ * mientras que los niveles siguen siendo comparables con lo observado.
+ *
+ * **El intercepto y el predictor de interés no se tocan**: solo se descuentan
+ * las columnas que quien llama declara en `nuisanceColumns`.
  */
 export function adjustForNuisance(
   outcome: readonly number[],
@@ -188,6 +224,11 @@ export function adjustForNuisance(
   nuisanceColumns: readonly number[],
   fit: OlsFit,
 ): number[] {
+  const means = new Map<number, number>();
+  for (const column of nuisanceColumns) {
+    const values = predictors.map((row) => row[column] ?? 0);
+    means.set(column, values.reduce((sum, value) => sum + value, 0) / (values.length || 1));
+  }
   return outcome.map((value, index) => {
     let adjusted = value;
     for (const column of nuisanceColumns) {
@@ -195,8 +236,36 @@ export function adjustForNuisance(
       const beta = fit.coefficients[column + 1];
       const x = predictors[index]?.[column];
       if (beta === undefined || x === undefined) continue;
-      adjusted -= beta * x;
+      adjusted -= beta * (x - (means.get(column) ?? 0));
     }
     return adjusted;
   });
+}
+
+/**
+ * ¿El ajuste movió el promedio más de lo que un ajuste sano movería?
+ *
+ * Último freno contra un `β` disparatado. `fitOls` atrapa la singularidad
+ * exacta, pero no el **mal condicionamiento**, y en datos reales carbohidratos
+ * y unidades de insulina van casi proporcionales (se bolea por ratio): eso
+ * puede producir coeficientes enormes que se cancelan dentro del rango de los
+ * datos y dejan de cancelarse ante un solo episodio atípico —una hipo tratada
+ * con 15 g y sin insulina, cosa rutinaria.
+ *
+ * En vez de estimar el número de condición, se mira el efecto: si el promedio
+ * ajustado se corrió más de una desviación estándar del crudo, el ajuste está
+ * haciendo más de lo que puede justificar y quien llama debe quedarse con el
+ * crudo. Es un criterio grueso a propósito — acá el error caro es publicar un
+ * número movido, no perderse una corrección fina.
+ */
+export function adjustmentIsPlausible(raw: readonly number[], adjusted: readonly number[]): boolean {
+  if (raw.length === 0 || raw.length !== adjusted.length) return false;
+  const mean = (values: readonly number[]): number =>
+    values.reduce((sum, value) => sum + value, 0) / values.length;
+  const rawMean = mean(raw);
+  const variance = mean(raw.map((value) => (value - rawMean) ** 2));
+  const sd = Math.sqrt(variance);
+  // Con dispersión ~0 cualquier corrimiento es sospechoso; se tolera un
+  // margen mínimo para no rechazar por ruido de punto flotante.
+  return Math.abs(mean(adjusted) - rawMean) <= Math.max(sd, 1e-9);
 }

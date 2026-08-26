@@ -445,3 +445,29 @@ describe('el lookback llega de verdad hasta collectEpisodeContext', () => {
     expect(oneHour!.confoundedCount).toBe(0);
   });
 });
+
+describe('confoundedCount nunca puede superar a sampleSize', () => {
+  it('una dosis sin lectura cerca no cuenta ni como muestra ni como confundida', () => {
+    // Encontrado por la revisión de seguridad del 2026-08-26: el conteo de
+    // confusores estaba ANTES del `continue` que descarta una dosis sin
+    // lectura. Con un hueco de sensor, la franja declaraba "10 de 3 con
+    // eventos de por medio" — imposible, y suficiente para que un médico
+    // descarte la tabla entera.
+    const insights = buildNutritionInsights({
+      ...EMPTY,
+      // Cuatro dosis con confusores entre ellas, pero UNA sola lectura útil.
+      insulin: [
+        rapid(atLocal(18, 11), 5),
+        rapid(atLocal(18, 12), 5),
+        rapid(atLocal(18, 13), 5),
+        rapid(atLocal(18, 14), 5),
+      ],
+      readings: [reading(atLocal(18, 12), 140)],
+    });
+    for (const window of insights) {
+      for (const outcome of window.outcomes) {
+        expect(outcome.confoundedCount).toBeLessThanOrEqual(outcome.sampleSize);
+      }
+    }
+  });
+});

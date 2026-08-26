@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { adjustForNuisance, fitOls, fitOlsOnVaryingColumns } from '../src/regression';
+import { adjustForNuisance, adjustmentIsPlausible, fitOls, fitOlsOnVaryingColumns } from '../src/regression';
 
 describe('fitOls', () => {
   it('recupera exactamente una relación lineal conocida', () => {
@@ -60,16 +60,45 @@ describe('fitOls', () => {
 });
 
 describe('adjustForNuisance', () => {
-  it('descuenta solo las columnas declaradas como confusor', () => {
-    // y = 100 + 2·interés − 5·confusor. Al descontar el confusor, lo que
-    // queda tiene que depender solo del predictor de interés.
+  it('quita la VARIACIÓN del confusor y conserva el nivel promedio', () => {
+    // y = 100 + 2·interés − 5·confusor.
+    //
+    // Dos invariantes, y el segundo es el que corrige el error grave que
+    // encontró la revisión de seguridad del 2026-08-26:
+    //
+    // 1. Después de ajustar, lo que queda depende solo del predictor de
+    //    interés (más una constante): la variación del confusor se fue.
+    // 2. **El promedio no se mueve.** Sin centrar, `adjustForNuisance`
+    //    devolvía la predicción para "confusor = 0" —un régimen que en los
+    //    datos reales casi no existe— y eso inflaba el número que se imprime
+    //    en el reporte médico.
     const predictors = [[10, 4], [20, 1], [30, 6], [40, 2], [50, 5], [60, 3], [70, 0], [80, 7]];
     const outcome = predictors.map(([interes, confusor]) => 100 + 2 * interes! - 5 * confusor!);
     const fit = fitOls(outcome, predictors)!;
     const adjusted = adjustForNuisance(outcome, predictors, [1], fit);
-    for (const [index, value] of adjusted.entries()) {
-      expect(value).toBeCloseTo(100 + 2 * predictors[index]![0]!, 6);
-    }
+
+    const mean = (values: readonly number[]): number =>
+      values.reduce((sum, value) => sum + value, 0) / values.length;
+    expect(mean(adjusted)).toBeCloseTo(mean(outcome), 6);
+
+    // La diferencia con `100 + 2·interés` es la MISMA para todos: una
+    // constante, no ruido del confusor.
+    const offsets = adjusted.map((value, index) => value - (100 + 2 * predictors[index]![0]!));
+    for (const offset of offsets) expect(offset).toBeCloseTo(offsets[0]!, 6);
+  });
+
+  it('la diferencia entre dos grupos se conserva exacta al centrar', () => {
+    // Es la propiedad de la que depende toda la pantalla de Patrones: centrar
+    // suma la misma constante a los dos grupos, así que la COMPARACIÓN —lo
+    // que la pantalla existe para mostrar— no se toca, mientras que los
+    // niveles siguen siendo comparables con lo observado.
+    const predictors = [[0, 10], [0, 30], [0, 50], [0, 70], [1, 20], [1, 40], [1, 60], [1, 80]];
+    const outcome = predictors.map(([grupo, confusor]) => 20 + 35 * grupo! + 0.5 * confusor!);
+    const fit = fitOls(outcome, predictors)!;
+    const adjusted = adjustForNuisance(outcome, predictors, [1], fit);
+    const mean = (values: readonly number[]): number =>
+      values.reduce((sum, value) => sum + value, 0) / values.length;
+    expect(mean(adjusted.slice(4)) - mean(adjusted.slice(0, 4))).toBeCloseTo(35, 6);
   });
 
   it('sin columnas de confusor no cambia nada', () => {
@@ -126,5 +155,28 @@ describe('fitOlsOnVaryingColumns', () => {
   it('sigue respetando el mínimo de observaciones', () => {
     const predictors = [[1, 0], [2, 0], [3, 0], [4, 0]];
     expect(fitOlsOnVaryingColumns([1, 2, 3, 4], predictors, 8)).toBeNull();
+  });
+});
+
+describe('adjustmentIsPlausible', () => {
+  // Último freno contra un beta disparatado por colinealidad: `fitOls` atrapa
+  // la singularidad exacta, no el mal condicionamiento.
+  it('acepta un ajuste que no mueve el promedio', () => {
+    expect(adjustmentIsPlausible([10, 20, 30, 40], [12, 18, 32, 38])).toBe(true);
+  });
+
+  it('rechaza un ajuste que corre el promedio más de una desviación estándar', () => {
+    // Crudo: media 25, sd ≈ 11.2. Ajustado: media 75.
+    expect(adjustmentIsPlausible([10, 20, 30, 40], [60, 70, 80, 90])).toBe(false);
+  });
+
+  it('con dispersión cero, cualquier corrimiento es sospechoso', () => {
+    expect(adjustmentIsPlausible([10, 10, 10], [10, 10, 10])).toBe(true);
+    expect(adjustmentIsPlausible([10, 10, 10], [11, 11, 11])).toBe(false);
+  });
+
+  it('rechaza entradas mal formadas en vez de aceptarlas', () => {
+    expect(adjustmentIsPlausible([], [])).toBe(false);
+    expect(adjustmentIsPlausible([1, 2], [1])).toBe(false);
   });
 });

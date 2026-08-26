@@ -342,7 +342,7 @@ function nutritionSectionHtml(insights: MealWindowInsight[], meals: readonly Mea
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>
-  <p class="summary-footnote">Promedios de lo registrado por franja horaria. "En rango" = porcentaje de dosis rápidas tras las cuales había una lectura entre 70 y 180 mg/dL a esa hora; ↓ y ↑ son el porcentaje que quedó por debajo de 70 y por encima de 180, y se muestran a propósito porque quedar fuera de rango por abajo y por arriba son cosas opuestas. Es una observación descriptiva, no una medida de si la dosis fue adecuada, y depende también de comida, actividad, estrés y basal. Solo se muestra un porcentaje con al menos ${MIN_SAMPLE_FOR_RATE} dosis.${anyMacros ? ' Proteína, grasa y fibra son promedios de las comidas donde la usuaria los anotó: un guion significa que no los registró en esa franja, no que fueran cero.' + macroProvenanceNote(meals) : ''} Type 1A nunca decide ni sugiere una dosis por su cuenta: su calculadora solo aplica los parámetros que cargó la propia usuaria.</p>`;
+  <p class="summary-footnote">Promedios de lo registrado por franja horaria. "En rango" = porcentaje de dosis rápidas tras las cuales había una lectura entre 70 y 180 mg/dL a esa hora; ↓ y ↑ son el porcentaje que quedó por debajo de 70 y por encima de 180, y se muestran a propósito porque quedar fuera de rango por abajo y por arriba son cosas opuestas. Es una observación descriptiva, no una medida de si la dosis fue adecuada, y depende también de comida, actividad, estrés y basal. Solo se muestra un porcentaje con al menos ${MIN_SAMPLE_FOR_RATE} dosis. <code>c</code> es cuántas de esas dosis tuvieron otra comida, carbohidratos, otra dosis o actividad registrados dentro de la ventana: no se descartan (casi ninguna ventana de 3 h queda limpia, y descartarlas dejaba la tabla vacía), pero conviene leer el porcentaje sabiéndolo.${anyMacros ? ' Proteína, grasa y fibra son promedios de las comidas donde la usuaria los anotó: un guion significa que no los registró en esa franja, no que fueran cero.' + macroProvenanceNote(meals) : ''} Type 1A nunca decide ni sugiere una dosis por su cuenta: su calculadora solo aplica los parámetros que cargó la propia usuaria.</p>`;
 }
 
 /**
@@ -398,6 +398,7 @@ function macroGlucoseSectionHtml(comparison: MacroGlucoseComparison | null): str
     </tr></thead>
     <tbody>${row('Más grasa + proteína', comparison.higher)}${row('Menos', comparison.lower)}</tbody>
   </table>
+  <p class="summary-footnote"><strong>Cómo leer la tabla.</strong> <code>n</code> es cuántas comidas entraron en ese horizonte; <code>c</code>, cuántas de ellas tuvieron otra comida, carbohidratos, una dosis o actividad registrados dentro de la ventana. <code>aj.</code> marca que el valor está <strong>ajustado</strong>: esas comidas no se descartan —en diabetes tipo 1 casi ninguna ventana de 5 h queda limpia, y descartarlas vaciaba la tabla y sesgaba lo que quedaba— sino que se les descuenta por regresión el desbalance respecto del promedio en esos eventos. El ajuste corrige la diferencia entre comidas; <strong>no</strong> representa lo que habría pasado sin ningún evento de por medio, y el nivel sigue incluyendo lo típico de la ventana. Sin <code>aj.</code>, el valor es el promedio crudo: el modelo no se pudo ajustar de forma confiable y se prefirió no ajustar.</p>
   <p class="summary-footnote">Cambio promedio de glucosa respecto del momento de comer, en mg/dL, según la carga de grasa más proteína de la comida (corte en ${comparison.splitAtFatProteinG.toFixed(0)} g, la mediana de ${comparison.eligibleMealCount} comidas con ambos macros anotados). En diabetes tipo 1 la grasa y la proteína tienden a mover la glucosa de forma retrasada y prolongada, entre 1,5 y 6 h, con efecto aditivo cuando la comida es alta en ambas — por eso se miran estos horizontes y no la primera hora. Es una descripción de lo ya ocurrido, no una medida de si una dosis fue adecuada. Type 1A nunca decide ni sugiere una dosis por su cuenta: su calculadora solo aplica los parámetros que cargó la propia usuaria.</p>`;
 }
 
@@ -446,7 +447,7 @@ function insulinSectionHtml(data: ReportExport): string {
     ${row('Rápida', rapid, data.rapidInsulinDurationHours)}
     ${row('Basal', basal, data.basalInsulinDurationHours)}
   </table>
-  <p class="muted">Dato declarado por la usuaria. La duración se usa únicamente para excluir de los promedios los tramos en que otra dosis pudo estar actuando; Type 1A no estima insulina activa ni calcula dosis.</p>`;
+  <p class="muted">Dato declarado por la usuaria. La duración se usa únicamente para saber si otra dosis pudo estar actuando dentro de una ventana, y así tenerlo en cuenta al promediar los patrones de abajo. Type 1A no estima insulina activa ni calcula dosis.</p>`;
 }
 
 export function reportHtml(data: ReportExport, rangeLabel: string): string {
@@ -456,9 +457,10 @@ export function reportHtml(data: ReportExport, rangeLabel: string): string {
   const macroGlucose = buildMacroGlucoseComparison({
     meals: data.meals,
     readings: data.readings,
-    // Fase 23: excluye del promedio los episodios con algo de por medio. Sin
-    // esto, el reporte que va al control médico presenta como patrón de
-    // grasa/proteína lo que puede ser una colación.
+    // Los episodios con algo de por medio NO se excluyen (2026-08-26): se
+    // conservan y se les descuenta el desbalance por regresión. Excluirlos
+    // vaciaba las tablas, porque en diabetes tipo 1 casi ninguna ventana de
+    // 5 h queda limpia. Ver `macro-glucose.ts`.
     insulin: data.insulin,
     carbs: data.carbs,
     activity: data.activity,
@@ -576,7 +578,7 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
         basalCatalog === undefined ? 'No registrada' : `${basalCatalog.brand} (${basalCatalog.generic})`,
         basalCatalog === undefined ? '' : `Duración considerada: ${data.basalInsulinDurationHours ?? basalCatalog.durationHours} h`,
       ],
-      ['Dato declarado por la usuaria. La duración solo se usa para excluir de los promedios los tramos en que otra dosis pudo estar actuando; Type 1A no estima insulina activa ni calcula dosis.'],
+      ['Dato declarado por la usuaria. La duración solo se usa para saber si otra dosis pudo estar actuando dentro de una ventana, y tenerlo en cuenta al promediar los patrones. Type 1A no estima insulina activa ni calcula dosis.'],
     ];
   summarySheetData.push(...insulinRows);
 
@@ -589,9 +591,10 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
   const macroGlucose = buildMacroGlucoseComparison({
     meals: data.meals,
     readings: data.readings,
-    // Fase 23: excluye del promedio los episodios con algo de por medio. Sin
-    // esto, el reporte que va al control médico presenta como patrón de
-    // grasa/proteína lo que puede ser una colación.
+    // Los episodios con algo de por medio NO se excluyen (2026-08-26): se
+    // conservan y se les descuenta el desbalance por regresión. Excluirlos
+    // vaciaba las tablas, porque en diabetes tipo 1 casi ninguna ventana de
+    // 5 h queda limpia. Ver `macro-glucose.ts`.
     insulin: data.insulin,
     carbs: data.carbs,
     activity: data.activity,
@@ -643,6 +646,7 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
   const macroGlucoseSheetData: (string | number)[][] = macroGlucose === null
     ? [
       ['Grasa y proteína frente a la glucosa tardía'],
+      ['Las comidas con otra comida, dosis o actividad de por medio NO se descartan: se les descuenta por regresión el desbalance respecto del promedio en esos eventos ("ajustado por covariables"). El ajuste corrige la diferencia entre comidas; no representa lo que habría pasado sin ningún evento de por medio. Sin esa marca, el valor es el promedio crudo.'],
       ['Todavía no hay suficientes comidas con grasa y proteína anotadas para comparar.'],
     ]
     : [

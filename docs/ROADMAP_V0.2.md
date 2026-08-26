@@ -2409,6 +2409,87 @@ la hoja, eso habría pisado en silencio la proteína que ella corrigiera y
 encima la habría etiquetado como estimación de IA. Es el mismo error que ya se
 había corregido en `confirmMeal`; estaba vivo en el otro camino.
 
+### La segunda revisión encontró que el ajuste publicaba un número falso
+
+La revisión de seguridad sobre el rediseño estadístico encontró 12 cosas, y
+la primera bloqueaba el build. Vale la pena dejarla escrita entera porque es
+un error sutil y fácil de repetir.
+
+**El "promedio ajustado" no era un promedio: era una extrapolación.**
+`adjustForNuisance` restaba `β·x` sin centrar, así que lo que devolvía no era
+el promedio corregido sino **la predicción del modelo para una ventana con
+cero carbohidratos, cero insulina y cero actividad**. Ese contrafáctico casi
+no existe en los datos — a las 4-5 h toda ventana tiene la comida siguiente
+adentro. Era extrapolar fuera del rango observado y publicarlo bajo la
+etiqueta "cambio promedio de glucosa desde el momento de comer".
+
+Con datos donde la verdad era **+10 mg/dL**, la pantalla mostraba **+57**, con
+la etiqueta "· ajustado", y se imprimía en el PDF del control médico. Material
+directo para subir una basal.
+
+**Y el arreglo anterior lo empeoró.** `fitOlsOnVaryingColumns` —descartar la
+columna constante— era correcto en sí mismo, pero quitaba el único freno
+accidental que impedía que el error llegara al dispositivo: antes, la columna
+de actividad constante hacía singular el sistema y el ajuste no se aplicaba
+nunca. Dos arreglos, cada uno bien por separado, que juntos abrían un agujero.
+
+**La corrección: centrar.** `adjusted_i = y_i − Σ β_j (x_ij − x̄_j)`. Así el
+promedio ajustado queda **anclado en el promedio observado** y el ajuste
+corrige el desbalance *entre* episodios sin mover el nivel general a un
+régimen que nunca se midió. Es la media marginal estimada, la forma estándar
+de ajustar por una covariable, y es estándar exactamente por esto.
+
+Lo que hace que centrar sea la elección correcta para esta pantalla: **la
+diferencia entre los dos grupos se conserva exacta**, porque centrar suma la
+misma constante a los dos. La comparación —que es lo que la pantalla existe
+para mostrar— queda limpia, y los niveles siguen siendo comparables con lo
+observado. El escenario que daba +81/+57 ahora da 45.0/10.0.
+
+Además, tres frenos que no existían:
+
+- **`adjustmentIsPlausible`**: si el ajuste corrió el promedio más de una
+  desviación estándar, se descarta y se muestra el crudo. `fitOls` atrapa la
+  singularidad exacta pero no el **mal condicionamiento**, y en datos reales
+  carbohidratos y unidades van casi proporcionales (se bolea por ratio): eso
+  produce coeficientes enormes que se cancelan dentro del rango de los datos y
+  dejan de cancelarse ante un solo episodio atípico — una hipo tratada con
+  15 g y sin insulina, cosa rutinaria.
+- **Los cuatro horizontes comparten régimen**: o los cuatro ajustados o los
+  cuatro crudos. Si 2 h saliera crudo y 4 h ajustado, las barras contiguas
+  —misma escala— medirían cosas distintas y el salto se leería como "a partir
+  de las 4 h me disparo".
+- **La carga de grasa+proteína entra al modelo** aunque no se descuente, para
+  que los coeficientes de los confusores se estimen manteniéndola constante.
+  Sin eso había sesgo por variable omitida y el ajuste se comía parte del
+  patrón que la pantalla quiere mostrar.
+
+**Otros hallazgos corregidos en la misma corrida:**
+
+- `confoundedCount` podía superar a `sampleSize` (el conteo estaba antes del
+  `continue` que descarta una dosis sin lectura). El reporte médico podía
+  decir "10 de 3 con eventos de por medio" — un imposible aritmético al lado
+  de un porcentaje, suficiente para que un médico descarte la tabla entera.
+- **Las cetonas no aparecían en el timeline.** Registrarlas en "Nueva entrada"
+  daba "Entrada registrada · 280 mg/dL", sin mención del valor; y una entrada
+  solo de cetonas decía literalmente **"Entrada vacía"**. Es el dato de triage
+  de cetoacidosis.
+- El reporte seguía diciendo que la duración de la insulina "se usa para
+  **excluir** los tramos", que dejó de ser verdad. Y las abreviaturas nuevas
+  (`c=`, `aj.`) no estaban definidas en ningún pie: ahora hay una leyenda que
+  explica qué es y qué **no** es el valor ajustado.
+- Los macros de la IA se guardaban con los campos en blanco en pantalla: si
+  ella corregía solo la proteína, la comida quedaba "corregida por la usuaria"
+  para una grasa que nunca vio. Ahora se prellenan, visibles y editables.
+
+**Lección para el sistema agéntico:** los tests no atraparon nada de esto
+porque verificaban `adjusted === true/false`, `sampleSize` y
+`confoundedCount` — nunca **el valor** contra una verdad independiente. Un
+script de 40 líneas con efecto sembrado encontró en un minuto lo que 250
+tests no vieron. Ahora hay tests de verdad sembrada, y la regla queda: cuando
+un cálculo produce un número que la usuaria lee como patrón clínico, el test
+tiene que comparar contra una verdad conocida, no contra lo que la
+implementación devuelve hoy.
+
 ---
 
 ## Fase 22 — Animación del swipe entre pantallas (planificada 2026-08-21)

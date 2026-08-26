@@ -330,7 +330,7 @@ export function buildNutritionInsights(input: NutritionInsightsInput): MealWindo
         // como patrón limpio lo que no lo es; y no mostrar nada no le sirve a
         // nadie. Verónica lo pidió textualmente: nada de obviar el dato que
         // no viene en formato fácil.
-        if (hasConfoundingEvent({
+        const confounded = hasConfoundingEvent({
           anchorTimestamp: dose.timestamp,
           windowMinutes: horizonHours * 60,
           mealGraceMinutes: DOSE_OWN_MEAL_MINUTES,
@@ -341,11 +341,19 @@ export function buildNutritionInsights(input: NutritionInsightsInput): MealWindo
           ...(input.activity === undefined ? {} : { activity: input.activity }),
           ...(input.rapidLookbackMinutes === undefined ? {} : { lookbackMinutes: input.rapidLookbackMinutes }),
           ...(input.basalLookbackMinutes === undefined ? {} : { basalLookbackMinutes: input.basalLookbackMinutes }),
-        })) confoundedCount += 1;
+        });
         const targetMs = Date.parse(dose.timestamp) + horizonHours * 60 * 60_000;
         const point = readingNear(series, targetMs);
+        // El conteo va DESPUÉS del `continue`, no antes (corregido
+        // 2026-08-26 tras la revisión de seguridad). Contándolo antes, una
+        // dosis sin lectura cerca —un hueco de sensor— sumaba al confusor
+        // pero no a la muestra, y la franja terminaba declarando cosas como
+        // "10 de 3 con eventos de por medio". Un número aritméticamente
+        // imposible al lado de un porcentaje hace que un médico descarte la
+        // tabla entera, con razón.
         if (point === undefined) continue;
         sampleSize += 1;
+        if (confounded) confoundedCount += 1;
         if (point.mgDl < HYPOGLYCEMIA_THRESHOLD) belowCount += 1;
         else if (point.mgDl > HIGH_THRESHOLD) aboveCount += 1;
         else inTargetCount += 1;

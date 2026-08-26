@@ -2,7 +2,7 @@ import type { ActivityEvent, CarbEvent, CGMReading, InsulinEvent, MealEvent } fr
 
 import { collectEpisodeContext } from './episode-context';
 import { findRapidInsulinCandidates } from './meal';
-import { adjustForNuisance, fitOlsOnVaryingColumns } from './regression';
+import { adjustForNuisance, adjustmentIsPlausible, fitOlsOnVaryingColumns } from './regression';
 import { readingNear, toGlucoseSeries } from './nutrition-insights';
 
 /**
@@ -315,7 +315,14 @@ export function buildMacroGlucoseComparison(input: {
   const higher = { ...emptyGroup(higherMeals), points: [] as MacroGlucosePoint[] };
   const lower = { ...emptyGroup(lowerMeals), points: [] as MacroGlucosePoint[] };
 
-  for (const horizonHours of FAT_PROTEIN_HORIZONS_HOURS) {
+  // Se calculan todos los horizontes primero y recién después se decide si el
+  // grupo entero se muestra ajustado o crudo. **Los cuatro horizontes tienen
+  // que compartir régimen**: si 2 h saliera crudo y 4 h ajustado, las barras
+  // contiguas —dibujadas contra la misma escala— estarían midiendo cosas
+  // distintas, y el salto entre una y otra se leería como "a partir de las
+  // 4 h se me dispara" cuando en realidad es un artefacto de que el modelo
+  // convergió en un horizonte y no en el otro.
+  const perHorizon = FAT_PROTEIN_HORIZONS_HOURS.map((horizonHours) => {
     const higherObs = observationsAt(higherMeals, series, horizonHours);
     const lowerObs = observationsAt(lowerMeals, series, horizonHours);
     const all = [...higherObs, ...lowerObs];
@@ -357,10 +364,21 @@ export function buildMacroGlucoseComparison(input: {
           .filter((index) => index >= 0),
         fitted.fit,
       );
-    const fit = fitted === null ? null : fitted.fit;
+    // Último freno: si el ajuste corrió el promedio más de una desviación
+    // estándar, está haciendo más de lo que puede justificar (típicamente por
+    // colinealidad entre carbohidratos y unidades, que en datos reales van
+    // casi proporcionales). Se descarta y se muestra el crudo.
+    const usable = fitted !== null && adjustmentIsPlausible(deltas, adjustedAll);
 
-    higher.points.push(pointFor(horizonHours, higherObs, adjustedAll.slice(0, higherObs.length), fit !== null));
-    lower.points.push(pointFor(horizonHours, lowerObs, adjustedAll.slice(higherObs.length), fit !== null));
+    return { horizonHours, higherObs, lowerObs, adjustedAll, usable };
+  });
+
+  // Todos o ninguno.
+  const adjustAll = perHorizon.every((entry) => entry.usable);
+  for (const entry of perHorizon) {
+    const values = adjustAll ? entry.adjustedAll : [...entry.higherObs, ...entry.lowerObs].map((o) => o.deltaMgDl);
+    higher.points.push(pointFor(entry.horizonHours, entry.higherObs, values.slice(0, entry.higherObs.length), adjustAll));
+    lower.points.push(pointFor(entry.horizonHours, entry.lowerObs, values.slice(entry.higherObs.length), adjustAll));
   }
 
   return { splitAtFatProteinG, higher, lower, eligibleMealCount: eligible.length };

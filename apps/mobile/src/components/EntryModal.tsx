@@ -275,6 +275,15 @@ export function EntryModal({
         ...(description.trim() === '' ? {} : { description: description.trim() }),
       });
       setAnalysis(nextAnalysis);
+      // Prellenar los macros con lo que estimó la IA, visibles y editables
+      // (2026-08-26). Antes se guardaban en silencio con los campos en
+      // blanco: si ella corregía solo la proteína, la comida quedaba marcada
+      // "estimada por IA y corregida por la usuaria" para una grasa y una
+      // fibra que nunca vio. Ahora lo que se guarda es lo que está en
+      // pantalla.
+      setProtein(String(Math.round(nextAnalysis.totals.proteinG)));
+      setFat(String(Math.round(nextAnalysis.totals.fatG)));
+      setFiber(String(Math.round(nextAnalysis.totals.fiberG)));
       setMessage('Estimación lista. Escribe tú los carbohidratos que confirmas.');
     } catch (error) {
       setMessage(error instanceof MobileApiError
@@ -296,6 +305,15 @@ export function EntryModal({
     try {
       const nextAnalysis = await analyzeMealDescription(description.trim());
       setAnalysis(nextAnalysis);
+      // Prellenar los macros con lo que estimó la IA, visibles y editables
+      // (2026-08-26). Antes se guardaban en silencio con los campos en
+      // blanco: si ella corregía solo la proteína, la comida quedaba marcada
+      // "estimada por IA y corregida por la usuaria" para una grasa y una
+      // fibra que nunca vio. Ahora lo que se guarda es lo que está en
+      // pantalla.
+      setProtein(String(Math.round(nextAnalysis.totals.proteinG)));
+      setFat(String(Math.round(nextAnalysis.totals.fatG)));
+      setFiber(String(Math.round(nextAnalysis.totals.fiberG)));
       setMessage('Estimación lista a partir del texto (sin foto, así que la incertidumbre es mayor). Escribe tú los carbohidratos que confirmas.');
     } catch (error) {
       setMessage(error instanceof MobileApiError

@@ -384,13 +384,6 @@ export interface ClockTime {
 }
 
 /**
- * Reschedules the daily capillary-measurement reminders. Cancels the previous
- * set first (found by `data.kind`), then schedules one repeating DAILY
- * notification per computed time. A reminder to go measure — it carries no
- * glucose value and computes nothing, same discipline as the correction
- * reminder.
- */
-/**
  * Manda una de las tres alarmas ahora mismo, para poder verla.
  *
  * Existe porque Verónica probó la Fase 19 y dijo "no veo ninguna diferencia
@@ -439,6 +432,13 @@ export async function sendTestReminder(kind: ReminderKind, style: ReminderAlertS
   return true;
 }
 
+/**
+ * Reschedules the daily capillary-measurement reminders. Cancels the previous
+ * set first (found by `data.kind`), then schedules one repeating DAILY
+ * notification per computed time. A reminder to go measure — it carries no
+ * glucose value and computes nothing, same discipline as the correction
+ * reminder.
+ */
 export async function scheduleCapillaryReminders(times: readonly ClockTime[], style: ReminderAlertStyle): Promise<void> {
   await cancelCapillaryReminders();
   if (times.length === 0) return;

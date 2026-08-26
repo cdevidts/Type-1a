@@ -1028,9 +1028,19 @@ export async function updateUnifiedEntryGroup(
           createdAt: timestamp,
         }, entryGroupId);
       } else {
+        // Merge sobre el payload existente, no reemplazo. Hoy ningún camino
+        // adjunta peso ni presión a un `entry_group_id`, así que es
+        // inalcanzable — pero el día que exista, reescribir el objeto entero
+        // borraría el peso en silencio al editar las cetonas.
+        const row = await db.getFirstAsync<{ payload: string }>(
+          'SELECT payload FROM vitals_events WHERE id = ?',
+          existingVitals.id,
+        );
+        const previous = row === null ? {} : (safeJsonParse(row.payload) ?? {});
         await db.runAsync(
           'UPDATE vitals_events SET payload = ?, timestamp = ? WHERE id = ?',
           JSON.stringify(VitalsEventSchema.parse({
+            ...(typeof previous === 'object' ? previous : {}),
             id: existingVitals.id,
             timestamp,
             ketonesMmolL: input.ketonesMmolL,
@@ -1739,8 +1749,13 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
       'SELECT payload, entry_group_id FROM note_events ORDER BY timestamp DESC LIMIT ?',
       limit,
     ),
-    // Solo las que pertenecen a un grupo: las cetonas sueltas del acceso
-    // rápido siguen mostrándose como su propio ítem, igual que antes.
+    // Solo las que pertenecen a un grupo.
+    //
+    // ⚠️ Las cetonas SUELTAS (las del acceso rápido, sin `entry_group_id`)
+    // **no se muestran en el timeline**, ni antes ni ahora: `getTimeline` no
+    // tiene ninguna rama para ellas. Un comentario anterior afirmaba lo
+    // contrario; se corrigió el 2026-08-26 para que la corrida siguiente no
+    // confíe en una garantía que no existe. Queda pendiente mostrarlas.
     db.getAllAsync<{ payload: string; entry_group_id: string | null }>(
       'SELECT payload, entry_group_id FROM vitals_events WHERE entry_group_id IS NOT NULL ORDER BY timestamp DESC LIMIT ?',
       limit,
@@ -1891,6 +1906,14 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
       group.meal?.confirmedCarbsG === undefined ? null : `${group.meal.confirmedCarbsG} g`,
       group.rapid === undefined ? null : `${group.rapid.units} U rápida`,
       group.basal === undefined ? null : `${group.basal.units} U basal`,
+      // Las cetonas van en el detalle, no solo dentro del editor (corregido
+      // 2026-08-26 tras la revisión de seguridad). Es el dato de triage de
+      // cetoacidosis: registrarlo en "Nueva entrada" y que el timeline
+      // dijera "Entrada registrada · 280 mg/dL" —sin mención de las cetonas—
+      // obligaba a abrir el modal para verlo. Y una entrada SOLO de cetonas,
+      // que el formulario permite, aparecía literalmente como "Entrada
+      // vacía".
+      group.vitals?.ketonesMmolL === undefined ? null : `${group.vitals.ketonesMmolL} mmol/L cetonas`,
       group.note === undefined ? null : 'nota',
     ].filter((part): part is string => part !== null);
     items.push({

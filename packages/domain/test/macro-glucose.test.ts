@@ -383,18 +383,46 @@ describe('el ajuste recupera el efecto real, con verdad conocida', () => {
     expect(late.confoundedCount).toBe(6);
   });
 
-  it('el promedio ajustado recupera el efecto sembrado; el crudo sale inflado', () => {
+  it('la DIFERENCIA entre grupos sale exacta: +35 mg/dL a las 5 h', () => {
+    // Éste es el invariante que de verdad importa. La pantalla compara dos
+    // grupos, y centrar las covariables suma la misma constante a los dos, así
+    // que la diferencia queda limpia aunque los niveles incluyan el aporte
+    // típico de la colación.
+    const { meals, readings, carbs, activity } = buildScenario();
+    const ajustado = buildMacroGlucoseComparison({ meals, readings, carbs, activity })!;
+    const altaAj = ajustado.higher.points.find((point) => point.horizonHours === 5)!.meanDeltaMgDl!;
+    const bajaAj = ajustado.lower.points.find((point) => point.horizonHours === 5)!.meanDeltaMgDl!;
+    expect(altaAj - bajaAj).toBeCloseTo(35, 4);
+  });
+
+  it('el nivel ajustado NO se va a un régimen que nunca se midió', () => {
+    // El error grave que encontró la revisión del 2026-08-26: sin centrar, el
+    // "promedio ajustado" era la predicción para cero carbohidratos, cero
+    // insulina y cero actividad — un contrafáctico que a las 5 h casi no
+    // existe en los datos. Con una verdad de +10 la pantalla llegaba a
+    // mostrar +57, y ese número se imprime en el reporte médico.
+    //
+    // Centrado, el promedio ajustado tiene que quedarse cerca del crudo: el
+    // ajuste corrige el desbalance ENTRE episodios, no el nivel general.
     const { meals, readings, carbs, activity } = buildScenario();
     const ajustado = buildMacroGlucoseComparison({ meals, readings, carbs, activity })!;
     const crudo = buildMacroGlucoseComparison({ meals, readings })!;
 
-    const altaAj = ajustado.higher.points.find((point) => point.horizonHours === 5)!.meanDeltaMgDl!;
-    const bajaAj = ajustado.lower.points.find((point) => point.horizonHours === 5)!.meanDeltaMgDl!;
-    expect(altaAj).toBeCloseTo(45, 4);
-    expect(bajaAj).toBeCloseTo(10, 4);
+    for (const horizonHours of [2, 3, 4, 5]) {
+      const aj = ajustado.higher.points.find((point) => point.horizonHours === horizonHours)!.meanDeltaMgDl!;
+      const cr = crudo.higher.points.find((point) => point.horizonHours === horizonHours)!.meanDeltaMgDl!;
+      expect(Math.abs(aj - cr)).toBeLessThan(15);
+    }
+  });
 
-    // Sin covariables no hay nada que descontar y la colación queda dentro.
-    const altaCruda = crudo.higher.points.find((point) => point.horizonHours === 5)!.meanDeltaMgDl!;
-    expect(altaCruda).toBeGreaterThan(altaAj + 10);
+  it('los cuatro horizontes comparten régimen: o todos ajustados o ninguno', () => {
+    // Si 2 h saliera crudo y 4 h ajustado, las barras contiguas —dibujadas
+    // contra la misma escala— medirían cosas distintas, y el salto entre una
+    // y otra se leería como un patrón cuando es un artefacto del modelo.
+    const { meals, readings, carbs, activity } = buildScenario();
+    const result = buildMacroGlucoseComparison({ meals, readings, carbs, activity })!;
+    const regimenes = new Set(result.higher.points.map((point) => point.adjusted));
+    expect(regimenes.size).toBe(1);
+    expect([...result.lower.points.map((point) => point.adjusted), ...regimenes].every((v) => v === [...regimenes][0])).toBe(true);
   });
 });
