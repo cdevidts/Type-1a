@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { adjustForNuisance, fitOls } from '../src/regression';
+import { adjustForNuisance, fitOls, fitOlsOnVaryingColumns } from '../src/regression';
 
 describe('fitOls', () => {
   it('recupera exactamente una relación lineal conocida', () => {
@@ -83,5 +83,48 @@ describe('adjustForNuisance', () => {
     const predictors = [[1], [2]];
     const fit = { coefficients: [0, 1], sampleSize: 2 };
     expect(adjustForNuisance([5, 6], predictors, [9], fit)).toEqual([5, 6]);
+  });
+});
+
+describe('fitOlsOnVaryingColumns', () => {
+  // Este bloque existe por un bug que los tests NO atraparon y sí encontró un
+  // chequeo con datos realistas: los tests de arriba usaban covariables que
+  // siempre varían, así que `fitOls` nunca devolvía null por columna
+  // constante. En el dispositivo, la actividad física casi siempre es
+  // constante (nadie la registra), y eso tumbaba el ajuste ENTERO. El
+  // resultado: una solución "robusta" que caía siempre al promedio crudo.
+  const outcome = [10, 20, 30, 40, 50, 60, 70, 80];
+
+  it('ajusta descartando la covariable que no varía', () => {
+    // Columna 1 constante en 0 — el caso "nadie registró actividad".
+    const predictors = [[1, 0], [2, 0], [3, 0], [4, 0], [5, 0], [6, 0], [7, 0], [8, 0]];
+    expect(fitOls(outcome, predictors)).toBeNull();
+
+    const fitted = fitOlsOnVaryingColumns(outcome, predictors);
+    expect(fitted).not.toBeNull();
+    expect(fitted!.columns).toEqual([0]);
+    expect(fitted!.fit.coefficients[1]).toBeCloseTo(10, 6);
+  });
+
+  it('devuelve los índices originales, no los del arreglo reducido', () => {
+    // Solo varía la tercera. Quien llama descuenta contra estos índices, así
+    // que devolver [0] en vez de [2] descontaría la covariable equivocada.
+    const predictors = [
+      [5, 9, 1], [5, 9, 2], [5, 9, 3], [5, 9, 4],
+      [5, 9, 5], [5, 9, 6], [5, 9, 7], [5, 9, 8],
+    ];
+    const fitted = fitOlsOnVaryingColumns(outcome, predictors);
+    expect(fitted!.columns).toEqual([2]);
+  });
+
+  it('devuelve null cuando ninguna covariable varía', () => {
+    // Nada que ajustar: su aporte es constante y ya vive en el intercepto.
+    const predictors = Array.from({ length: 8 }, () => [3, 3]);
+    expect(fitOlsOnVaryingColumns(outcome, predictors)).toBeNull();
+  });
+
+  it('sigue respetando el mínimo de observaciones', () => {
+    const predictors = [[1, 0], [2, 0], [3, 0], [4, 0]];
+    expect(fitOlsOnVaryingColumns([1, 2, 3, 4], predictors, 8)).toBeNull();
   });
 });

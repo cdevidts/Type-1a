@@ -2,7 +2,7 @@ import type { ActivityEvent, CarbEvent, CGMReading, InsulinEvent, MealEvent } fr
 
 import { collectEpisodeContext } from './episode-context';
 import { findRapidInsulinCandidates } from './meal';
-import { adjustForNuisance, fitOls } from './regression';
+import { adjustForNuisance, fitOlsOnVaryingColumns } from './regression';
 import { readingNear, toGlucoseSeries } from './nutrition-insights';
 
 /**
@@ -148,6 +148,22 @@ interface Confounders {
 /** Una observación cruda de un episodio a un horizonte. */
 interface Observation {
   deltaMgDl: number;
+  /**
+   * La carga de grasa+proteína de esa comida.
+   *
+   * Entra al modelo aunque NO sea un confusor, y esto es lo que hace que el
+   * ajuste sea correcto en vez de contraproducente: si se ajusta por los
+   * carbohidratos de la ventana **sin** tener en cuenta la carga de la
+   * comida, el efecto de la grasa se filtra al coeficiente de los
+   * carbohidratos (sesgo por variable omitida) y el "ajuste" termina
+   * moviendo el promedio en la dirección equivocada. Se verificó con datos
+   * sintéticos de verdad conocida: sin esta columna, el promedio a 5 h se
+   * alejaba del valor real en vez de acercarse.
+   *
+   * Se incluye en el modelo pero **no** se descuenta: es el efecto que la
+   * pantalla quiere mostrar, no ruido a quitar.
+   */
+  fatProteinG: number;
   confounders: Confounders;
 }
 
@@ -166,6 +182,7 @@ function observationsAt(
     if (atMeal === undefined || atHorizon === undefined) continue;
     out.push({
       deltaMgDl: atHorizon.mgDl - atMeal.mgDl,
+      fatProteinG: meal.fatProteinG,
       confounders: meal.confoundersWithin(horizonHours),
     });
   }
@@ -303,24 +320,44 @@ export function buildMacroGlucoseComparison(input: {
     const lowerObs = observationsAt(lowerMeals, series, horizonHours);
     const all = [...higherObs, ...lowerObs];
 
+    // Columna 0 = el predictor de interés (no se descuenta); 1..3 = los
+    // confusores (sí se descuentan). Ver la nota de `Observation.fatProteinG`
+    // para por qué el de interés tiene que estar en el modelo igual.
     const predictors = all.map((observation) => [
+      observation.fatProteinG,
       observation.confounders.carbsG,
       observation.confounders.rapidUnits,
       observation.confounders.activityMinutes,
     ]);
+    const NUISANCE_COLUMNS = [1, 2, 3];
     // `MIN_OBSERVATIONS_FOR_ADJUSTMENT` es el piso para que el ajuste
     // signifique algo; `fitOls` devuelve `null` además cuando una covariable
     // es constante (nadie registró actividad, por ejemplo) o el sistema queda
     // mal condicionado. En cualquiera de esos casos se cae al promedio crudo
     // y `adjusted` queda en `false`, que la pantalla declara.
-    const fit = fitOls(
-      all.map((observation) => observation.deltaMgDl),
-      predictors,
-      MIN_OBSERVATIONS_FOR_ADJUSTMENT,
-    );
-    const adjustedAll = fit === null
-      ? all.map((observation) => observation.deltaMgDl)
-      : adjustForNuisance(all.map((observation) => observation.deltaMgDl), predictors, [0, 1, 2], fit);
+    const deltas = all.map((observation) => observation.deltaMgDl);
+    // `fitOlsOnVaryingColumns` y no `fitOls`: basta que una covariable no
+    // varíe —y la actividad física casi nunca varía, porque poca gente la
+    // registra— para que el sistema quede singular y el ajuste no se aplique
+    // NUNCA. Descartando esa columna se ajusta con las que sí tienen
+    // información. Encontrado con un chequeo sobre datos realistas.
+    const fitted = fitOlsOnVaryingColumns(deltas, predictors, MIN_OBSERVATIONS_FOR_ADJUSTMENT);
+    const adjustedAll = fitted === null
+      ? deltas
+      : adjustForNuisance(
+        deltas,
+        // `adjustForNuisance` indexa contra las columnas que efectivamente
+        // entraron al modelo, no contra las cuatro originales.
+        predictors.map((row) => fitted.columns.map((column) => row[column]!)),
+        // Y solo se descuentan las que son confusor: la carga de
+        // grasa+proteína está en el modelo para no sesgar los coeficientes,
+        // pero descontarla borraría justo lo que se quiere mostrar.
+        fitted.columns
+          .map((column, index) => (NUISANCE_COLUMNS.includes(column) ? index : -1))
+          .filter((index) => index >= 0),
+        fitted.fit,
+      );
+    const fit = fitted === null ? null : fitted.fit;
 
     higher.points.push(pointFor(horizonHours, higherObs, adjustedAll.slice(0, higherObs.length), fit !== null));
     lower.points.push(pointFor(horizonHours, lowerObs, adjustedAll.slice(higherObs.length), fit !== null));

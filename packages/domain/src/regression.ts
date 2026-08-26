@@ -130,6 +130,47 @@ export function fitOls(
 }
 
 /**
+ * Ajusta descartando primero las covariables que no varían.
+ *
+ * ## Por qué existe (2026-08-26)
+ *
+ * `fitOls` devuelve `null` ante una columna constante, y con razón: el
+ * sistema es singular. Pero pasarle las tres covariables juntas hacía que
+ * **el ajuste no se aplicara nunca en la práctica**, porque basta que una no
+ * varíe para tumbar el ajuste completo — y la que no varía es casi siempre la
+ * actividad física, que muchísima gente no registra. El resultado era una
+ * solución "robusta" que en el dispositivo caía siempre al promedio crudo.
+ *
+ * Lo encontró un chequeo con datos realistas, no un test: los tests usaban
+ * covariables que siempre variaban. Por eso hay uno acá abajo que fija justo
+ * este caso.
+ *
+ * Devuelve también **qué columnas sobrevivieron**, en índices del arreglo
+ * original, porque quien llama necesita saber cuáles descontar después.
+ */
+export function fitOlsOnVaryingColumns(
+  outcome: readonly number[],
+  predictors: readonly (readonly number[])[],
+  minObservations = 0,
+): { fit: OlsFit; columns: number[] } | null {
+  if (predictors.length === 0) return null;
+  const width = predictors[0]!.length;
+
+  const columns: number[] = [];
+  for (let column = 0; column < width; column += 1) {
+    const first = predictors[0]![column];
+    if (predictors.some((row) => row[column] !== first)) columns.push(column);
+  }
+  // Ninguna covariable varía: no hay nada que ajustar, y decirlo es correcto
+  // (todas valen lo mismo, así que su aporte es parte del intercepto).
+  if (columns.length === 0) return null;
+
+  const reduced = predictors.map((row) => columns.map((column) => row[column]!));
+  const fit = fitOls(outcome, reduced, minObservations);
+  return fit === null ? null : { fit, columns };
+}
+
+/**
  * Descuenta de cada observación la parte que el modelo atribuye a las
  * covariables, dejando el resto.
  *

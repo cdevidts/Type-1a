@@ -1,4 +1,4 @@
-import type { CGMReading, MealEvent } from '@type1a/schemas';
+import type { ActivityEvent, CarbEvent, CGMReading, MealEvent } from '@type1a/schemas';
 import { describe, expect, it } from 'vitest';
 
 import { buildMacroGlucoseComparison, MIN_MEALS_PER_GROUP } from '../src/macro-glucose';
@@ -313,5 +313,88 @@ describe('el bolo propio de la comida vs. una corrección posterior', () => {
     for (const point of comparison!.higher.points) expect(point.adjusted).toBe(false);
     // Pero el dato sigue estando.
     for (const point of comparison!.higher.points) expect(point.meanDeltaMgDl).toBeDefined();
+  });
+});
+
+describe('el ajuste recupera el efecto real, con verdad conocida', () => {
+  /**
+   * Test de verdad sembrada: se construyen 12 comidas donde se SABE que la
+   * alta carga sube +45 mg/dL a las 5 h y la baja +10, y donde además hay una
+   * colación de tamaño variable a las 3 h que aporta 0,5 mg/dL por gramo.
+   *
+   * El promedio crudo tiene que salir inflado por la colación; el ajustado
+   * tiene que recuperar el +45 / +10 sembrado.
+   *
+   * Este test existe porque un chequeo con datos realistas encontró DOS bugs
+   * que los tests unitarios no veían:
+   *
+   * 1. El ajuste no se aplicaba nunca, porque bastaba una covariable
+   *    constante (la actividad, que casi nadie registra) para tumbar el
+   *    sistema entero.
+   * 2. Ajustar sin incluir la carga de grasa+proteína en el modelo metía
+   *    sesgo por variable omitida: el efecto de la grasa se filtraba al
+   *    coeficiente de los carbohidratos y el promedio se ALEJABA del valor
+   *    real en vez de acercarse.
+   */
+  function buildScenario() {
+    const meals: MealEvent[] = [];
+    const readings: CGMReading[] = [];
+    const carbs: CarbEvent[] = [];
+    const activity: ActivityEvent[] = [];
+
+    for (let i = 0; i < 12; i += 1) {
+      const t0 = START + i * DAY_MS;
+      const at = new Date(t0).toISOString();
+      const alto = i < 6;
+      meals.push({
+        id: `m-${i}`, timestamp: at, createdAt: at, confirmedCarbsG: 50,
+        proteinG: alto ? 40 : 8, fatG: alto ? 35 : 6,
+      });
+      const late = alto ? 45 : 10;
+      const snackG = 20 + ((i * 7) % 50);
+      for (let h = 0; h <= 6; h += 1) {
+        const atMs = t0 + h * 3_600_000;
+        const iso = new Date(atMs).toISOString();
+        readings.push({
+          id: `r-${i}-${h}`, glucose: 120 + late * Math.min(h / 5, 1) + (h >= 3 ? snackG * 0.5 : 0),
+          unit: 'mg/dL', timestamp: iso, trend: 'stable', trendSource: 'provider',
+          source: 'test', origin: 'real', sourceTimestamp: iso, ingestedAt: iso,
+        });
+      }
+      const snackAt = new Date(t0 + 3 * 3_600_000).toISOString();
+      carbs.push({ id: `c-${i}`, timestamp: snackAt, carbsG: snackG, source: 'manual', createdAt: snackAt });
+      // Actividad solo algunos días: en la vida real esta columna casi nunca
+      // varía, y ése era justamente el bug 1.
+      if (i % 4 === 0) {
+        const actAt = new Date(t0 + 2 * 3_600_000).toISOString();
+        activity.push({ id: `a-${i}`, timestamp: actAt, durationMinutes: 30, source: 'manual', createdAt: actAt });
+      }
+    }
+    return { meals, readings, carbs, activity };
+  }
+
+  it('el ajuste se aplica aunque la actividad no varíe', () => {
+    const { meals, readings, carbs, activity } = buildScenario();
+    const result = buildMacroGlucoseComparison({ meals, readings, carbs, activity })!;
+    const late = result.higher.points.find((point) => point.horizonHours === 5)!;
+    expect(late.adjusted).toBe(true);
+    // Y ninguna comida se perdió por estar confundida.
+    expect(late.sampleSize).toBe(6);
+    expect(late.confoundedCount).toBe(6);
+  });
+
+  it('el promedio ajustado recupera el efecto sembrado; el crudo sale inflado', () => {
+    const { meals, readings, carbs, activity } = buildScenario();
+    const ajustado = buildMacroGlucoseComparison({ meals, readings, carbs, activity })!;
+    const crudo = buildMacroGlucoseComparison({ meals, readings })!;
+
+    const altaAj = ajustado.higher.points.find((point) => point.horizonHours === 5)!.meanDeltaMgDl!;
+    const bajaAj = ajustado.lower.points.find((point) => point.horizonHours === 5)!.meanDeltaMgDl!;
+    expect(altaAj).toBeCloseTo(45, 4);
+    expect(bajaAj).toBeCloseTo(10, 4);
+
+    // Sin covariables no hay nada que descontar y la colación queda dentro.
+    const altaCruda = crudo.higher.points.find((point) => point.horizonHours === 5)!.meanDeltaMgDl!;
+    expect(altaCruda).toBeGreaterThan(altaAj + 10);
   });
 });
