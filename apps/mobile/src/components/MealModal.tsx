@@ -9,6 +9,7 @@ import {
   MAX_SERVINGS,
   MIN_SERVINGS,
   isValidServings,
+  resolveMacrosSource,
   scaleCatalogFood,
   scaleCatalogFoodByServings,
   servingGramsOf,
@@ -423,23 +424,17 @@ export function MealModal({
         return;
       }
 
-      const anyEntered = protein !== undefined || fat !== undefined || fiber !== undefined;
-      // Procedencia. Ojo con el caso "lo borró a propósito": si la IA precargó
-      // un valor y ella lo dejó en blanco, está diciendo "no lo sé", no "usa
-      // el de la IA". Sin `clearedMacros`, el spread del análisis en
-      // `confirmMeal` volvía a escribir el número de la IA y encima lo
-      // etiquetaba como revisado por ella.
+      // `clearedMacros` avisa a quien guarda que **descarte** los macros del
+      // análisis: si la IA precargó un valor y ella lo dejó en blanco, está
+      // diciendo "no lo sé", no "usa el de la IA". Sin esto, el spread del
+      // análisis en `confirmMeal` volvía a escribir el número de la IA.
       const clearedMacros = aiMacros !== null
         && (protein === undefined || fat === undefined || fiber === undefined);
-      const macrosSource: 'ai' | 'user' | 'mixed' | undefined =
-        aiMacros === null
-          ? (anyEntered ? 'user' : undefined)
-          : (!clearedMacros
-              && protein === aiMacros.proteinG
-              && fat === aiMacros.fatG
-              && fiber === aiMacros.fiberG
-            ? 'ai'
-            : 'mixed');
+      // La procedencia la decide `packages/domain`, no esta pantalla.
+      const macrosSource = resolveMacrosSource({
+        entered: { proteinG: protein, fatG: fat, fiberG: fiber },
+        ...(aiMacros === null ? {} : { aiProposed: aiMacros }),
+      });
 
       const rapidUnits = rapidInput.trim() === '' ? undefined : parsePositiveNumber(rapidInput);
       if (rapidUnits === null || (rapidUnits !== undefined && rapidUnits > 100)) {

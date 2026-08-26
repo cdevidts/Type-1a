@@ -9,6 +9,7 @@ import Camera from 'lucide-react-native/icons/camera';
 import PencilLine from 'lucide-react-native/icons/pencil-line';
 import WandSparkles from 'lucide-react-native/icons/wand-sparkles';
 
+import { resolveMacrosSource } from '@type1a/domain';
 import type { MealAnalysisResult, MealEvent, MealSnapshot } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, editMealWithInstruction, MobileApiError } from '../api';
@@ -304,27 +305,20 @@ export function MealEditModal({
       return;
     }
 
-    // Procedencia. Solo pasa a 'ai' si los cuatro quedaron exactamente como
-    // los propuso la IA; cualquier corrección suya lo vuelve 'mixed'. Una
-    // edición asistida nunca puede quedar rotulada 'user': eso significaría
-    // "lo anotó ella", y el reporte al médico lee esa etiqueta.
-    let macrosSource: MealEvent['macrosSource'] | undefined;
-    if (aiMacros !== null) {
-      macrosSource = protein === aiMacros.proteinG
-        && fat === aiMacros.fatG
-        && fiber === aiMacros.fiberG
-        && calories === aiMacros.caloriesKcal
-        ? 'ai'
-        : 'mixed';
-    } else if (
-      protein !== (meal.proteinG ?? null)
-      || fat !== (meal.fatG ?? null)
-      || fiber !== (meal.fiberG ?? null)
-      || calories !== (meal.caloriesKcal ?? null)
-    ) {
-      // Los cambió a mano, sin IA de por medio.
-      macrosSource = 'user';
-    }
+    // La procedencia la decide `packages/domain`, no esta pantalla.
+    const macrosSource: MealEvent['macrosSource'] | undefined = resolveMacrosSource({
+      entered: { proteinG: protein, fatG: fat, fiberG: fiber, caloriesKcal: calories },
+      ...(aiMacros === null ? {} : { aiProposed: aiMacros }),
+      previous: {
+        values: {
+          proteinG: meal.proteinG,
+          fatG: meal.fatG,
+          fiberG: meal.fiberG,
+          caloriesKcal: meal.caloriesKcal,
+        },
+        source: meal.macrosSource,
+      },
+    });
 
     setBusy(true);
     try {

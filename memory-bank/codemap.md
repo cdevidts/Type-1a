@@ -50,6 +50,7 @@ Puro, determinístico, con test. **Ningún `.tsx` calcula una métrica de salud.
 | `macro-glucose.ts` | subida tardía por grasa+proteína, ajustada por covariables |
 | `regression.ts` | OLS por ecuaciones normales. Centra al ajustar; sus β **no salen** de aquí |
 | `nutrition-insights.ts`, `nutrition-targets.ts` | patrones de comida y metas |
+| `macros-source.ts` | `resolveMacrosSource()` — quién puso los macros de una comida. Se imprime en el reporte médico; ningún `.tsx` lo decide |
 | `insulin-catalog.ts` | catálogo de insulinas y su duración. Devuelve `undefined` si no está configurada — nunca un default silencioso |
 | `food-catalog.ts` | `foodKey`, `blendCatalogEntry`; misma implementación en teléfono y servidor |
 | `report.ts`, `units.ts`, `ketones.ts`, `meal.ts`, `mysugr-import.ts` | reporte, conversión, cetonas, comida, importación |

@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { z } from 'zod';
 
-import { applyCatalogEdit, blendCatalogEntry, convertGlucose, foodKey, isPlausibleCatalogEntry, planMySugrImport, type CatalogFood, type CatalogFoodEdit } from '@type1a/domain';
+import { applyCatalogEdit, blendCatalogEntry, convertGlucose, foodKey, isPlausibleCatalogEntry, planMySugrImport, resolveMacrosSource, type CatalogFood, type CatalogFoodEdit } from '@type1a/domain';
 import {
   ActivityEventSchema,
   CGMReadingSchema,
@@ -412,28 +412,22 @@ async function updateMealCarbsAndNoteRows(
     proteinG: updates.proteinG,
     fatG: updates.fatG,
     fiberG: updates.fiberG,
-    // Procedencia de los macros. Corregido 2026-08-25 tras la revisión de
-    // seguridad — la versión anterior mentía en las dos direcciones:
+    // La procedencia la decide `packages/domain`, no esta capa. Acá no hay
+    // análisis de por medio (es la edición a mano), así que la referencia es
+    // lo que ya estaba guardado.
     //
-    //  - `'user' → 'mixed'` decía que la IA los había precargado cuando ella
-    //    los había pesado y escrito. Sub-reporta lo que de verdad midió.
-    //  - `undefined → 'user'` era la peligrosa: una comida vieja de
-    //    procedencia desconocida, con UN macro editado, quedaba etiquetada
-    //    como si ella hubiera escrito los tres a mano. El comentario de
-    //    `MealEventSchema` lo prohíbe explícitamente: ausente significa
-    //    "procedencia desconocida" y **nunca se asume "confirmado por la
-    //    usuaria"**.
-    //
-    // Regla: desconocido se queda desconocido; lo que era de ella sigue
-    // siendo de ella; y solo lo que la IA precargó pasa a `'mixed'` al
-    // corregirse. Misma lógica campo a campo que `MealEditModal`.
-    ...(updates.proteinG === existing.proteinG
-      && updates.fatG === existing.fatG
-      && updates.fiberG === existing.fiberG
-      ? {}
-      : existing.macrosSource === undefined
-        ? {}
-        : { macrosSource: existing.macrosSource === 'user' ? 'user' : 'mixed' }),
+    // La clave se escribe **siempre**, incluso como `undefined`, para que pise
+    // la de `...existing`: si la usuaria vació todos los macros, la comida se
+    // queda sin procedencia porque ya no hay nada cuya procedencia declarar.
+    // Antes esto spreaba `{}` y dejaba colgada la etiqueta vieja sobre una
+    // comida sin macros.
+    macrosSource: resolveMacrosSource({
+      entered: { proteinG: updates.proteinG, fatG: updates.fatG, fiberG: updates.fiberG },
+      previous: {
+        values: { proteinG: existing.proteinG, fatG: existing.fatG, fiberG: existing.fiberG },
+        source: existing.macrosSource,
+      },
+    }),
   });
   await db.runAsync('UPDATE meal_events SET payload = ? WHERE id = ?', JSON.stringify(next), id);
   await syncConfirmedCarbRow(db, existing, next.confirmedCarbsG);

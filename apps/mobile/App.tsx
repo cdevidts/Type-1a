@@ -30,6 +30,7 @@ import {
   MAX_INSULIN_DURATION_HOURS,
   MIN_INSULIN_DURATION_HOURS,
   rapidInsulinLookbackMinutes,
+  resolveMacrosSource,
   type CatalogFood,
 } from '@type1a/domain';
 import type {
@@ -639,22 +640,22 @@ function Type1AApp() {
     await loadLocalState();
   }
 
-  /**
-   * Procedencia de los macros de una entrada de "Nueva entrada".
-   *
-   * `'ai'` solo si vinieron enteros del análisis y ella no escribió ninguno;
-   * `'mixed'` si hubo análisis y además escribió algo; `'user'` si los
-   * escribió sin análisis de por medio; y `undefined` si no hay ninguno, que
-   * es "no anotado" y **no** debe leerse como confirmado por ella.
-   */
-  function macrosSourceFor(draft: UnifiedEntryDraft): 'ai' | 'user' | 'mixed' | undefined {
-    const typed = draft.proteinG !== undefined || draft.fatG !== undefined || draft.fiberG !== undefined;
-    if (draft.analysis !== undefined) return typed ? 'mixed' : 'ai';
-    return typed ? 'user' : undefined;
-  }
-
   async function saveEntry(draft: UnifiedEntryDraft): Promise<void> {
-    const macrosSource = macrosSourceFor(draft);
+    // La procedencia la decide `packages/domain`. Ojo con lo que se le pasa
+    // como `entered`: `EntryModal` **precarga** los macros con lo que estimó
+    // la IA, así que hay que comparar contra esos valores y no contra la
+    // ausencia de valor. La versión anterior comparaba con `undefined` y
+    // etiquetaba `'mixed'` una comida analizada que ella nunca tocó.
+    const macrosSource = resolveMacrosSource({
+      entered: { proteinG: draft.proteinG, fatG: draft.fatG, fiberG: draft.fiberG },
+      ...(draft.analysis === undefined ? {} : {
+        aiProposed: {
+          proteinG: draft.analysis.totals.proteinG,
+          fatG: draft.analysis.totals.fatG,
+          fiberG: draft.analysis.totals.fiberG,
+        },
+      }),
+    });
     const outcome = await saveUnifiedEntry(db, {
       timestamp: draft.timestamp,
       rapidIncludesCorrection: draft.rapidIncludesCorrection,

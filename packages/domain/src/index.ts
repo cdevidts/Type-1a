@@ -10,6 +10,7 @@ export * from './insulin-catalog';
 export * from './ketones';
 export * from './food-catalog';
 export * from './macro-glucose';
+export * from './macros-source';
 export * from './nutrition-targets';
 export * from './meal';
 export * from './mysugr-import';

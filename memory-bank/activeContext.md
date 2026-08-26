@@ -1,6 +1,6 @@
 # Active Context
 
-_Última actualización: 2026-08-26 (migración y fix de macros fusionados)._
+_Última actualización: 2026-08-26 (Pecado Capital 1 cerrado)._
 
 ## Migración de memoria agéntica — fusionada
 
@@ -35,55 +35,39 @@ que se pisa con un mensaje de éxito, y la insulina de comida escrita sin
 
 ---
 
-## ⛔ Siguiente tarea prioritaria: `resolveMacrosSource()` a dominio
+## Pecado Capital 1 — cerrado
 
-Es el Pecado Capital 1, y va **antes que los otros dos**. La rama
-`fix/macros-data-corruption` arregló que el valor se perdiera; no arregló que se
-calcule en cuatro sitios distintos, que es de donde salieron los tres bugs.
+`resolveMacrosSource()` vive en `packages/domain/src/macros-source.ts`, pura y
+con 18 tests. Los cuatro sitios que decidían procedencia por su cuenta
+—`MealModal`, `MealEditModal`, `db.ts` y `macrosSourceFor` en `App.tsx`— la
+consumen y ninguno calcula nada. Cero lógica de procedencia en un `.tsx`.
 
-### Por qué es dominio y no UI
+Las cuatro reglas quedaron escritas en un solo lugar: sin macros no hay
+procedencia; lo que escribe la usuaria gana sobre lo de la IA; **desconocido se
+queda desconocido**; y `'user'` no se degrada.
 
-`macrosSource` (`'ai' | 'user' | 'mixed' | undefined`) dice si los macros de una
-comida los estimó la IA o los escribió la usuaria, y **se imprime en el reporte
-del control médico**. Es una decisión determinística con consecuencia clínica:
-Regla 1 de `systemPatterns.md` la pone en `packages/domain`, pura y con test.
-Hoy vive en cuatro implementaciones divergentes:
+Dos cosas que se arreglaron de paso, porque salieron al unificar:
 
-| Dónde | Qué hace hoy |
-|---|---|
-| `apps/mobile/src/components/MealModal.tsx` | comparación campo a campo contra `aiMacros` |
-| `apps/mobile/src/components/MealEditModal.tsx` | otra lógica campo a campo |
-| `apps/mobile/src/db.ts` | `existing.macrosSource === 'user' ? 'user' : 'mixed'`, y un `'user'` fijo al crear comida desde una edición |
-| `apps/mobile/App.tsx` (`macrosSourceFor`) | cuarta variante |
+- **`'mixed'` que debía ser `'ai'`.** Desde que los campos se prellenan con lo
+  estimado por la IA, "el campo tiene valor" dejó de significar "ella lo
+  escribió". Ahora la comparación es contra el valor precargado, no contra la
+  ausencia de valor.
+- **`MealEditModal` inventaba `'user'` desde procedencia desconocida.** Era la
+  dirección peligrosa que el comentario de `db.ts` ya nombraba, pero en el otro
+  camino. Ahora los dos siguen la misma regla.
 
-### El trabajo
+## ⛔ Siguiente: Pecado Capital 2 — componentes de formulario compartidos
 
-1. **`resolveMacrosSource()` en `packages/domain`**, pura y determinística. Su
-   entrada es lo que la IA propuso y lo que hay ahora; su salida, la procedencia.
-   Los tests comparan contra una verdad escrita a mano —nunca contra lo que la
-   implementación devuelve hoy— y cubren los tres fallos ya vistos:
-   - lo que escribe la usuaria **gana** sobre lo de la IA;
-   - `undefined` (procedencia desconocida) **nunca** se convierte en `'user'`;
-   - `'user'` **no** degrada a `'mixed'` al editar.
-2. **Los cuatro sitios la llaman y ninguno decide por su cuenta.** Incluye el
-   `'user'` fijo de `db.ts` al crear una comida desde una edición: hoy es
-   correcto solo porque ningún llamador pasa procedencia, y eso es una
-   coincidencia, no una garantía.
-3. **Cerrar el `'mixed'` que debería ser `'ai'`.** Desde que los campos de
-   macros se **prellenan** con lo que estimó la IA, "el campo tiene valor" ya no
-   significa "ella lo escribió": una comida analizada y no corregida queda
-   `'mixed'`. Nunca miente hacia `'user'`, así que no es peligroso, pero
-   sobreestima su participación en un dato que lee su equipo clínico. La
-   función tiene que comparar **contra el valor precargado**, no contra
-   `undefined`: si coincide con lo que propuso la IA, es `'ai'`.
+Es el que más cuesta por corrida. Empezar por extraer **`MacroFields`**
+(proteína/grasa/fibra con su validación y el copy "en blanco no es 0 g") y un
+hook de parseo numérico que reemplace las 37 copias de `parseNonNegativeNumber`.
+**No** unificar los cuatro modales en uno: son flujos distintos con la misma
+materia prima.
 
-**Criterio de salida:** una sola implementación, sus tests en
-`packages/domain`, cero lógica de procedencia en un `.tsx`, y una comida
-analizada y no tocada guardada como `'ai'`.
+Después, el Pecado 3: las cetonas del acceso rápido siguen invisibles en el
+timeline.
 
----
-
-## Los otros dos Pecados Capitales
+## Los dos Pecados Capitales que quedan
 
 Salieron de la misma auditoría del 2026-08-26. Son deuda de diseño que **ya
 causó bugs que llegaron al dispositivo**, no limpieza estética.
@@ -122,7 +106,7 @@ rama para ellas. Es el dato de triage de cetoacidosis.
 **Trabajo:** agregar la rama de `vitals_events` sueltas a `getTimeline`, con su
 propio `kind` de `TimelineItem`.
 
-## Regla de proceso que acompaña a los tres
+## Regla de proceso que acompaña a los dos
 
 Antes de agregar un campo a cualquiera de los formularios de comida, **primero**
 se extrae el componente compartido. Si no, el pecado 2 se agranda con cada
