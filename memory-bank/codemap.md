@@ -87,7 +87,12 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
 - **Navegación**: no hay librería. Una pantalla es un `Modal` vía `ModalShell`;
   sub-páginas son pestañas (`SummaryModal.tsx`). `BottomNav.tsx` +
   `useSwipeNavigation.ts` + `swipeOrder.ts`.
-- **Formularios de comida**: `EntryModal`, `MealModal`, `MealEditModal`,
+- **Modal Maestro**: `UnifiedEntryModal.tsx` es el formulario único de
+  creación (`projectbrief.md`). `EntrySection.tsx` pliega sus secciones y
+  `masterModal.ts` tiene sus dos reglas, puras y con test. `MealModal` y
+  `MealEditModal` siguen siendo modales hospedados: son las herramientas de
+  catálogo e IA, pendientes de absorber.
+- **Formularios de comida**: `UnifiedEntryModal`, `MealModal`, `MealEditModal`,
   `TimelineDetailModal`. Son cuatro flujos distintos a propósito, pero **lo que
   comparten se comparte**: `MacroFields.tsx` (el trío proteína/grasa/fibra y el
   campo numérico de la app) y los `parseBlankAs*` de `format.ts`. Un campo

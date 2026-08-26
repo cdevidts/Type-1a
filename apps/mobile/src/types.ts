@@ -135,6 +135,12 @@ export interface NutritionDayData {
  */
 export type QuickRoute = 'meal' | 'basal' | 'correction';
 
+/**
+ * Con qué sección arranca abierto el Modal Maestro. Vive acá y no en el
+ * componente para que la regla se pueda probar sin montar React.
+ */
+export type EntryFocus = 'all' | 'glucose' | 'meal' | 'insulin' | 'ketones' | 'note';
+
 /** Lo que puede llegar desde una notificación vieja o un deep link viejo. */
 export type LegacyQuickRoute = QuickRoute | 'carbs' | 'rapid';
 
@@ -263,6 +269,17 @@ export interface TimelineEntryGroupRaw {
   glucoseOrigin?: CGMReading['origin'];
   description?: string;
   carbsG?: number;
+  /**
+   * La comida completa del grupo, cuando la tiene.
+   *
+   * Los campos de arriba están aplanados para dibujar la fila; esto es el
+   * `MealEvent` entero, y existe para que las **herramientas de edición con
+   * IA aparezcan por contenido y no por qué botón abrió el modal**
+   * (`projectbrief.md` § Modal Maestro). Antes solo un ítem `kind: 'meal'`
+   * podía llegar a ellas, así que la misma comida guardada dentro de una
+   * entrada empaquetada quedaba fuera de su propio editor.
+   */
+  meal?: MealEvent;
   aiEstimatedCarbsG?: number;
   /**
    * Macros (Fase 21). Editar dejó de ser más pobre que crear: `EntryModal`

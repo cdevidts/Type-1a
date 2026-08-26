@@ -7,7 +7,7 @@ _Última actualización: 2026-08-26._
 | | |
 |---|---|
 | `pnpm verify` | ✅ verde |
-| Tests | **450** — domain 291, mobile 111, ai 15, schemas 13, cgm 10, api 10 |
+| Tests | **466** — domain 291, mobile 127, ai 15, schemas 13, cgm 10, api 10 |
 | Bundle de Metro | **1.333 módulos** (línea base; un salto grande = barrel importado) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
@@ -113,6 +113,8 @@ reporte médico. El detalle completo vive en el historial de git
 | Un `accessibilityLabel` explícito reemplaza el texto de los hijos: TalkBack anunciaba el título y no el valor ni la banda | la etiqueta lleva detalle y hora, o el color queda como único diferenciador |
 | `XLSX.write(…, { type: 'array' })` devuelve un **`ArrayBuffer`**, y un `as Uint8Array` lo disfrazó: el Excel nunca se escribía | un `as` sobre el retorno de una librería es una afirmación sin verificar; el test comprueba el envase, no solo el contenido |
 | Los tests del Excel pasaban el resultado a `XLSX.read`, que acepta ambos tipos | un round-trip por la misma librería no valida el contrato con quien consume el dato |
+| Un modal por combinación (basal, cetonas, entrada) trajo tres copias del mismo formulario | la variante es **qué sección arranca abierta**, no qué componente se monta |
+| `kind === 'meal'` dejaba a una comida empaquetada fuera de su propio editor con IA | las herramientas aparecen por **contenido**, no por tipo del ítem |
 
 ## Redeploy del backend
 

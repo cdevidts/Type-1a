@@ -1982,6 +1982,7 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
         // `raw.glucose` con la etiqueta "mg/dL" fija, sin volver a
         // convertir, así que el valor tiene que serlo ya en este punto.
         ...(group.glucose === undefined ? {} : { glucose: convertGlucose(group.glucose.glucose, group.glucose.unit, 'mg/dL'), glucoseOrigin: group.glucose.origin }),
+        ...(group.meal === undefined ? {} : { meal: group.meal }),
         ...(group.meal?.note === undefined ? {} : { description: group.meal.note }),
         ...(group.meal?.confirmedCarbsG === undefined ? {} : { carbsG: group.meal.confirmedCarbsG }),
         ...(group.meal?.aiEstimatedCarbsG === undefined ? {} : { aiEstimatedCarbsG: group.meal.aiEstimatedCarbsG }),

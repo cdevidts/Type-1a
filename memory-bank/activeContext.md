@@ -65,6 +65,31 @@ antes de compartirlo. El mensaje de error ahora lleva la causa real.
 **Sin tocar datos ni columnas**, a propósito: la estructura cambia con el Modal
 Maestro y rediseñarla ahora sería trabajo tirado.
 
+### 1b. ✅ Modal Maestro — Fase 1 (la espina)
+
+`UnifiedEntryModal` (antes `EntryModal`) es el formulario único. La diferencia
+entre un acceso rápido y una entrada completa es **qué sección arranca
+abierta**, no qué componente se monta: `focus` decide qué se ve primero y
+**nunca** qué se puede guardar.
+
+- **Borrados:** `NumericEntryModal` y `KetonesModal`. Basal y cetonas son
+  secciones del maestro, con un foco cada una.
+- **`EntrySection`**: encabezado tocable de 44 pt, y el resumen de lo que hay
+  adentro visible con la sección plegada — un dato clínico escondido detrás de
+  un acordeón es uno que se olvida.
+- **Por contenido, no por tipo:** `mealOf()` hace que las herramientas de IA
+  aparezcan para cualquier ítem que tenga comida. Antes la condición era
+  `kind === 'meal'`, así que una comida guardada desde "Nueva entrada" quedaba
+  fuera de su propio editor aunque tuviera foto y macros.
+- Las dos reglas viven en `src/masterModal.ts`, puras y con test: son
+  arquitectura de `projectbrief.md`, no se verifican a ojo.
+
+**Fase 2 del maestro, pendiente:** absorber `MealModal` (catálogo + IA de
+creación) y `MealEditModal` (IA de edición) como secciones en vez de modales
+hospedados. No se hizo en esta rama a propósito: son ~1.800 líneas de flujo
+asíncrono con estado propio, y reescribirlas sin dispositivo para probar es
+cómo se rompe una app en uso real. La espina ya está y las recibe.
+
 ### 2. Catálogo multi-porción con foto
 
 Hoy se agrega un alimento a la vez. Debe poder:

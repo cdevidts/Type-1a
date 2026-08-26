@@ -10,6 +10,9 @@ import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api
 import { formatDayTime, parseBlankAsUnset, parseBlankAsUnsetPositive, parseNonNegativeNumber } from '../format';
 import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
+import { sectionStartsOpen } from '../masterModal';
+import type { EntryFocus } from '../types';
+import { EntrySection } from './EntrySection';
 import { MacroFields } from './MacroFields';
 import { ModalShell } from './ModalShell';
 
@@ -43,6 +46,20 @@ interface PrefilledReading {
   isSensor: boolean;
   isSynthetic: boolean;
 }
+
+/**
+ * El título nombra lo que ella venía a hacer, no el componente. Abrir "Basal"
+ * y que el modal diga "Nueva entrada" es perder el hilo de lo que se estaba
+ * anotando — `contracts/ux-checklist.md`: el título nombra la acción.
+ */
+const FOCUS_TITLE: Record<EntryFocus, string> = {
+  all: 'Nueva entrada',
+  glucose: 'Glucosa',
+  meal: 'Comida',
+  insulin: 'Insulina',
+  ketones: 'Cetonas',
+  note: 'Nota',
+};
 
 export interface UnifiedEntryDraft {
   /** When the entry happened, as shown in the sheet's header. */
@@ -102,11 +119,12 @@ function Field({
   );
 }
 
-export function EntryModal({
+export function UnifiedEntryModal({
   visible,
   latest,
   profile,
   therapyConfigured,
+  focus = 'all',
   onClose,
   onSave,
 }: {
@@ -115,6 +133,19 @@ export function EntryModal({
   profile: TherapyProfile;
   /** False while the therapy values are still the placeholders shipped with the app. */
   therapyConfigured: boolean;
+  /**
+   * Con qué sección abierta arranca. Es **lo único** que distingue un acceso
+   * rápido de una entrada completa: el mismo formulario, plegado distinto.
+   *
+   * `projectbrief.md` § Modal Maestro: los accesos rápidos se quedan como
+   * están —siguen siendo la vía de pocos toques— pero dejan de montar cada uno
+   * su propio modal. Antes 'basal' abría `NumericEntryModal` y 'ketones'
+   * abría `KetonesModal`, cada uno con su copia del parseo, su propia validación
+   * y su propio criterio de qué se puede anotar de paso. Ahora los dos son
+   * este formulario con una sección expandida, así que anotar basal y
+   * acordarse de la glucosa deja de ser dos flujos.
+   */
+  focus?: EntryFocus;
   onClose: () => void;
   onSave: (draft: UnifiedEntryDraft) => Promise<void>;
 }) {
@@ -537,195 +568,234 @@ export function EntryModal({
     }
   }
 
+  /**
+   * Una sección arranca abierta si es la del foco, o si el foco es 'all'.
+   *
+   * La calculadora acompaña a Insulina a propósito: es la herramienta de esa
+   * sección, no una séptima cosa que decidir.
+   */
+  function sectionOpen(section: EntryFocus): boolean {
+    return sectionStartsOpen(focus, section);
+  }
+
+  /**
+   * Lo que hay dentro de cada sección plegada, para poder leerlo sin abrirla.
+   * Sin esto, el estado "tiene datos" se comunicaría solo con la posición del
+   * chevron — y un dato clínico escondido en un acordeón es uno que se olvida.
+   */
+  const filled = (label: string, value: string, unit: string): string | null =>
+    value.trim() === '' ? null : `${label} ${value.trim()} ${unit}`;
+  const joinSummary = (...parts: (string | null)[]): string | null => {
+    const present = parts.filter((part): part is string => part !== null);
+    return present.length === 0 ? null : present.join(' · ');
+  };
+  const glucoseSummary = joinSummary(filled('', glucose, 'mg/dL'));
+  const mealSummary = joinSummary(
+    filled('', carbs, 'g'),
+    protein.trim() === '' && fat.trim() === '' && fiber.trim() === '' ? null : 'con macros',
+    analysis === null ? null : 'analizada por IA',
+    description.trim() === '' ? null : 'con descripción',
+  );
+  const insulinSummary = joinSummary(filled('rápida', rapid, 'U'), filled('basal', basal, 'U'));
+  const ketonesSummary = joinSummary(filled('', ketones, 'mmol/L'));
+  const noteSummary = note.trim() === '' ? null : 'anotada';
+
   return (
-    <ModalShell visible={visible} title="Nueva entrada" onClose={onClose}>
+    <ModalShell visible={visible} title={focus === 'all' ? 'Nueva entrada' : FOCUS_TITLE[focus]} onClose={onClose}>
       <View style={styles.timeRow}>
         <Text style={styles.timeLabel}>Hora</Text>
         <Text style={styles.timeValue}>{formatDayTime(openedAt)}</Text>
       </View>
 
-      <Text style={styles.sectionTitle}>Glucosa</Text>
-      <View style={styles.segmented}>
-        <Pressable
-          style={[styles.segment, glucoseSource === 'sensor' && styles.segmentActive]}
-          onPress={selectSensorSource}
-          disabled={originalPrefill === null}
-        >
-          <Text style={[
-            styles.segmentText,
-            glucoseSource === 'sensor' && styles.segmentTextActive,
-            originalPrefill === null && styles.segmentTextDisabled,
-          ]}
+      <EntrySection title="Glucosa" summary={glucoseSummary} initiallyOpen={sectionOpen('glucose')}>
+        <View style={styles.segmented}>
+          <Pressable
+            style={[styles.segment, glucoseSource === 'sensor' && styles.segmentActive]}
+            onPress={selectSensorSource}
+            disabled={originalPrefill === null}
           >
-            Sensor
-          </Text>
-        </Pressable>
-        <Pressable
-          style={[styles.segment, glucoseSource === 'capillary' && styles.segmentActive]}
-          onPress={selectCapillarySource}
-        >
-          <Text style={[styles.segmentText, glucoseSource === 'capillary' && styles.segmentTextActive]}>
-            Capilar (punción)
-          </Text>
-        </Pressable>
-      </View>
-      {glucoseSource === 'capillary' ? (
-        <Text style={styles.manualText}>Escribe el valor de tu medidor de glicemia capilar.</Text>
-      ) : prefilled === null ? (
-        <Text style={styles.staleText}>Sin lectura vigente para precargar. Escríbela si te mediste, o cambia a "Capilar".</Text>
-      ) : prefilled.isSynthetic ? (
-        <Text style={styles.syntheticText}>
-          Precargada con un valor SINTÉTICO (modo demo) · {formatDayTime(prefilled.sourceTimestamp)}. No sirve para dosificar.
-        </Text>
-      ) : (
-        <Text style={styles.liveText}>Precargada desde el sensor · {formatDayTime(prefilled.sourceTimestamp)}</Text>
-      )}
-      <Field
-        label="Glucemia"
-        value={glucose}
-        unit="mg/dL"
-        onChange={(value) => { setGlucose(value); setPrefilled(null); setGlucoseSource('capillary'); invalidateSuggestion(); }}
-      />
-
-      <Text style={styles.sectionTitle}>Comida</Text>
-      <TextInput
-        style={styles.description}
-        value={description}
-        onChangeText={setDescription}
-        placeholder="¿Qué comiste? Ej.: pollo con arroz y ensalada"
-        placeholderTextColor={colors.muted}
-        maxLength={300}
-        multiline
-      />
-      <Pressable style={[styles.cameraButton, busy && styles.disabled]} disabled={busy} onPress={() => { void captureAndAnalyze(); }}>
-        <Text style={styles.cameraText}>{busy ? 'Procesando…' : '◎  Foto para estimar carbohidratos'}</Text>
-      </Pressable>
-      <Pressable style={[styles.textEstimateButton, busy && styles.disabled]} disabled={busy} onPress={() => { void analyzeFromDescription(); }}>
-        <Text style={styles.textEstimateText}>Estimar por texto, sin foto</Text>
-      </Pressable>
-      {imageUri === null ? null : <Image source={{ uri: imageUri }} style={styles.preview} resizeMode="cover" />}
-      {analysis === null ? null : (
-        <View style={styles.analysisBox}>
-          <Text style={styles.analysisTitle}>Estimación IA · ≈ {analysis.totals.carbsG} g</Text>
-          <Text style={styles.analysisFoods}>{analysis.estimate.foods.map((food) => food.name).join(' · ')}</Text>
-          <Text style={styles.analysisFoot}>Solo estima alimentos. Nunca calcula insulina — los carbohidratos los confirmas tú abajo.</Text>
+            <Text style={[
+              styles.segmentText,
+              glucoseSource === 'sensor' && styles.segmentTextActive,
+              originalPrefill === null && styles.segmentTextDisabled,
+            ]}
+            >
+              Sensor
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.segment, glucoseSource === 'capillary' && styles.segmentActive]}
+            onPress={selectCapillarySource}
+          >
+            <Text style={[styles.segmentText, glucoseSource === 'capillary' && styles.segmentTextActive]}>
+              Capilar (punción)
+            </Text>
+          </Pressable>
         </View>
-      )}
-      <Field label="Carbohidratos confirmados" value={carbs} unit="g" onChange={(value) => { setCarbs(value); invalidateSuggestion(); }} />
-      {/*
-        Macros (2026-08-25). Estaban en el modal de comida y no acá, así que
-        "Nueva entrada" guardaba menos que el acceso rápido.
-      */}
-      <MacroFields
-        protein={protein}
-        fat={fat}
-        fiber={fiber}
-        layout="stacked"
-        onChange={(field, next) => {
-          if (field === 'protein') setProtein(next);
-          else if (field === 'fat') setFat(next);
-          else if (field === 'fiber') setFiber(next);
-        }}
-        hint="Déjalos en blanco si no los anotaste. En blanco no es lo mismo que 0 g."
-      />
-
-      <Text style={styles.sectionTitle}>Calculadora de dosis</Text>
-      <View style={styles.warningBox}>
-        <Text style={styles.warningTitle}>Aritmética con tus parámetros, no una recomendación</Text>
-        <Text style={styles.warningText}>
-          Usa el objetivo, el factor de corrección y los carbs por unidad que configuraste con tu equipo clínico.
-          No descuenta insulina activa (IOB) de dosis anteriores: si te pinchaste hace poco, este número queda alto.
-        </Text>
-      </View>
-      <Pressable style={[styles.calculateButton, busy && styles.disabled]} disabled={busy} onPress={calculate}>
-        <Text style={styles.calculateText}>Calcular dosis sugerida</Text>
-      </Pressable>
-
-      {suggestion === null ? null : (
-        <View style={styles.resultBox}>
-          <Text style={styles.resultLabel}>RESULTADO DE LA FÓRMULA</Text>
-          <Text style={styles.resultValue}>{suggestion.units} U</Text>
-          {suggestion.lines.map((line) => (
-            <Text key={line} style={styles.formula}>{line}</Text>
-          ))}
-          <Text style={styles.parameterSummary}>Con: {suggestion.parameterSummary}</Text>
-          {suggestion.belowTargetNote === null ? null : (
-            <Text style={styles.below}>{suggestion.belowTargetNote}</Text>
-          )}
-          {suggestion.hypoWarning === null ? null : (
-            <View style={styles.hypoBox}><Text style={styles.hypoText}>{suggestion.hypoWarning}</Text></View>
-          )}
-          {suggestion.units === 0 ? (
-            <Text style={styles.useFoot}>La fórmula da 0 U: no hay nada que registrar como rápida.</Text>
-          ) : (
-            <>
-              <Pressable
-                style={styles.useButton}
-                onPress={() => {
-                  setRapid(String(suggestion.units));
-                  setRapidFromCalculator(true);
-                  setRapidStale(false);
-                  setDoseNeedsReconfirm(false);
-                }}
-              >
-                <Text style={styles.useText}>Usar {suggestion.units} U como rápida</Text>
-              </Pressable>
-              <Text style={styles.useFoot}>No se copia sola: revisa el número y edítalo si tu equipo clínico indica otra cosa.</Text>
-            </>
-          )}
-        </View>
-      )}
-
-      <Text style={styles.sectionTitle}>Insulina</Text>
-      <View style={styles.row}>
+        {glucoseSource === 'capillary' ? (
+          <Text style={styles.manualText}>Escribe el valor de tu medidor de glicemia capilar.</Text>
+        ) : prefilled === null ? (
+          <Text style={styles.staleText}>Sin lectura vigente para precargar. Escríbela si te mediste, o cambia a "Capilar".</Text>
+        ) : prefilled.isSynthetic ? (
+          <Text style={styles.syntheticText}>
+            Precargada con un valor SINTÉTICO (modo demo) · {formatDayTime(prefilled.sourceTimestamp)}. No sirve para dosificar.
+          </Text>
+        ) : (
+          <Text style={styles.liveText}>Precargada desde el sensor · {formatDayTime(prefilled.sourceTimestamp)}</Text>
+        )}
         <Field
-          label="Rápida"
-          value={rapid}
-          unit="U"
-          onChange={(value) => {
-            setRapid(value);
-            setRapidFromCalculator(false);
-            setRapidStale(false);
-            setDoseNeedsReconfirm(false);
-          }}
+          label="Glucemia"
+          value={glucose}
+          unit="mg/dL"
+          onChange={(value) => { setGlucose(value); setPrefilled(null); setGlucoseSource('capillary'); invalidateSuggestion(); }}
         />
-        <Field label="Acción prolongada" value={basal} unit="U" onChange={setBasal} />
-      </View>
-      {doseNeedsReconfirm ? (
-        <Text style={styles.staleDose}>
-          Esta dosis se calculó con una glucosa que ya no está vigente. Vuelve a calcular, o reescribe el número aquí para confirmar que es el que te vas a poner.
-        </Text>
-      ) : rapidStale ? (
-        <Text style={styles.staleDose}>
-          Cambiaste los carbohidratos o la glucosa después de copiar esta dosis. Vuelve a calcular o escribe el valor que te vas a poner.
-        </Text>
-      ) : null}
-      <Text style={styles.hint}>Se guarda exactamente lo que escribas aquí, no lo calculado.</Text>
+      </EntrySection>
 
-      {/*
-        Cetonas (2026-08-25). Tenían acceso rápido propio y no estaban acá,
-        que es justo lo que Verónica marcó: "Nueva entrada" tiene que poder
-        guardar todo lo que guardan los botones. Se escribe como
-        `VitalsEvent`, la misma tabla que usa el acceso rápido, así que las
-        dos vías se leen igual.
-      */}
-      <Text style={styles.sectionTitle}>Cetonas</Text>
-      <Field label="En sangre" value={ketones} unit="mmol/L" onChange={setKetones} />
-      <Text style={styles.hint}>
-        Solo si te las mediste. Type 1A registra el valor y te dice en qué banda cae; qué hacer con eso lo
-        decides con tu equipo clínico.
-      </Text>
+      <EntrySection title="Comida" summary={mealSummary} initiallyOpen={sectionOpen('meal')}>
+        <TextInput
+          style={styles.description}
+          value={description}
+          onChangeText={setDescription}
+          placeholder="¿Qué comiste? Ej.: pollo con arroz y ensalada"
+          placeholderTextColor={colors.muted}
+          maxLength={300}
+          multiline
+        />
+        <Pressable style={[styles.cameraButton, busy && styles.disabled]} disabled={busy} onPress={() => { void captureAndAnalyze(); }}>
+          <Text style={styles.cameraText}>{busy ? 'Procesando…' : '◎  Foto para estimar carbohidratos'}</Text>
+        </Pressable>
+        <Pressable style={[styles.textEstimateButton, busy && styles.disabled]} disabled={busy} onPress={() => { void analyzeFromDescription(); }}>
+          <Text style={styles.textEstimateText}>Estimar por texto, sin foto</Text>
+        </Pressable>
+        {imageUri === null ? null : <Image source={{ uri: imageUri }} style={styles.preview} resizeMode="cover" />}
+        {analysis === null ? null : (
+          <View style={styles.analysisBox}>
+            <Text style={styles.analysisTitle}>Estimación IA · ≈ {analysis.totals.carbsG} g</Text>
+            <Text style={styles.analysisFoods}>{analysis.estimate.foods.map((food) => food.name).join(' · ')}</Text>
+            <Text style={styles.analysisFoot}>Solo estima alimentos. Nunca calcula insulina — los carbohidratos los confirmas tú abajo.</Text>
+          </View>
+        )}
+        <Field label="Carbohidratos confirmados" value={carbs} unit="g" onChange={(value) => { setCarbs(value); invalidateSuggestion(); }} />
+        {/*
+          Macros (2026-08-25). Estaban en el modal de comida y no acá, así que
+          "Nueva entrada" guardaba menos que el acceso rápido.
+        */}
+        <MacroFields
+          protein={protein}
+          fat={fat}
+          fiber={fiber}
+          layout="stacked"
+          onChange={(field, next) => {
+            if (field === 'protein') setProtein(next);
+            else if (field === 'fat') setFat(next);
+            else if (field === 'fiber') setFiber(next);
+          }}
+          hint="Déjalos en blanco si no los anotaste. En blanco no es lo mismo que 0 g."
+        />
+      </EntrySection>
 
-      <Text style={styles.sectionTitle}>Nota</Text>
-      <TextInput
-        style={styles.description}
-        value={note}
-        onChangeText={setNote}
-        placeholder="Ejercicio, estrés, enfermedad, lo que quieras recordar"
-        placeholderTextColor={colors.muted}
-        maxLength={300}
-        multiline
-      />
+      <EntrySection title="Calculadora de dosis" summary={null} initiallyOpen={sectionOpen('insulin')}>
+        <View style={styles.warningBox}>
+          <Text style={styles.warningTitle}>Aritmética con tus parámetros, no una recomendación</Text>
+          <Text style={styles.warningText}>
+            Usa el objetivo, el factor de corrección y los carbs por unidad que configuraste con tu equipo clínico.
+            No descuenta insulina activa (IOB) de dosis anteriores: si te pinchaste hace poco, este número queda alto.
+          </Text>
+        </View>
+        <Pressable style={[styles.calculateButton, busy && styles.disabled]} disabled={busy} onPress={calculate}>
+          <Text style={styles.calculateText}>Calcular dosis sugerida</Text>
+        </Pressable>
+
+        {suggestion === null ? null : (
+          <View style={styles.resultBox}>
+            <Text style={styles.resultLabel}>RESULTADO DE LA FÓRMULA</Text>
+            <Text style={styles.resultValue}>{suggestion.units} U</Text>
+            {suggestion.lines.map((line) => (
+              <Text key={line} style={styles.formula}>{line}</Text>
+            ))}
+            <Text style={styles.parameterSummary}>Con: {suggestion.parameterSummary}</Text>
+            {suggestion.belowTargetNote === null ? null : (
+              <Text style={styles.below}>{suggestion.belowTargetNote}</Text>
+            )}
+            {suggestion.hypoWarning === null ? null : (
+              <View style={styles.hypoBox}><Text style={styles.hypoText}>{suggestion.hypoWarning}</Text></View>
+            )}
+            {suggestion.units === 0 ? (
+              <Text style={styles.useFoot}>La fórmula da 0 U: no hay nada que registrar como rápida.</Text>
+            ) : (
+              <>
+                <Pressable
+                  style={styles.useButton}
+                  onPress={() => {
+                    setRapid(String(suggestion.units));
+                    setRapidFromCalculator(true);
+                    setRapidStale(false);
+                    setDoseNeedsReconfirm(false);
+                  }}
+                >
+                  <Text style={styles.useText}>Usar {suggestion.units} U como rápida</Text>
+                </Pressable>
+                <Text style={styles.useFoot}>No se copia sola: revisa el número y edítalo si tu equipo clínico indica otra cosa.</Text>
+              </>
+            )}
+          </View>
+        )}
+      </EntrySection>
+
+      <EntrySection title="Insulina" summary={insulinSummary} initiallyOpen={sectionOpen('insulin')}>
+        <View style={styles.row}>
+          <Field
+            label="Rápida"
+            value={rapid}
+            unit="U"
+            onChange={(value) => {
+              setRapid(value);
+              setRapidFromCalculator(false);
+              setRapidStale(false);
+              setDoseNeedsReconfirm(false);
+            }}
+          />
+          <Field label="Acción prolongada" value={basal} unit="U" onChange={setBasal} />
+        </View>
+        {doseNeedsReconfirm ? (
+          <Text style={styles.staleDose}>
+            Esta dosis se calculó con una glucosa que ya no está vigente. Vuelve a calcular, o reescribe el número aquí para confirmar que es el que te vas a poner.
+          </Text>
+        ) : rapidStale ? (
+          <Text style={styles.staleDose}>
+            Cambiaste los carbohidratos o la glucosa después de copiar esta dosis. Vuelve a calcular o escribe el valor que te vas a poner.
+          </Text>
+        ) : null}
+        <Text style={styles.hint}>Se guarda exactamente lo que escribas aquí, no lo calculado.</Text>
+
+        {/*
+          Cetonas (2026-08-25). Tenían acceso rápido propio y no estaban acá,
+          que es justo lo que Verónica marcó: "Nueva entrada" tiene que poder
+          guardar todo lo que guardan los botones. Se escribe como
+          `VitalsEvent`, la misma tabla que usa el acceso rápido, así que las
+          dos vías se leen igual.
+        */}
+      </EntrySection>
+
+      <EntrySection title="Cetonas" summary={ketonesSummary} initiallyOpen={sectionOpen('ketones')}>
+        <Field label="En sangre" value={ketones} unit="mmol/L" onChange={setKetones} />
+        <Text style={styles.hint}>
+          Solo si te las mediste. Type 1A registra el valor y te dice en qué banda cae; qué hacer con eso lo
+          decides con tu equipo clínico.
+        </Text>
+      </EntrySection>
+
+      <EntrySection title="Nota" summary={noteSummary} initiallyOpen={sectionOpen('note')}>
+        <TextInput
+          style={styles.description}
+          value={note}
+          onChangeText={setNote}
+          placeholder="Ejercicio, estrés, enfermedad, lo que quieras recordar"
+          placeholderTextColor={colors.muted}
+          maxLength={300}
+          multiline
+        />
+      </EntrySection>
 
       {message === null ? null : <Text style={styles.message}>{message}</Text>}
       <Pressable style={[styles.saveButton, busy && styles.disabled]} disabled={busy} onPress={() => { void save(); }}>

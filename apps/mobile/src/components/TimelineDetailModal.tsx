@@ -6,6 +6,7 @@ import type { EpisodeContextEvent, MealEvent } from '@type1a/schemas';
 import { formatDayTime, parseBlankAsUnset, parseBlankAsUnsetPositive, parseNonNegativeNumber, parsePositiveNumber, trendArrow } from '../format';
 import { colors, radius, spacing } from '../theme';
 import type { TimelineEditPayload, TimelineItem } from '../types';
+import { mealOf } from '../masterModal';
 import { MacroFields, type MacroField } from './MacroFields';
 import { ModalShell } from './ModalShell';
 
@@ -778,15 +779,22 @@ export function TimelineDetailModal({
 
           {error === null ? null : <Text style={styles.error}>{error}</Text>}
           <View style={styles.actionRow}>
-            {item.kind === 'meal' ? (
+            {/*
+              Por contenido, no por tipo. Si el ítem tiene una comida —suelta
+              o dentro de una entrada empaquetada— llega a su editor con IA.
+              Antes la condición era `kind === 'meal'`, así que la misma comida
+              guardada desde "Nueva entrada" quedaba fuera de su propio editor:
+              tenía foto y macros y no había forma de re-analizarla.
+            */}
+            {mealOf(item) === null ? null : (
               <Pressable
                 style={[styles.button, styles.secondaryButton]}
-                onPress={() => { onEditMeal(item.raw); }}
+                onPress={() => { onEditMeal(mealOf(item)!); }}
                 accessibilityRole="button"
               >
-                <Text style={styles.secondaryButtonText}>Editar comida</Text>
+                <Text style={styles.secondaryButtonText}>Editar comida con IA</Text>
               </Pressable>
-            ) : null}
+            )}
             {isEditable(item) ? (
               <Pressable style={[styles.button, styles.secondaryButton]} onPress={() => { setEditing(true); }}>
                 <Text style={styles.secondaryButtonText}>Editar</Text>

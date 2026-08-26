@@ -47,17 +47,15 @@ import type {
 // no UI on screen — see backgroundSync.ts.
 import { registerBackgroundSync } from './src/backgroundSync';
 import { CorrectionModal } from './src/components/CorrectionModal';
-import { EntryModal, type UnifiedEntryDraft } from './src/components/EntryModal';
+import { UnifiedEntryModal, type UnifiedEntryDraft } from './src/components/UnifiedEntryModal';
 import { insulinProfileFields } from './src/components/InsulinPicker';
 import { GlucoseCard } from './src/components/GlucoseCard';
 import { InsulinAssociationModal } from './src/components/InsulinAssociationModal';
 import type { MealEditResult } from './src/components/MealEditModal';
 import { CatalogModal, type CatalogEdit } from './src/components/CatalogModal';
 import { MealModal, type ConfirmedMealDraft } from './src/components/MealModal';
-import { NumericEntryModal } from './src/components/NumericEntryModal';
 import { SettingsModal } from './src/components/SettingsModal';
 import { BottomNav, type NavDestination } from './src/components/BottomNav';
-import { KetonesModal } from './src/components/KetonesModal';
 import { NutritionModal } from './src/components/NutritionModal';
 import { OnboardingModal } from './src/components/OnboardingModal';
 import { SummaryModal } from './src/components/SummaryModal';
@@ -125,7 +123,6 @@ import {
   saveReminderAlertStyle,
   resolveLegacyBackendSensor,
   saveTherapyProfile,
-  saveVitalsEvent,
   saveUnifiedEntry,
   setSetting,
   updateCarbEvent,
@@ -155,7 +152,7 @@ import { capillaryReminderTimes } from './src/format';
 import { colors, radius, spacing } from './src/theme';
 import type { NutritionProfile } from '@type1a/schemas';
 import { normalizeQuickRoute } from './src/types';
-import type { LegacyQuickRoute, NutritionDayData, PendingInsulinAssociation, QuickRoute, ReminderAlertStyle, ReportExport, SummaryData, TimelineEditPayload, TimelineItem } from './src/types';
+import type { EntryFocus, LegacyQuickRoute, NutritionDayData, PendingInsulinAssociation, QuickRoute, ReminderAlertStyle, ReportExport, SummaryData, TimelineEditPayload, TimelineItem } from './src/types';
 
 /** Flag de "ya vio la bienvenida"; vive en `settings`, no en el perfil de terapia. */
 const ONBOARDING_SEEN_KEY = 'onboardingSeenAt';
@@ -191,10 +188,15 @@ function Type1AApp() {
   const [pendingAssociations, setPendingAssociations] = useState<PendingInsulinAssociation[]>([]);
   const [quickRoute, setQuickRoute] = useState<QuickRoute | null>(null);
   const [mealOpen, setMealOpen] = useState(false);
-  const [entryOpen, setEntryOpen] = useState(false);
+  /**
+   * El Modal Maestro: `null` = cerrado, un foco = abierto con esa sección
+   * expandida. Reemplaza a `entryOpen` + `ketonesOpen` + la ruta 'basal' de
+   * `NumericEntryModal`, que eran tres banderas para tres modales distintos
+   * cuando lo que cambiaba entre ellos era qué mostrar primero.
+   */
+  const [entryFocus, setEntryFocus] = useState<EntryFocus | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
-  const [ketonesOpen, setKetonesOpen] = useState(false);
   const [nutritionOpen, setNutritionOpen] = useState(false);
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [nutritionProfile, setNutritionProfile] = useState<NutritionProfile | null>(null);
@@ -385,6 +387,10 @@ function Type1AApp() {
    */
   const openQuickRoute = useCallback((route: QuickRoute): void => {
     if (route === 'meal') { setMealOpen(true); return; }
+    // Basal ya no monta su propio modal numérico: es el Modal Maestro abierto
+    // en la sección de insulina. Así anotar la basal y acordarse de la
+    // glucosa deja de ser dos flujos separados.
+    if (route === 'basal') { setEntryFocus('insulin'); return; }
     setQuickRoute(route);
   }, []);
 
@@ -425,28 +431,6 @@ function Type1AApp() {
     };
   }, [refresh, openQuickRoute]);
 
-  /**
-   * Solo basal desde la Fase 21. Carbohidratos e insulina rápida ya no entran
-   * por acá: iban como filas sueltas con timestamps independientes, que es la
-   * causa raíz de que la app no pudiera emparejar una dosis con su comida.
-   * Ahora los dos casos pasan por `MealModal`, bajo un mismo timestamp.
-   *
-   * La basal se queda: no pertenece a ninguna comida, así que una fila suelta
-   * es exactamente lo que es.
-   */
-  async function registerNumeric(route: 'basal', value: number): Promise<void> {
-    const timestamp = new Date().toISOString();
-    await saveInsulinEvent(db, {
-      id: Crypto.randomUUID(),
-      timestamp,
-      type: route,
-      units: value,
-      source: 'manual',
-      createdAt: timestamp,
-      ...(profile.basalInsulinName === undefined ? {} : { insulinName: profile.basalInsulinName }),
-    });
-    await loadLocalState();
-  }
 
   async function registerCorrection(units: number): Promise<void> {
     const timestamp = new Date().toISOString();
@@ -831,17 +815,6 @@ function Type1AApp() {
     };
   }
 
-  async function registerKetones(mmolL: number): Promise<void> {
-    await saveVitalsEvent(db, {
-      id: Crypto.randomUUID(),
-      timestamp: new Date().toISOString(),
-      ketonesMmolL: mmolL,
-      source: 'manual',
-      createdAt: new Date().toISOString(),
-    });
-    await loadLocalState();
-  }
-
   async function updatePrivacy(show: boolean): Promise<void> {
     await setSetting(db, 'showGlucoseOnLockScreen', String(show));
     setShowGlucoseOnLockScreen(show);
@@ -1012,9 +985,6 @@ function Type1AApp() {
     setNotice('Contexto de insulina confirmado; el episodio fue recalculado.');
   }
 
-  // `NumericEntryModal` solo sirve a basal desde la Fase 21. `'meal'` abre
-  // `MealModal` y `'correction'` abre `CorrectionModal`.
-  const numericRoute = quickRoute === 'basal' ? 'basal' : null;
   const sourceLabel = useMemo(() => {
     if (status?.isSynthetic === true) return 'PRUEBA · DATOS SINTÉTICOS';
     if (status?.state === 'connected') return 'CGM CONECTADO';
@@ -1038,11 +1008,11 @@ function Type1AApp() {
     setNutritionOpen(false);
     setCatalogOpen(false);
     setSummaryOpen(false);
-    setEntryOpen(false);
+    setEntryFocus(null);
     if (destination === null) return;
     if (destination === 'nutrition') setNutritionOpen(true);
     else if (destination === 'summary') setSummaryOpen(true);
-    else if (destination === 'entry') setEntryOpen(true);
+    else if (destination === 'entry') setEntryFocus('all');
     else if (destination === 'catalog') setCatalogOpen(true);
     else if (destination === 'chat') {
       setNotice('El chat de IA todavía no está disponible.');
@@ -1170,7 +1140,7 @@ function Type1AApp() {
             Icon={Syringe}
             color={colors.navy}
             soft="#E7EDF2"
-            onPress={() => { setQuickRoute('basal'); }}
+            onPress={() => { setEntryFocus('insulin'); }}
           />
           {/*
             Cetonas queda acá y no dentro de "Nueva entrada" porque el momento
@@ -1183,7 +1153,7 @@ function Type1AApp() {
             Icon={FlaskConical}
             color={colors.red}
             soft={colors.redSoft}
-            onPress={() => { setKetonesOpen(true); }}
+            onPress={() => { setEntryFocus('ketones'); }}
           />
         </View>
 
@@ -1196,11 +1166,6 @@ function Type1AApp() {
       </ScrollView>
       </View>
 
-      <NumericEntryModal
-        route={numericRoute}
-        onClose={() => { setQuickRoute(null); }}
-        onSubmit={registerNumeric}
-      />
       <CorrectionModal
         visible={quickRoute === 'correction'}
         latest={latest}
@@ -1216,12 +1181,13 @@ function Type1AApp() {
         }}
         onRegister={registerCorrection}
       />
-      <EntryModal
-        visible={entryOpen}
+      <UnifiedEntryModal
+        visible={entryFocus !== null}
+        focus={entryFocus ?? 'all'}
         latest={latest}
         profile={profile}
         therapyConfigured={therapyConfigured}
-        onClose={() => { setEntryOpen(false); }}
+        onClose={() => { setEntryFocus(null); }}
         onSave={saveEntry}
       />
       <MealModal
@@ -1323,11 +1289,6 @@ function Type1AApp() {
           setNutritionProfile(next);
         }}
         onLoadDay={loadNutritionDay}
-      />
-      <KetonesModal
-        visible={ketonesOpen}
-        onClose={() => { setKetonesOpen(false); }}
-        onSubmit={registerKetones}
       />
       <InsulinAssociationModal
         pending={pendingAssociations[0] ?? null}
