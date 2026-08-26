@@ -18,8 +18,25 @@ colinealidad carbos↔unidades, `confoundedCount > sampleSize`, β como factor d
 corrección inferido; y en Fase 21 los cuatro de dosis). Además levantó siete
 que la revisión original no vio, cuatro de ellos vivos hoy — ver `progress.md`.
 
-Pendiente: Fases 4-6 (Memory Bank completo, README a ~30 líneas, ADR 0004 de
-CGM, purga verificada, loop de escritura). **No empezar sin aprobación.**
+## ⛔ Lo primero después de fusionar esta rama
+
+**Crear `fix/macros-data-corruption` y arreglar los hallazgos 1 y 2 de
+`progress.md`.** Antes que cualquier fase nueva, antes que los tres Pecados
+Capitales de abajo.
+
+Los dos corrompen datos **hoy, en cada uso**:
+
+1. `macrosSource` se descarta en silencio al crear una entrada, así que los
+   macros estimados por IA llegan al PDF del control médico sin procedencia.
+2. Una entrada solo de macros se pierde entera mientras la pantalla dice
+   "Entrada guardada".
+
+Los dos son de una línea o dos. Ninguno lo atrapa `pnpm verify` —el primero
+justamente porque TypeScript no chequea propiedades en exceso sobre un
+spread—, así que el arreglo va **con test**, no solo con el cambio.
+
+Esta rama es de infraestructura arquitectónica: no se tocan acá. Decisión
+explícita de Verónica, 2026-08-26.
 
 ---
 

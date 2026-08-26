@@ -1,6 +1,6 @@
 # ADR 0003: Catálogo de alimentos compartido — el backend gana estado, a propósito y acotado
 
-Status: accepted (2026-08-21)
+status: Accepted (2026-08-21)
 
 ## Contexto
 

@@ -1,6 +1,6 @@
 # ADR 0002: AI interprets; deterministic code calculates
 
-Status: accepted
+status: Accepted (2026-08-12)
 
 Abacus RouteLLM is used for visual food estimation and descriptive language. Zod schemas validate structured output. Application code computes totals, correction math, timestamps, glucose freshness, and Meal Episode metrics.
 

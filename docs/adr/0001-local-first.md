@@ -1,6 +1,6 @@
 # ADR 0001: Local-first event storage
 
-Status: accepted
+status: Accepted (2026-08-12)
 
 Type 1A stores user-entered meals, carbohydrates, insulin events, therapy settings, cached CGM, and episode metrics on-device in SQLite. The backend protects external secrets and performs remote integrations; it is not required for manual logging.
 
