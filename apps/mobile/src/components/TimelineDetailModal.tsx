@@ -3,9 +3,10 @@ import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-nativ
 
 import type { EpisodeContextEvent, MealEvent } from '@type1a/schemas';
 
-import { formatDayTime, parseNonNegativeNumber, parsePositiveNumber, trendArrow } from '../format';
+import { formatDayTime, parseBlankAsUnset, parseBlankAsUnsetPositive, parseNonNegativeNumber, parsePositiveNumber, trendArrow } from '../format';
 import { colors, radius, spacing } from '../theme';
 import type { TimelineEditPayload, TimelineItem } from '../types';
+import { MacroFields, type MacroField } from './MacroFields';
 import { ModalShell } from './ModalShell';
 
 const originLabel: Record<string, string> = {
@@ -220,6 +221,13 @@ export function TimelineDetailModal({
   const [entryProteinG, setEntryProteinG] = useState('');
   const [entryFatG, setEntryFatG] = useState('');
   const [entryFiberG, setEntryFiberG] = useState('');
+
+  /** Un solo despachador, para que los dos bloques de macros no diverjan. */
+  function setEntryMacro(field: MacroField, next: string): void {
+    if (field === 'protein') setEntryProteinG(next);
+    else if (field === 'fat') setEntryFatG(next);
+    else if (field === 'fiber') setEntryFiberG(next);
+  }
   const [entryKetones, setEntryKetones] = useState('');
 
   // Re-seed the edit fields (and drop any in-progress edit/error) every time
@@ -279,11 +287,9 @@ export function TimelineDetailModal({
   }
 
   function parseMacros(): { proteinG?: number; fatG?: number; fiberG?: number } | null {
-    const one = (input: string): number | null | undefined =>
-      input.trim() === '' ? undefined : parseNonNegativeNumber(input);
-    const proteinG = one(entryProteinG);
-    const fatG = one(entryFatG);
-    const fiberG = one(entryFiberG);
+    const proteinG = parseBlankAsUnset(entryProteinG);
+    const fatG = parseBlankAsUnset(entryFatG);
+    const fiberG = parseBlankAsUnset(entryFiberG);
     if (proteinG === null || fatG === null || fiberG === null) return null;
     if ([proteinG, fatG, fiberG].some((value) => value !== undefined && value > 500)) return null;
     return {
@@ -331,17 +337,17 @@ export function TimelineDetailModal({
         }
         glucoseValue = parsed;
       }
-      const carbsValue = entryCarbsG.trim() === '' ? undefined : parseNonNegativeNumber(entryCarbsG);
+      const carbsValue = parseBlankAsUnset(entryCarbsG);
       if (carbsValue === null || (carbsValue !== undefined && carbsValue > 500)) {
         setError('Los carbohidratos deben ser un número entre 0 y 500 g.');
         return;
       }
-      const rapidValue = entryRapidUnits.trim() === '' ? undefined : parsePositiveNumber(entryRapidUnits);
+      const rapidValue = parseBlankAsUnsetPositive(entryRapidUnits);
       if (rapidValue === null || (rapidValue !== undefined && rapidValue > 100)) {
         setError('La insulina rápida debe ser un número positivo, 100 U o menos.');
         return;
       }
-      const basalValue = entryBasalUnits.trim() === '' ? undefined : parsePositiveNumber(entryBasalUnits);
+      const basalValue = parseBlankAsUnsetPositive(entryBasalUnits);
       if (basalValue === null || (basalValue !== undefined && basalValue > 100)) {
         setError('La insulina basal debe ser un número positivo, 100 U o menos.');
         return;
@@ -398,17 +404,17 @@ export function TimelineDetailModal({
         }
         glucoseValue = parsed;
       }
-      const carbsValue = entryCarbsG.trim() === '' ? undefined : parseNonNegativeNumber(entryCarbsG);
+      const carbsValue = parseBlankAsUnset(entryCarbsG);
       if (carbsValue === null || (carbsValue !== undefined && carbsValue > 500)) {
         setError('Los carbohidratos deben ser un número entre 0 y 500 g.');
         return;
       }
-      const rapidValue = entryRapidUnits.trim() === '' ? undefined : parsePositiveNumber(entryRapidUnits);
+      const rapidValue = parseBlankAsUnsetPositive(entryRapidUnits);
       if (rapidValue === null || (rapidValue !== undefined && rapidValue > 100)) {
         setError('La insulina rápida debe ser un número positivo, 100 U o menos.');
         return;
       }
-      const basalValue = entryBasalUnits.trim() === '' ? undefined : parsePositiveNumber(entryBasalUnits);
+      const basalValue = parseBlankAsUnsetPositive(entryBasalUnits);
       if (basalValue === null || (basalValue !== undefined && basalValue > 100)) {
         setError('La insulina basal debe ser un número positivo, 100 U o menos.');
         return;
@@ -550,33 +556,15 @@ export function TimelineDetailModal({
               {/*
                 Fase 21: los macros también al editar. Antes solo se podían
                 cargar al crear la entrada, así que corregir una proteína
-                obligaba a borrar la entrada y rehacerla. En blanco = "no lo
-                anoté", nunca "0 g".
+                obligaba a borrar la entrada y rehacerla.
               */}
-              <View style={styles.fieldRow}>
-                <View style={styles.fieldRowItem}>
-                  <Text style={styles.fieldLabel}>Proteína</Text>
-                  <View style={styles.inputWrap}>
-                    <TextInput value={entryProteinG} onChangeText={setEntryProteinG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
-                    <Text style={styles.inputUnit}>g</Text>
-                  </View>
-                </View>
-                <View style={styles.fieldRowItem}>
-                  <Text style={styles.fieldLabel}>Grasa</Text>
-                  <View style={styles.inputWrap}>
-                    <TextInput value={entryFatG} onChangeText={setEntryFatG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
-                    <Text style={styles.inputUnit}>g</Text>
-                  </View>
-                </View>
-                <View style={styles.fieldRowItem}>
-                  <Text style={styles.fieldLabel}>Fibra</Text>
-                  <View style={styles.inputWrap}>
-                    <TextInput value={entryFiberG} onChangeText={setEntryFiberG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
-                    <Text style={styles.inputUnit}>g</Text>
-                  </View>
-                </View>
-              </View>
-              <Text style={styles.hint}>Déjalos en blanco si no los anotaste. En blanco no es lo mismo que 0 g.</Text>
+              <MacroFields
+                protein={entryProteinG}
+                fat={entryFatG}
+                fiber={entryFiberG}
+                onChange={(field, next) => { setEntryMacro(field, next); }}
+                hint="Déjalos en blanco si no los anotaste. En blanco no es lo mismo que 0 g."
+              />
               {/*
                 Cetonas (2026-08-25). El editor tiene que poder guardar lo
                 mismo que "Nueva entrada" — pedido repetido de Verónica. Se
@@ -668,33 +656,15 @@ export function TimelineDetailModal({
               {/*
                 Fase 21: los macros también al editar. Antes solo se podían
                 cargar al crear la entrada, así que corregir una proteína
-                obligaba a borrar la entrada y rehacerla. En blanco = "no lo
-                anoté", nunca "0 g".
+                obligaba a borrar la entrada y rehacerla.
               */}
-              <View style={styles.fieldRow}>
-                <View style={styles.fieldRowItem}>
-                  <Text style={styles.fieldLabel}>Proteína</Text>
-                  <View style={styles.inputWrap}>
-                    <TextInput value={entryProteinG} onChangeText={setEntryProteinG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
-                    <Text style={styles.inputUnit}>g</Text>
-                  </View>
-                </View>
-                <View style={styles.fieldRowItem}>
-                  <Text style={styles.fieldLabel}>Grasa</Text>
-                  <View style={styles.inputWrap}>
-                    <TextInput value={entryFatG} onChangeText={setEntryFatG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
-                    <Text style={styles.inputUnit}>g</Text>
-                  </View>
-                </View>
-                <View style={styles.fieldRowItem}>
-                  <Text style={styles.fieldLabel}>Fibra</Text>
-                  <View style={styles.inputWrap}>
-                    <TextInput value={entryFiberG} onChangeText={setEntryFiberG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
-                    <Text style={styles.inputUnit}>g</Text>
-                  </View>
-                </View>
-              </View>
-              <Text style={styles.hint}>Déjalos en blanco si no los anotaste. En blanco no es lo mismo que 0 g.</Text>
+              <MacroFields
+                protein={entryProteinG}
+                fat={entryFatG}
+                fiber={entryFiberG}
+                onChange={(field, next) => { setEntryMacro(field, next); }}
+                hint="Déjalos en blanco si no los anotaste. En blanco no es lo mismo que 0 g."
+              />
               {/*
                 Cetonas (2026-08-25). El editor tiene que poder guardar lo
                 mismo que "Nueva entrada" — pedido repetido de Verónica. Se

@@ -7,9 +7,10 @@ import { assessFreshness, calculateCorrection, calculateMealBolus, convertGlucos
 import type { CGMReading, MealAnalysisResult, TherapyProfile } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api';
-import { formatDayTime, parseNonNegativeNumber, parsePositiveNumber } from '../format';
+import { formatDayTime, parseBlankAsUnset, parseBlankAsUnsetPositive, parseNonNegativeNumber } from '../format';
 import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
+import { MacroFields } from './MacroFields';
 import { ModalShell } from './ModalShell';
 
 const HYPO_WARNING = 'Estás en hipoglucemia. Trata la hipoglucemia primero y calcula la dosis después de recuperarte — este número no reemplaza esa decisión.';
@@ -338,7 +339,7 @@ export function EntryModal({
       setMessage('Escribe los carbohidratos entre 0 y 500 g (o déjalo vacío).');
       return;
     }
-    const currentGlucose = glucose.trim() === '' ? undefined : parsePositiveNumber(glucose);
+    const currentGlucose = parseBlankAsUnsetPositive(glucose);
     if (currentGlucose === null) {
       setMessage('La glucosa debe ser un número positivo.');
       return;
@@ -460,10 +461,10 @@ export function EntryModal({
       setMessage('La glucosa que originó esta dosis ya no está vigente. Escribe una glucosa actual y vuelve a calcular, o confirma a mano las unidades que te vas a poner (toca el campo Rápida y reescribe el número).');
       return;
     }
-    const carbsG = carbs.trim() === '' ? undefined : parseNonNegativeNumber(carbs);
-    const rapidUnits = rapid.trim() === '' ? undefined : parsePositiveNumber(rapid);
-    const basalUnits = basal.trim() === '' ? undefined : parsePositiveNumber(basal);
-    const glucoseValue = glucose.trim() === '' ? undefined : parsePositiveNumber(glucose);
+    const carbsG = parseBlankAsUnset(carbs);
+    const rapidUnits = parseBlankAsUnsetPositive(rapid);
+    const basalUnits = parseBlankAsUnsetPositive(basal);
+    const glucoseValue = parseBlankAsUnsetPositive(glucose);
 
     if (carbsG === null || (carbsG !== undefined && carbsG > 500)) {
       setMessage('Escribe los carbohidratos entre 0 y 500 g (o déjalo vacío).');
@@ -481,12 +482,10 @@ export function EntryModal({
     }
     // Macros y cetonas (2026-08-25). En blanco significa "no lo anoté", no
     // "cero": la misma regla que rige en `MealModal` y en el editor.
-    const optional = (input: string): number | null | undefined =>
-      input.trim() === '' ? undefined : parseNonNegativeNumber(input);
-    const proteinG = optional(protein);
-    const fatG = optional(fat);
-    const fiberG = optional(fiber);
-    const ketonesMmolL = ketones.trim() === '' ? undefined : parseNonNegativeNumber(ketones);
+    const proteinG = parseBlankAsUnset(protein);
+    const fatG = parseBlankAsUnset(fat);
+    const fiberG = parseBlankAsUnset(fiber);
+    const ketonesMmolL = parseBlankAsUnset(ketones);
     if (proteinG === null || fatG === null || fiberG === null
       || [proteinG, fatG, fiberG].some((value) => value !== undefined && value > 500)) {
       setMessage('Revisa proteína, grasa y fibra: deben ser números entre 0 y 500 g, o quedar en blanco.');
@@ -615,14 +614,20 @@ export function EntryModal({
       <Field label="Carbohidratos confirmados" value={carbs} unit="g" onChange={(value) => { setCarbs(value); invalidateSuggestion(); }} />
       {/*
         Macros (2026-08-25). Estaban en el modal de comida y no acá, así que
-        "Nueva entrada" guardaba menos que el acceso rápido. En blanco
-        significa "no lo anoté", nunca "0 g" — es la diferencia que impide
-        inventar promedios en la pantalla de Patrones.
+        "Nueva entrada" guardaba menos que el acceso rápido.
       */}
-      <Field label="Proteína" value={protein} unit="g" onChange={setProtein} />
-      <Field label="Grasa" value={fat} unit="g" onChange={setFat} />
-      <Field label="Fibra" value={fiber} unit="g" onChange={setFiber} />
-      <Text style={styles.hint}>Déjalos en blanco si no los anotaste. En blanco no es lo mismo que 0 g.</Text>
+      <MacroFields
+        protein={protein}
+        fat={fat}
+        fiber={fiber}
+        layout="stacked"
+        onChange={(field, next) => {
+          if (field === 'protein') setProtein(next);
+          else if (field === 'fat') setFat(next);
+          else if (field === 'fiber') setFiber(next);
+        }}
+        hint="Déjalos en blanco si no los anotaste. En blanco no es lo mismo que 0 g."
+      />
 
       <Text style={styles.sectionTitle}>Calculadora de dosis</Text>
       <View style={styles.warningBox}>

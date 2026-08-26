@@ -13,9 +13,10 @@ import { resolveMacrosSource } from '@type1a/domain';
 import type { MealAnalysisResult, MealEvent, MealSnapshot } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, editMealWithInstruction, MobileApiError } from '../api';
-import { parseNonNegativeNumber } from '../format';
+import { parseBlankAsClear, parseBlankAsUnset } from '../format';
 import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
+import { MacroFields } from './MacroFields';
 import { ModalShell } from './ModalShell';
 
 /**
@@ -39,13 +40,6 @@ export interface MealEditResult {
 }
 
 const numberOrBlank = (value: number | undefined): string => (value === undefined ? '' : String(value));
-
-/** `''` → borrar (`null`), texto inválido → `undefined` como señal de error. */
-function parseOptional(input: string): number | null | undefined {
-  if (input.trim() === '') return null;
-  const parsed = parseNonNegativeNumber(input);
-  return parsed === null ? undefined : parsed;
-}
 
 function fmt(value: string): string {
   return value.trim() === '' ? 'sin anotar' : value.trim();
@@ -147,11 +141,11 @@ export function MealEditModal({
    * este código "no incluya" la dosis, es que no hay dónde ponerla.
    */
   function snapshot(): MealSnapshot {
-    const carbs = carbsInput.trim() === '' ? undefined : parseNonNegativeNumber(carbsInput) ?? undefined;
-    const protein = proteinInput.trim() === '' ? undefined : parseNonNegativeNumber(proteinInput) ?? undefined;
-    const fat = fatInput.trim() === '' ? undefined : parseNonNegativeNumber(fatInput) ?? undefined;
-    const fiber = fiberInput.trim() === '' ? undefined : parseNonNegativeNumber(fiberInput) ?? undefined;
-    const calories = caloriesInput.trim() === '' ? undefined : parseNonNegativeNumber(caloriesInput) ?? undefined;
+    const carbs = parseBlankAsUnset(carbsInput) ?? undefined;
+    const protein = parseBlankAsUnset(proteinInput) ?? undefined;
+    const fat = parseBlankAsUnset(fatInput) ?? undefined;
+    const fiber = parseBlankAsUnset(fiberInput) ?? undefined;
+    const calories = parseBlankAsUnset(caloriesInput) ?? undefined;
     return {
       ...(noteInput.trim() === '' ? {} : { note: noteInput.trim() }),
       ...(carbs === undefined ? {} : { confirmedCarbsG: carbs }),
@@ -291,11 +285,11 @@ export function MealEditModal({
     if (meal === null) return;
     setMessage(null);
 
-    const carbs = parseOptional(carbsInput);
-    const protein = parseOptional(proteinInput);
-    const fat = parseOptional(fatInput);
-    const fiber = parseOptional(fiberInput);
-    const calories = parseOptional(caloriesInput);
+    const carbs = parseBlankAsClear(carbsInput);
+    const protein = parseBlankAsClear(proteinInput);
+    const fat = parseBlankAsClear(fatInput);
+    const fiber = parseBlankAsClear(fiberInput);
+    const calories = parseBlankAsClear(caloriesInput);
     if (carbs === undefined || protein === undefined || fat === undefined || fiber === undefined || calories === undefined) {
       setMessage('Revisa los números: deben ser positivos, o quedar en blanco si no los anotaste.');
       return;
@@ -505,29 +499,21 @@ export function MealEditModal({
         </Pressable>
       )}
 
-      <Text style={styles.fieldLabel}>Proteína</Text>
-      <View style={styles.inputWrap}>
-        <TextInput value={proteinInput} onChangeText={setProteinInput} keyboardType="decimal-pad" style={styles.input} placeholder="sin anotar" placeholderTextColor={colors.muted} accessibilityLabel="Proteína en gramos" />
-        <Text style={styles.inputUnit}>g</Text>
-      </View>
-
-      <Text style={styles.fieldLabel}>Grasa</Text>
-      <View style={styles.inputWrap}>
-        <TextInput value={fatInput} onChangeText={setFatInput} keyboardType="decimal-pad" style={styles.input} placeholder="sin anotar" placeholderTextColor={colors.muted} accessibilityLabel="Grasa en gramos" />
-        <Text style={styles.inputUnit}>g</Text>
-      </View>
-
-      <Text style={styles.fieldLabel}>Fibra</Text>
-      <View style={styles.inputWrap}>
-        <TextInput value={fiberInput} onChangeText={setFiberInput} keyboardType="decimal-pad" style={styles.input} placeholder="sin anotar" placeholderTextColor={colors.muted} accessibilityLabel="Fibra en gramos" />
-        <Text style={styles.inputUnit}>g</Text>
-      </View>
-
-      <Text style={styles.fieldLabel}>Calorías</Text>
-      <View style={styles.inputWrap}>
-        <TextInput value={caloriesInput} onChangeText={setCaloriesInput} keyboardType="decimal-pad" style={styles.input} placeholder="sin anotar" placeholderTextColor={colors.muted} accessibilityLabel="Calorías" />
-        <Text style={styles.inputUnit}>kcal</Text>
-      </View>
+      <MacroFields
+        protein={proteinInput}
+        fat={fatInput}
+        fiber={fiberInput}
+        calories={caloriesInput}
+        layout="stacked"
+        placeholder="sin anotar"
+        onChange={(field, next) => {
+          if (field === 'protein') setProteinInput(next);
+          else if (field === 'fat') setFatInput(next);
+          else if (field === 'fiber') setFiberInput(next);
+          else setCaloriesInput(next);
+        }}
+        hint="Vaciar un campo lo borra del registro. En blanco no es lo mismo que 0 g."
+      />
 
       <Text style={styles.fieldLabel}>Nota</Text>
       <TextInput

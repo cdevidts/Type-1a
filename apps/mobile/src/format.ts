@@ -131,3 +131,43 @@ export function capillaryReminderTimes(
   }
   return times;
 }
+
+/**
+ * Campo numérico opcional donde **en blanco significa "no lo anoté"**.
+ *
+ * `undefined` = en blanco · `null` = texto inválido · número = el valor.
+ *
+ * Existe porque `parseNonNegativeNumber('')` devuelve `0`, y ese `0` ya se
+ * guardó como dato medido en el reporte al médico una vez. El chequeo del
+ * blanco estaba replicado a mano en **53 lugares**, cada uno una oportunidad
+ * de olvidarlo; acá está una vez y con test.
+ */
+export function parseBlankAsUnset(value: string): number | null | undefined {
+  return value.trim() === '' ? undefined : parseNonNegativeNumber(value);
+}
+
+/**
+ * Igual, pero para un formulario de **edición**, donde vaciar un campo es una
+ * instrucción de borrar y no una omisión.
+ *
+ * `null` = en blanco, o sea "borra este valor" · `undefined` = texto inválido
+ * · número = el valor. **Los sentinelas están invertidos respecto de
+ * `parseBlankAsUnset`**, y esa inversión es deliberada: es el lenguaje que
+ * `MealEditPatch` de `db.ts` ya habla (`undefined` = no se tocó, `null` =
+ * borrar). Dos funciones con nombre propio en vez de un ternario suelto que
+ * hay que leer dos veces para saber cuál convención sigue.
+ */
+export function parseBlankAsClear(value: string): number | null | undefined {
+  if (value.trim() === '') return null;
+  const parsed = parseNonNegativeNumber(value);
+  return parsed === null ? undefined : parsed;
+}
+
+/**
+ * Igual que `parseBlankAsUnset`, para campos que además exigen **> 0**:
+ * insulina y glucosa. Cero unidades no es una dosis, y cero mg/dL no es una
+ * medición.
+ */
+export function parseBlankAsUnsetPositive(value: string): number | null | undefined {
+  return value.trim() === '' ? undefined : parsePositiveNumber(value);
+}

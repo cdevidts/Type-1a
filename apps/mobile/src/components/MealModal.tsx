@@ -18,9 +18,10 @@ import {
 import type { MealAnalysisResult } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api';
-import { parseNonNegativeNumber, parsePositiveNumber } from '../format';
+import { parseBlankAsUnset, parseNonNegativeNumber, parsePositiveNumber } from '../format';
 import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
+import { MacroFields } from './MacroFields';
 import { ModalShell } from './ModalShell';
 
 /**
@@ -414,11 +415,9 @@ export function MealModal({
       // nunca hubiera abierto la sección — y el reporte al médico mostraba
       // "0 g de proteína, promedio de N" como si fuera un dato medido. La
       // distinción "no anotado" vs "0 g" es justamente el punto del ítem 7.
-      const parseOptionalMacro = (input: string): number | null | undefined =>
-        input.trim() === '' ? undefined : parseNonNegativeNumber(input);
-      const protein = parseOptionalMacro(proteinInput);
-      const fat = parseOptionalMacro(fatInput);
-      const fiber = parseOptionalMacro(fiberInput);
+      const protein = parseBlankAsUnset(proteinInput);
+      const fat = parseBlankAsUnset(fatInput);
+      const fiber = parseBlankAsUnset(fiberInput);
       if (protein === null || fat === null || fiber === null) {
         setMessage('Revisa proteína, grasa y fibra: deben ser números, o quedar en blanco.');
         return;
@@ -740,16 +739,19 @@ export function MealModal({
       </Pressable>
       {macrosOpen ? (
         <View>
-          <Text style={styles.macroHint}>
-            {aiMacros === null
+          <MacroFields
+            protein={proteinInput}
+            fat={fatInput}
+            fiber={fiberInput}
+            onChange={(field, next) => {
+              if (field === 'protein') setProteinInput(next);
+              else if (field === 'fat') setFatInput(next);
+              else if (field === 'fiber') setFiberInput(next);
+            }}
+            hint={aiMacros === null
               ? 'Déjalos en blanco si no los sabes. En blanco significa “no lo anoté”, que no es lo mismo que 0 g.'
               : 'Los estimó la IA a partir de lo que identificó. Corrígelos si sabes que van desviados; queda guardado si el número es suyo o tuyo.'}
-          </Text>
-          <View style={styles.macroRow}>
-            <MacroField label="Proteína" value={proteinInput} onChange={setProteinInput} />
-            <MacroField label="Grasa" value={fatInput} onChange={setFatInput} />
-            <MacroField label="Fibra" value={fiberInput} onChange={setFiberInput} />
-          </View>
+          />
         </View>
       ) : null}
 
@@ -956,33 +958,6 @@ export function MealModal({
   );
 }
 
-function MacroField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (next: string) => void;
-}) {
-  return (
-    <View style={styles.macroField}>
-      <Text style={styles.macroLabel}>{label}</Text>
-      <View style={styles.macroInputWrap}>
-        <TextInput
-          value={value}
-          onChangeText={onChange}
-          keyboardType="decimal-pad"
-          style={styles.macroInput}
-          placeholder="—"
-          placeholderTextColor={colors.muted}
-          accessibilityLabel={`${label} en gramos`}
-        />
-        <Text style={styles.macroUnit}>g</Text>
-      </View>
-    </View>
-  );
-}
 
 const styles = StyleSheet.create({
   sectionLabel: { color: colors.navy, fontSize: 13, fontWeight: '800', letterSpacing: 0.5, marginTop: spacing.xl },
@@ -1089,21 +1064,6 @@ const styles = StyleSheet.create({
   portionCancelText: { color: colors.muted, fontSize: 13, fontWeight: '700' },
   macroToggle: { minHeight: 44, justifyContent: 'center', marginTop: spacing.md },
   macroToggleText: { color: colors.teal, fontSize: 14, fontWeight: '700' },
-  macroHint: { color: colors.muted, fontSize: 11, lineHeight: 17, marginBottom: spacing.sm },
-  macroRow: { flexDirection: 'row', gap: spacing.sm },
-  macroField: { flex: 1 },
-  macroLabel: { color: colors.muted, fontSize: 11, fontWeight: '700', marginBottom: 4 },
-  macroInputWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: radius.sm,
-    borderColor: colors.line,
-    borderWidth: 1,
-    paddingHorizontal: spacing.sm,
-  },
-  macroInput: { flex: 1, color: colors.ink, fontSize: 15, paddingVertical: spacing.md },
-  macroUnit: { color: colors.muted, fontSize: 12 },
   aiBoundary: { backgroundColor: colors.tealSoft, borderRadius: radius.md, padding: spacing.md },
   aiTitle: { color: colors.navy, fontSize: 14, fontWeight: '800' },
   aiText: { color: colors.navy, fontSize: 13, lineHeight: 19, marginTop: 4 },

@@ -7,7 +7,7 @@ _Última actualización: 2026-08-26._
 | | |
 |---|---|
 | `pnpm verify` | ✅ verde |
-| Tests | **423** — domain 284, mobile 91, ai 15, schemas 13, cgm 10, api 10 |
+| Tests | **434** — domain 284, mobile 102, ai 15, schemas 13, cgm 10, api 10 |
 | Bundle de Metro | **1.333 módulos** (línea base; un salto grande = barrel importado) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
@@ -77,12 +77,6 @@ de ahora" (`MealModal.tsx:454`); y la lista de validación previa de
 `attachEntryToReading` (`db.ts:1173-1176`) no creció con cetonas ni macros,
 aunque su comentario promete que sí.
 
-### 🟠 Sin refactor: componentes de formulario compartidos
-
-No existe `MacroFields` ni ningún componente compartido entre los cuatro
-formularios de comida. `parseNonNegativeNumber` está replicado 37 veces.
-Detalle y plan en `activeContext.md`.
-
 ### 🟡 Menores
 
 - Cetonas del acceso rápido (sin grupo) invisibles en el timeline.
@@ -114,6 +108,7 @@ reporte médico. El detalle completo vive en el historial de git
 | `macrosSource` se caía en un spread sobre un tipo que no lo declaraba, con verify en verde | el chequeo de propiedades en exceso **no aplica a un spread**: el campo se declara o se pierde |
 | Dos booleanos `hasMeal` divergentes borraron y descartaron comidas | una sola lista (`mealFields.ts`), pura y con test |
 | Precargar los macros de la IA volvió `'mixed'` toda comida analizada: "el campo tiene valor" dejó de significar "ella lo escribió" | la procedencia se compara contra el valor precargado, no contra la ausencia |
+| El mismo bloque de macros escrito seis veces; los campos del editor quedaron en ~32 pt de área tocable | `MacroFields` compartido, con `minHeight: 44` explícito |
 
 ## Redeploy del backend
 

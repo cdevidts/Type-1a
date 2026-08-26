@@ -87,8 +87,10 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
   sub-páginas son pestañas (`SummaryModal.tsx`). `BottomNav.tsx` +
   `useSwipeNavigation.ts` + `swipeOrder.ts`.
 - **Formularios de comida**: `EntryModal`, `MealModal`, `MealEditModal`,
-  `TimelineDetailModal`. Los cuatro divergen; ver `activeContext.md` antes de
-  agregarles un campo.
+  `TimelineDetailModal`. Son cuatro flujos distintos a propósito, pero **lo que
+  comparten se comparte**: `MacroFields.tsx` (el trío proteína/grasa/fibra y el
+  campo numérico de la app) y los `parseBlankAs*` de `format.ts`. Un campo
+  nuevo va ahí primero, no suelto en un modal.
 - **Gráficos**: `GlucoseChart.tsx`, `SummaryCharts.tsx` (`react-native-svg`);
   `reportExport.ts` dibuja SVG inline para el PDF.
 - `notifications.ts` — un canal de Android por tipo de alarma. Android congela

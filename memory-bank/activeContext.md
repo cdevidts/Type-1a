@@ -1,6 +1,6 @@
 # Active Context
 
-_Última actualización: 2026-08-26 (Pecado Capital 1 cerrado)._
+_Última actualización: 2026-08-26 (Pecados Capitales 1 y 2 cerrados)._
 
 ## Migración de memoria agéntica — fusionada
 
@@ -56,45 +56,33 @@ Dos cosas que se arreglaron de paso, porque salieron al unificar:
   dirección peligrosa que el comentario de `db.ts` ya nombraba, pero en el otro
   camino. Ahora los dos siguen la misma regla.
 
-## ⛔ Siguiente: Pecado Capital 2 — componentes de formulario compartidos
+## Pecado Capital 2 — cerrado
 
-Es el que más cuesta por corrida. Empezar por extraer **`MacroFields`**
-(proteína/grasa/fibra con su validación y el copy "en blanco no es 0 g") y un
-hook de parseo numérico que reemplace las 37 copias de `parseNonNegativeNumber`.
-**No** unificar los cuatro modales en uno: son flujos distintos con la misma
-materia prima.
+`src/components/MacroFields.tsx` es el trío de macros y el campo numérico de la
+app, en un solo lugar. Reemplazó **seis** copias del bloque proteína/grasa/fibra
+—`EntryModal`, `MealModal`, `MealEditModal` y **dos veces** dentro de
+`TimelineDetailModal`, un bloque de 24 líneas duplicado literalmente entre sus
+dos ramas— más cuatro componentes `Field` locales con tres variantes visuales
+del mismo input.
 
-Después, el Pecado 3: las cetonas del acceso rápido siguen invisibles en el
-timeline.
+El chequeo del blanco (`en blanco ≠ 0 g`), que estaba escrito a mano en **53
+lugares**, es ahora `parseBlankAsUnset` / `parseBlankAsUnsetPositive` /
+`parseBlankAsClear` en `format.ts`, con test. Los tres tienen nombre propio
+porque el editor invierte los sentinelas a propósito (`null` = borrar), y un
+ternario suelto no dice cuál convención sigue.
 
-## Los dos Pecados Capitales que quedan
+**Un bug de accesibilidad de paso:** los campos de `MealEditModal` estaban en
+`fontSize: 16` + `paddingVertical: spacing.sm` — unos 32 pt de área tocable,
+bajo el mínimo de 44 de `contracts/ux-checklist.md`. El componente compartido
+lo fija con `minHeight` explícito en vez de confiarlo al padding.
 
-Salieron de la misma auditoría del 2026-08-26. Son deuda de diseño que **ya
-causó bugs que llegaron al dispositivo**, no limpieza estética.
+**Lo que queda de este pecado:** los cuatro modales siguen siendo cuatro (790 +
+1.146 + 708 + 862 líneas). Eso es correcto y no se toca: son flujos distintos
+con la misma materia prima. Lo que se extrajo es lo que de verdad se repetía.
+`CatalogModal` tiene su propio `Field` y su propio trío, pero edita un alimento
+por 100 g, no una comida: es otro dominio y se deja aparte.
 
-### 2. Divergencia de los cuatro formularios de comida
-
-**Estado:** abierto. **Daño confirmado:** la Fase 21 existió *entera* porque
-"editar era más pobre que crear".
-
-```
-EntryModal.tsx            790  ┐
-MealModal.tsx           1.146  │  3.506 líneas para
-MealEditModal.tsx         708  │  "registrar o editar una comida"
-TimelineDetailModal.tsx   862  ┘
-```
-
-Cada mejora hay que hacerla cuatro veces y siempre se olvida una: el catálogo se
-alimentaba desde un camino y no del otro; los macros existían en uno solo; las
-cetonas solo en su acceso rápido. El patrón `parseNonNegativeNumber` (la regla
-"en blanco ≠ 0 g") está replicado **37 veces**.
-
-**Trabajo:** extraer componentes compartidos — empezando por `MacroFields`
-(proteína/grasa/fibra con su validación y su copy "en blanco no es 0 g") y un
-hook de parseo numérico. **No** unificar los cuatro modales en uno: son flujos
-distintos con la misma materia prima.
-
-### 3. `vitals_events` sin grupo, invisibles en el timeline
+## ⛔ Siguiente: Pecado Capital 3 — cetonas invisibles en el timeline
 
 **Estado:** parcialmente cerrado el 2026-08-26.
 
@@ -106,11 +94,11 @@ rama para ellas. Es el dato de triage de cetoacidosis.
 **Trabajo:** agregar la rama de `vitals_events` sueltas a `getTimeline`, con su
 propio `kind` de `TimelineItem`.
 
-## Regla de proceso que acompaña a los dos
+## Regla de proceso que sobrevive a los tres
 
 Antes de agregar un campo a cualquiera de los formularios de comida, **primero**
-se extrae el componente compartido. Si no, el pecado 2 se agranda con cada
-feature.
+se mira si va en `MacroFields` o en un componente compartido nuevo. Escribirlo
+suelto en un modal es cómo llegamos a tener el mismo bloque seis veces.
 
 ## Fuera de foco pero pendiente
 
