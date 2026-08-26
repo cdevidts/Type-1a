@@ -3,13 +3,14 @@
 ## Antes de cada tarea
 
 **Lee la carpeta `/memory-bank/` completa, sin excepción, antes de escribir
-una sola línea.** Son cinco archivos y se leen en este orden:
+una sola línea.** Son seis archivos y se leen en este orden:
 
 1. `projectbrief.md` — qué es la app y qué no puede hacer nunca
 2. `techContext.md` — stack inmutable, prohibiciones y comandos de validación
-3. `systemPatterns.md` — las tres Reglas de Oro y la convención de commits
-4. `activeContext.md` — en qué se está trabajando ahora
-5. `progress.md` — qué está hecho, qué está roto y qué deuda hay
+3. `systemPatterns.md` — las tres Reglas de Oro del código
+4. `workflow.md` — commits, qué skill se dispara sola, auditoría de cierre
+5. `activeContext.md` — en qué se está trabajando ahora
+6. `progress.md` — qué está hecho, qué está roto y qué deuda hay
 
 No trabajes de memoria ni asumas continuidad con una corrida anterior.
 

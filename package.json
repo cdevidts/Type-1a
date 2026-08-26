@@ -13,7 +13,8 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "verify:bundle": "cd apps/mobile && pnpm exec expo export --platform android --output-dir \"${TMPDIR:-/tmp}/type1a-bundle-check\" && rm -rf \"${TMPDIR:-/tmp}/type1a-bundle-check\"",
-    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm verify:bundle"
+    "verify:contracts": "node scripts/agentic-contracts.mjs check",
+    "verify": "pnpm verify:contracts && pnpm lint && pnpm typecheck && pnpm test && pnpm verify:bundle"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

@@ -7,9 +7,12 @@ _Última actualización: 2026-08-26._
 | | |
 |---|---|
 | `pnpm verify` | ✅ verde |
-| Tests | **372** — domain 266, mobile 68, ai 15, schemas 13, cgm 10, api 10 |
+| Tests | **382** — domain 266, mobile 68, ai 15, schemas 13, cgm 10, api 10 |
 | Bundle de Metro | **1.333 módulos** (línea base; un salto grande = barrel importado) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
+
+`pnpm verify` corre, en orden: `verify:contracts` (guard de memoria agéntica,
+<1 s), `lint`, `typecheck`, `test`, `verify:bundle` (export real de Metro).
 
 ## Entregado y en el dispositivo
 
@@ -60,8 +63,9 @@ Cuatro implementaciones divergentes de la misma regla. Detalle en
 
 - Cetonas del acceso rápido (sin grupo) invisibles en el timeline.
 - Editar una entrada no ofrece foto ni re-análisis de IA.
-- `README.md` eliminado en la migración a Memory Bank: el repo no tiene hoy una
-  puerta de entrada para un humano nuevo en GitHub.
+- `README.md` sigue en pie (63 líneas). La purga que lo iba a borrar se abortó;
+  la decisión tomada es **reescribirlo a ~30 líneas** como puerta de entrada del
+  repo en GitHub, no eliminarlo. Pendiente para la Fase 4.
 
 ## Historial de fallos que definieron las reglas
 
