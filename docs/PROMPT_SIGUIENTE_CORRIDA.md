@@ -135,6 +135,18 @@ decidir sí/no si un episodio entra a un promedio.
 - **Perfiles de EAS**: `preview` → `.apk` instalable. `production` → `.aab`,
   que **no se puede instalar** en el teléfono. Confundirlos ya costó un
   build entero.
+- **`eas-cli` se corre SIEMPRE desde `apps/mobile/`, nunca desde la raíz.**
+  Desde la raíz no encuentra el proyecto, falla, y de paso **deja un
+  `app.json` y un `eas.json` scaffold en la raíz**. Ya pasó dos veces
+  (2026-08-19 y 2026-08-26). El `eas.json` que genera es especialmente
+  traicionero: le faltan `credentialsSource: "local"` y `buildType: "apk"`,
+  así que si alguien lo commitea, el build siguiente sale `.aab` y con las
+  credenciales equivocadas. Los dos están en `.gitignore` desde el
+  2026-08-26, pero el error de directorio sigue costando un intento.
+- **El watcher del build**: `eas-cli build:view <id> --json` funciona;
+  `--non-interactive` **no existe** en `build:view` y hace fallar el comando
+  en silencio. Un watcher con ese flag esperó 45 minutos sobre un build que
+  ya había terminado.
 - **Qué necesita build y qué no**: el corte NO es "toca notificaciones". Es
   **drawables / `app.json` / config plugin ⇒ build**, contra **API de
   runtime ⇒ OTA**. Canales, sonido, vibración, color, título y prioridad son

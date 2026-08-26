@@ -19,3 +19,11 @@ android/app/build/
 ios/Pods/
 *.apk
 *.aab
+
+# Basura de `eas-cli` corrido desde la raíz por error (pasó dos veces: 2026-08-19
+# y 2026-08-26). La configuración de Expo vive SOLO en `apps/mobile/`; la que
+# el CLI genera acá es un scaffold genérico **sin** `credentialsSource: "local"`
+# ni `buildType: "apk"`, así que si se commiteara, un build futuro saldría
+# `.aab` (no instalable) y con las credenciales equivocadas.
+/app.json
+/eas.json
