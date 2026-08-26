@@ -124,6 +124,7 @@ reporte médico. El detalle completo vive en el historial de git
 | `.positive()` en un esquema rompió un caso legítimo una corrida después | Regla 3, hermana |
 | `eas-cli` desde la raíz dejó `app.json`/`eas.json` basura (2 veces) | correr desde `apps/mobile/` |
 | Una purga de docs dejó ciegos a 5 de 7 activos de `.claude/` sin un solo error | `verify:contracts` |
+| Un documento de arquitectura abandonado en el código indujo a error a varias corridas | ADR en la misma corrida que el cambio (0004) |
 | El inventario de esa purga solo miraba `.claude/`: el código citaba 17 docs más | el guard escanea **todo** el repo, código incluido |
 
 ## Redeploy del backend

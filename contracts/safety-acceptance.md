@@ -2,9 +2,10 @@
 
 > **Capa 1 · consumido por** `domain-safety-reviewer`, `/safety-audit`
 > Imperativo, sin historia. El porqué de cada regla vive en `AGENTS.md`.
-
-Un cambio que viole cualquiera de estos puntos es un **hallazgo de seguridad
-del paciente**, no una observación de estilo.
+> Contiene los ocho criterios del brief original (tag `archive/pre-memory-bank`,
+> §Safety acceptance criteria) verificados uno por uno, más los que salieron de
+> revisiones posteriores. Violar cualquiera es un **hallazgo de seguridad del
+> paciente**, no una observación de estilo.
 
 ## Dosis y parámetros de terapia
 
@@ -45,9 +46,8 @@ del paciente**, no una observación de estilo.
 ## Secretos y privacidad
 
 - [ ] Ninguna clave `ABACUS_*`, `JUNCTION_*` ni material de firma aparece en
-      `apps/mobile`, en logs, ni en cuerpos de request.
-- [ ] No se loguean cuerpos con glucosa, insulina, comida, imágenes ni
-      parámetros de terapia.
+      `apps/mobile`, en logs, ni en cuerpos de request. Tampoco se loguean
+      cuerpos con glucosa, insulina, comida, imágenes ni parámetros de terapia.
 
 ## Cobertura
 
