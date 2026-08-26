@@ -20,9 +20,12 @@ herramientas.
 
 Lee, en este orden, y no de memoria:
 
-1. [`docs/UX_GUIDELINES.md`](../../../docs/UX_GUIDELINES.md) — el checklist del
-   inicio es obligatorio para cualquier pantalla nueva o revisada. Traduce las
-   Apple HIG y prácticas de apps de salud a reglas contra el código real.
+1. [`contracts/ux-checklist.md`](../../../contracts/ux-checklist.md) — el
+   checklist es obligatorio para cualquier pantalla nueva o revisada, y trae
+   además las reglas no negociables y las de texto que toca seguridad. Si
+   necesitas el **porqué** (escalas tipográficas, espaciado, fuentes), está en
+   `docs/UX_GUIDELINES.md` — pero el contrato es lo que se verifica, y es lo
+   único que hace falta leer para una pantalla que sigue el patrón existente.
 2. [`apps/mobile/src/theme.ts`](../../../apps/mobile/src/theme.ts) — los tokens
    reales: `colors`, `spacing`, `radius`, `glucoseBands`. **No inventes un
    `fontSize`, un color hex ni un padding suelto** si ya hay un token.
@@ -53,30 +56,15 @@ Lee, en este orden, y no de memoria:
 
 ## 2. Gráficos y visualización de datos
 
-Antes de escribir código de gráfico, **carga la skill global `dataviz`** — trae
-el método completo (elegir la forma, asignar color por su trabajo, validar,
-especificaciones de marca, anti-patrones). Lo que sigue es cómo ese método ya
-quedó instanciado en este repo; no lo re-derives:
+Antes de escribir código de gráfico:
 
-- **Motor**: `react-native-svg` en la app, SVG inline en el PDF
-  (`src/reportExport.ts`). No agregues una librería de gráficos.
-- **Paleta de bandas de glucosa**: `glucoseBands` en `theme.ts`. Ya está
-  validada con `scripts/validate_palette.js` de la skill `dataviz`; está
-  documentada ahí cuál es el único FAIL aceptado a conciencia y por qué. **No
-  la cambies sin volver a correr el validador** y actualizar ese comentario.
-- **Un solo eje.** Nunca dos escalas Y en el mismo gráfico. Dos medidas de
-  escala distinta = dos gráficos.
-- **Grilla y ejes recesivos** (`colors.line`, `colors.muted`), marcas finas, y
-  el dato con el peso visual.
-- **Leyenda siempre que haya más de una serie**; una sola serie no necesita
-  caja de leyenda (el título la nombra).
-- **Umbrales clínicos vienen de `packages/domain`**
-  (`glucose-thresholds.ts`: 54/70/180/250 mg/dL). Nunca los redeclares en un
-  componente.
-- **Formato clínico estándar antes que uno propio.** Para perfiles de glucosa
-  usa el formato AGP (mediana + p25–p75 + p05–p95 sobre 24 h), que es lo que
-  ya leen LibreView, Dexcom Clarity y un equipo médico. Ver
-  `packages/domain/src/agp.ts`.
+1. **Carga la skill global `dataviz`** — trae el método completo (elegir la
+   forma, asignar color por su trabajo, validar, especificaciones de marca,
+   anti-patrones).
+2. Lee [`contracts/dataviz-palette.md`](../../../contracts/dataviz-palette.md)
+   — es cómo ese método **ya quedó instanciado en este repo** (motor, reglas de
+   forma, reglas de seguridad de la paleta). No lo re-derives ni lo negocies
+   cada vez: el contrato es lo que se verifica.
 
 ## 3. Dónde vive el cálculo
 
@@ -113,7 +101,7 @@ strings visibles son parte de la superficie de seguridad, no decoración:
 
 ## 5. Antes de dar por terminado
 
-1. Repasa el checklist de `docs/UX_GUIDELINES.md` contra tu pantalla.
+1. Repasa el checklist de `contracts/ux-checklist.md` contra tu pantalla.
 2. `pnpm verify`.
 3. Si tocaste `packages/domain` o cualquier texto que hable de dosis, corre el
    subagente `domain-safety-reviewer`.

@@ -34,12 +34,14 @@ Scaffold a new `CGMProvider` implementation for Type 1A.
    wired — never read `process.env` directly elsewhere, and never let its
    credentials reach `apps/mobile`.
 
-6. Update docs in the same change:
-   - `docs/CODE_MAP.md` — add the new file under "packages/cgm — proveedores de
-     glucosa".
-   - `docs/CGM_INTEGRATION_DECISION.md` — add a row/section explaining why this
-     provider was added and where it sits in the fallback ladder, following the
-     existing table format.
+6. Update the agentic memory in the same change:
+   - `contracts/cgm-provider.md` — add a row to the provider table and follow
+     its rules checklist. This contract is your input: read it before writing
+     the provider, not after.
+   - `docs/CODE_MAP.md` — add the new file under "packages/cgm".
+   - `docs/adr/` — a new ADR **only** if this changes which provider is the
+     production data path. ADRs are append-only: never renumber, never delete,
+     mark a superseded one with `status:` instead.
 
 7. Run `pnpm --filter @type1a/cgm typecheck && pnpm --filter @type1a/cgm test`
    (or the `/verify` skill for the full suite) before considering this done.

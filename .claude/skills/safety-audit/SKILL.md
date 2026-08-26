@@ -12,8 +12,8 @@ Audit pending changes against `AGENTS.md` before they're considered done.
 2. Delegate the actual review to the **domain-safety-reviewer** subagent
    (`.claude/agents/domain-safety-reviewer.md`), passing it the diff or the list
    of changed files. That agent is read-only and checks specifically against
-   `AGENTS.md` and the Safety acceptance criteria in
-   `docs/MVP_IMPLEMENTATION_BRIEF.md`.
+   `AGENTS.md` and `contracts/safety-acceptance.md` — those two files are the
+   whole checklist, and neither is optional.
 
 3. If the diff doesn't touch `packages/domain`, `packages/ai`, `packages/cgm`,
    `apps/api/src/config.ts`, or `.env`-related files, say so and skip the

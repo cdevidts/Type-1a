@@ -1,0 +1,185 @@
+{
+  "$comment": "Generado por scripts/agentic-contracts.mjs scan. Declara qué documento consume cada activo agéntico. `pnpm verify` falla si una ruta declarada no existe o si un activo referencia algo no declarado.",
+  "generatedAt": "2026-08-26",
+  "budgets": {
+    "layer0": 100,
+    "contract": 60,
+    "memory": 150
+  },
+  "dependencies": [
+    {
+      "target": "AGENTS.md",
+      "consumers": [
+        {
+          "asset": ".claude/agents/domain-safety-reviewer.md",
+          "kind": "hard-read",
+          "lines": [
+            3
+          ]
+        },
+        {
+          "asset": ".claude/agents/domain-safety-reviewer.md",
+          "kind": "citation",
+          "lines": [
+            8,
+            14,
+            46
+          ]
+        },
+        {
+          "asset": ".claude/skills/new-cgm-provider/SKILL.md",
+          "kind": "citation",
+          "lines": [
+            19
+          ]
+        },
+        {
+          "asset": ".claude/skills/safety-audit/SKILL.md",
+          "kind": "citation",
+          "lines": [
+            3,
+            6
+          ]
+        },
+        {
+          "asset": ".claude/skills/safety-audit/SKILL.md",
+          "kind": "hard-read",
+          "lines": [
+            15
+          ]
+        },
+        {
+          "asset": ".claude/skills/ui-screen/SKILL.md",
+          "kind": "citation",
+          "lines": [
+            47
+          ]
+        }
+      ]
+    },
+    {
+      "target": "contracts/cgm-provider.md",
+      "consumers": [
+        {
+          "asset": ".claude/skills/new-cgm-provider/SKILL.md",
+          "kind": "write",
+          "lines": [
+            38
+          ]
+        }
+      ]
+    },
+    {
+      "target": "contracts/dataviz-palette.md",
+      "consumers": [
+        {
+          "asset": ".claude/skills/ui-screen/SKILL.md",
+          "kind": "hard-read",
+          "lines": [
+            64,
+            64
+          ]
+        }
+      ]
+    },
+    {
+      "target": "contracts/safety-acceptance.md",
+      "consumers": [
+        {
+          "asset": ".claude/agents/domain-safety-reviewer.md",
+          "kind": "hard-read",
+          "lines": [
+            3,
+            15
+          ]
+        },
+        {
+          "asset": ".claude/agents/domain-safety-reviewer.md",
+          "kind": "citation",
+          "lines": [
+            20
+          ]
+        },
+        {
+          "asset": ".claude/skills/safety-audit/SKILL.md",
+          "kind": "hard-read",
+          "lines": [
+            15
+          ]
+        }
+      ]
+    },
+    {
+      "target": "contracts/ux-checklist.md",
+      "consumers": [
+        {
+          "asset": ".claude/skills/app-shell/SKILL.md",
+          "kind": "hard-read",
+          "lines": [
+            43,
+            124
+          ]
+        },
+        {
+          "asset": ".claude/skills/ui-screen/SKILL.md",
+          "kind": "hard-read",
+          "lines": [
+            23,
+            23,
+            104
+          ]
+        }
+      ]
+    },
+    {
+      "target": "docs/AI_CHAT_ARCHITECTURE.md",
+      "consumers": [
+        {
+          "asset": ".claude/skills/ui-screen/SKILL.md",
+          "kind": "write",
+          "lines": [
+            109
+          ]
+        }
+      ]
+    },
+    {
+      "target": "docs/CODE_MAP.md",
+      "consumers": [
+        {
+          "asset": ".claude/skills/app-shell/SKILL.md",
+          "kind": "citation",
+          "lines": [
+            128
+          ]
+        },
+        {
+          "asset": ".claude/skills/new-cgm-provider/SKILL.md",
+          "kind": "citation",
+          "lines": [
+            41
+          ]
+        },
+        {
+          "asset": ".claude/skills/ui-screen/SKILL.md",
+          "kind": "write",
+          "lines": [
+            108
+          ]
+        }
+      ]
+    },
+    {
+      "target": "docs/UX_GUIDELINES.md",
+      "consumers": [
+        {
+          "asset": ".claude/skills/ui-screen/SKILL.md",
+          "kind": "citation",
+          "lines": [
+            27
+          ]
+        }
+      ]
+    }
+  ]
+}

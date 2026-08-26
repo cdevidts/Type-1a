@@ -40,7 +40,7 @@ Reglas:
   `paddingBottom` suficiente para que la barra no tape la última tarjeta.
 - **El botón central es la acción primaria** y tiene que verse único — más
   grande, con fondo de color. Los otros cuatro son iconos recesivos. Esto es
-  la regla de "una acción dominante" de `docs/UX_GUIDELINES.md`.
+  la regla de "una acción dominante" de `contracts/ux-checklist.md`.
 - **44×44 pt mínimo** de área tocable en los cinco, `hitSlop` incluido.
 - **Ningún destino se comunica solo con color**: el estado activo lleva
   además un cambio de peso/opacidad o una etiqueta.
@@ -58,8 +58,7 @@ de los botones del sistema y es intocable.
   `insets.bottom` al padding inferior de la barra.
 - **`SafeAreaView` de `react-native` es iOS-only** y en Android no aplica
   ningún inset. Este bug ya nos costó una corrida entera: dejaba el botón
-  "Cerrar" de todos los modales tapado por la hora y la batería. Ver
-  `docs/ROADMAP_V0.2.md` § Fase 13, ítem 3.
+  "Cerrar" de todos los modales tapado por la hora y la batería.
 - No intentes ocultar la barra del sistema. Esconderla y reaparecerla con el
   scroll es un patrón que pelea con el gesto de volver atrás de Android y que
   los usuarios no esperan. Convivir con ella (respetando su inset) es lo
@@ -122,7 +121,7 @@ darlo por hecho — eso fue lo que dejó pasar el bug una corrida entera.
 
 ## Antes de dar por terminado
 
-1. Checklist de `docs/UX_GUIDELINES.md`.
+1. Checklist de `contracts/ux-checklist.md`.
 2. Probar con la barra de navegación de Android **visible** (tres botones) y
    en modo gestos: son dos insets distintos.
 3. `pnpm verify`.
