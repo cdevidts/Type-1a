@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { insulinNameForType, resolveInsulinNameForEdit } from '../src/index';
+import { insulinNameForType, insulinPurposeForEntry, resolveInsulinNameForEdit, resolveInsulinPurposeForEdit } from '../src/index';
 
 /**
  * El nombre de la insulina dejó de ser un campo de texto por registro.
@@ -120,5 +120,49 @@ describe('resolveInsulinNameForEdit', () => {
       nextType: 'rapid',
       profile: { rapidInsulinName: 'Lyumjev' },
     })).toBe('Humalog');
+  });
+});
+
+describe('insulinPurposeForEntry', () => {
+  it('deriva los tres propósitos descriptivos posibles de una rápida', () => {
+    expect(insulinPurposeForEntry('rapid', true, false)).toBe('meal');
+    expect(insulinPurposeForEntry('rapid', true, true)).toBe('combined');
+    expect(insulinPurposeForEntry('rapid', false, true)).toBe('correction');
+  });
+
+  it('una basal nunca conserva propósito de comida o corrección', () => {
+    expect(insulinPurposeForEntry('basal', true, true)).toBeUndefined();
+    expect(insulinPurposeForEntry('basal', false, false)).toBeUndefined();
+  });
+});
+
+describe('resolveInsulinPurposeForEdit', () => {
+  it('editar una rápida sin cambiar el tipo conserva combined aunque el formulario no lo recuerde', () => {
+    expect(resolveInsulinPurposeForEdit({
+      existingPurpose: 'combined',
+      previousType: 'rapid',
+      nextType: 'rapid',
+      hasMeal: true,
+      includesCorrection: false,
+    })).toBe('combined');
+  });
+
+  it('rápida → basal elimina cualquier propósito anterior', () => {
+    expect(resolveInsulinPurposeForEdit({
+      existingPurpose: 'meal',
+      previousType: 'rapid',
+      nextType: 'basal',
+      hasMeal: true,
+      includesCorrection: true,
+    })).toBeUndefined();
+  });
+
+  it('basal → rápida deriva el propósito del contenido nuevo', () => {
+    expect(resolveInsulinPurposeForEdit({
+      previousType: 'basal',
+      nextType: 'rapid',
+      hasMeal: true,
+      includesCorrection: true,
+    })).toBe('combined');
   });
 });

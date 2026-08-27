@@ -92,6 +92,61 @@ describe('buildReportRows', () => {
     expect(row!.detail).toContain('38 g estimados por IA');
   });
 
+  it('does not report a meal and its confirmed-carb mirror as two consumptions', () => {
+    const timestamp = '2026-08-18T13:00:00.000Z';
+    const meal: MealEvent = {
+      id: 'm1', timestamp, confirmedCarbsG: 45, createdAt: timestamp,
+    };
+    const mirror: CarbEvent = {
+      id: 'c1', timestamp, carbsG: 45, source: 'meal_confirmed', createdAt: timestamp,
+    };
+
+    const rows = buildReportRows({ ...EMPTY_INPUT, meals: [meal], carbs: [mirror] });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.kind).toBe('meal');
+  });
+
+  it('keeps an orphan confirmed-carb mirror visible rather than hiding data', () => {
+    const timestamp = '2026-08-18T13:00:00.000Z';
+    const mirror: CarbEvent = {
+      id: 'c1', timestamp, carbsG: 45, source: 'meal_confirmed', createdAt: timestamp,
+    };
+
+    const rows = buildReportRows({ ...EMPTY_INPUT, carbs: [mirror] });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.kind).toBe('carbs');
+  });
+
+  it('does not hide an orphan mirror behind another meal at the same time', () => {
+    const timestamp = '2026-08-18T13:00:00.000Z';
+    const mealWithoutCarbs: MealEvent = { id: 'm1', timestamp, createdAt: timestamp };
+    const orphanMirror: CarbEvent = {
+      id: 'c1', timestamp, carbsG: 45, source: 'meal_confirmed', createdAt: timestamp,
+    };
+
+    const rows = buildReportRows({
+      ...EMPTY_INPUT,
+      meals: [mealWithoutCarbs],
+      carbs: [orphanMirror],
+    });
+
+    expect(rows.map((row) => row.kind).sort()).toEqual(['carbs', 'meal']);
+  });
+
+  it('pairs mirrors one-to-one when duplicate timestamps collide', () => {
+    const timestamp = '2026-08-18T13:00:00.000Z';
+    const meal: MealEvent = { id: 'm1', timestamp, confirmedCarbsG: 45, createdAt: timestamp };
+    const mirrors: CarbEvent[] = ['c1', 'c2'].map((id) => ({
+      id, timestamp, carbsG: 45, source: 'meal_confirmed', createdAt: timestamp,
+    }));
+
+    const rows = buildReportRows({ ...EMPTY_INPUT, meals: [meal], carbs: mirrors });
+
+    expect(rows.map((row) => row.kind).sort()).toEqual(['carbs', 'meal']);
+  });
+
   it('describes an insulin dose without ever implying the purpose fed a calculation', () => {
     const [row] = buildReportRows({
       ...EMPTY_INPUT,

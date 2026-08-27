@@ -128,7 +128,6 @@ import {
   saveUnifiedEntry,
   saveVitalsEvent,
   setSetting,
-  promoteEventToEntryGroup,
   updateMealFromEdit,
   updateUnifiedEntryGroup,
   upsertCGMReadings,
@@ -622,11 +621,6 @@ function Type1AApp() {
       ...(draft.fatG === undefined ? {} : { fatG: draft.fatG }),
       ...(draft.fiberG === undefined ? {} : { fiberG: draft.fiberG }),
       ...(draft.macrosSource === undefined ? {} : { macrosSource: draft.macrosSource }),
-      // Un carbo venido del catálogo conserva su procedencia de IA. Solo si no
-      // hubo análisis propio, que ya escribió el suyo más arriba.
-      ...(draft.catalogSuggestedCarbsG === undefined || draft.analysis !== undefined
-        ? {}
-        : { aiEstimatedCarbsG: draft.catalogSuggestedCarbsG }),
     };
     // Fase 21: "solo al catálogo" corta acá. No se escribe `meal_events`, no
     // se crea episodio y no se programan alarmas — es cargar un alimento sin
@@ -1091,9 +1085,14 @@ function Type1AApp() {
       // `attachEntryToReading`, no esta capa.
       outcome = await attachEntryToReading(db, target.readingId, input);
     } else {
-      // Promoción: idempotente, así que un doble toque no acuña dos grupos.
-      const entryGroupId = await promoteEventToEntryGroup(db, target.table, target.rowId);
-      outcome = await updateUnifiedEntryGroup(db, entryGroupId, input);
+      // La promoción y la edición son una sola transacción: si cualquier
+      // escritura falla, el evento tampoco queda atrapado en un grupo vacío.
+      outcome = await updateUnifiedEntryGroup(
+        db,
+        null,
+        input,
+        { table: target.table, rowId: target.rowId },
+      );
     }
 
     // Primero cancelar lo que dejó de describir la realidad, después

@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { z } from 'zod';
 
-import { applyCatalogEdit, blendCatalogEntry, convertGlucose, foodKey, insulinNameForType, isPlausibleCatalogEntry, planMySugrImport, resolveInsulinNameForEdit, type CatalogFood, type CatalogFoodEdit } from '@type1a/domain';
+import { applyCatalogEdit, blendCatalogEntry, convertGlucose, foodKey, insulinNameForType, insulinPurposeForEntry, isPlausibleCatalogEntry, planMySugrImport, resolveInsulinNameForEdit, resolveInsulinPurposeForEdit, type CatalogFood, type CatalogFoodEdit } from '@type1a/domain';
 import {
   ActivityEventSchema,
   CGMReadingSchema,
@@ -31,6 +31,7 @@ import {
   type VitalsEvent,
 } from '@type1a/schemas';
 
+import { withClaimedEntryGroup, type EntryGroupClaimStore, type EntryGroupClaimTarget } from './entryGroupClaim';
 import { hasMealContent, MEAL_FIELDS, promotesLooseCarbToMeal } from './mealFields';
 import { standaloneVitalsItems } from './timelineVitals';
 import { decodeRow, decodeTherapyProfileRow, safeJsonParse, tallyParsed, type DecodeTally, type TherapyProfileRead } from './rowDecode';
@@ -341,6 +342,8 @@ export async function updateInsulinEvent(
     /** Mover la dosis en el tiempo. Ausente = se queda donde está. */
     timestamp?: string;
     profileInsulinNames?: ProfileInsulinNames;
+    /** Obligatorio solo al reclasificar; una edición del mismo tipo conserva. */
+    purposeContext?: { hasMeal: boolean; includesCorrection: boolean };
   },
 ): Promise<void> {
   const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM insulin_events WHERE id = ?', id);
@@ -353,6 +356,16 @@ export async function updateInsulinEvent(
     nextType: updates.type,
     profile: updates.profileInsulinNames ?? {},
   });
+  if (existing.type !== updates.type && updates.purposeContext === undefined) {
+    throw new Error('Falta el contexto para reclasificar la insulina.');
+  }
+  const purpose = resolveInsulinPurposeForEdit({
+    existingPurpose: existing.purpose,
+    previousType: existing.type,
+    nextType: updates.type,
+    hasMeal: updates.purposeContext?.hasMeal ?? false,
+    includesCorrection: updates.purposeContext?.includesCorrection ?? false,
+  });
   const next = InsulinEventSchema.parse({
     ...existing,
     type: updates.type,
@@ -362,6 +375,7 @@ export async function updateInsulinEvent(
     // `undefined` (no hay nada configurado y no había nada guardado), tiene
     // que quedar sin nombre y no heredar el de `...existing`.
     insulinName,
+    purpose,
   });
   await db.runAsync(
     'UPDATE insulin_events SET type = ?, units = ?, timestamp = ?, payload = ? WHERE id = ?',
@@ -1298,45 +1312,68 @@ export async function promoteEventToEntryGroup(
   table: PromotableTable,
   rowId: string,
 ): Promise<string> {
-  const existing = await db.getFirstAsync<{ entry_group_id: string | null }>(
-    `SELECT entry_group_id FROM ${table} WHERE id = ?`,
-    rowId,
+  return withClaimedEntryGroup(
+    entryGroupClaimStore(db),
+    null,
+    { table, rowId },
+    () => Crypto.randomUUID(),
+    async (confirmedGroupId) => confirmedGroupId,
   );
-  if (existing === null) throw new Error('Ese registro ya no existe.');
-  if (existing.entry_group_id !== null) return existing.entry_group_id;
+}
 
-  const entryGroupId = Crypto.randomUUID();
-  await db.withTransactionAsync(async () => {
-    // El `WHERE entry_group_id IS NULL` es la guarda de idempotencia real:
-    // dos toques simultáneos leen `null` los dos, pero solo uno escribe.
-    await db.runAsync(
-      `UPDATE ${table} SET entry_group_id = ? WHERE id = ? AND entry_group_id IS NULL`,
-      entryGroupId,
-      rowId,
-    );
-    if (table === 'meal_events') {
-      // La fila espejo de carbohidratos viaja con su comida: si se quedara
-      // suelta, el timeline la dibujaría como una tarjeta aparte de la
-      // entrada recién formada.
-      const meal = await db.getFirstAsync<{ timestamp: string }>('SELECT timestamp FROM meal_events WHERE id = ?', rowId);
+/** Adaptador SQLite de la regla pura y testeable de reclamación de grupos. */
+let entryGroupTransactionTail: Promise<void> = Promise.resolve();
+
+function serializeEntryGroupTransaction(work: () => Promise<void>): Promise<void> {
+  // Dos guardados del mismo runtime no compiten por dos conexiones exclusivas
+  // (Expo documenta que el perdedor puede recibir `database is locked`). El
+  // error de uno tampoco envenena la cola: el siguiente siempre se ejecuta.
+  const run = entryGroupTransactionTail.then(work, work);
+  entryGroupTransactionTail = run.catch(() => undefined);
+  return run;
+}
+
+function entryGroupClaimStore(db: SQLiteDatabase): EntryGroupClaimStore<SQLiteDatabase> {
+  return {
+    transaction: async (work) => serializeEntryGroupTransaction(async () => {
+      // Debe ser ESTA conexión: SQLCipher recibe su PRAGMA key por conexión
+      // en initializeDatabase. Expo abre otra conexión para la variante
+      // exclusiva y esa conexión nueva no queda autenticada. La cola de arriba
+      // serializa los guardados del maestro; la transacción aporta el rollback.
+      await db.withTransactionAsync(async () => work(db));
+    }),
+    read: async (transaction, target) => {
+      const row = await transaction.getFirstAsync<{ entry_group_id: string | null }>(
+        `SELECT entry_group_id FROM ${target.table} WHERE id = ?`,
+        target.rowId,
+      );
+      return row === null ? undefined : row.entry_group_id;
+    },
+    claim: async (transaction, target, candidateGroupId) => {
+      // La tabla está cerrada por `EntryGroupClaimTable`; no acepta texto
+      // arbitrario. La condición hace idempotente el doble toque.
+      await transaction.runAsync(
+        `UPDATE ${target.table} SET entry_group_id = ? WHERE id = ? AND entry_group_id IS NULL`,
+        candidateGroupId,
+        target.rowId,
+      );
+    },
+    alignMealMirror: async (transaction, mealId, confirmedGroupId) => {
+      const meal = await transaction.getFirstAsync<{ timestamp: string }>(
+        'SELECT timestamp FROM meal_events WHERE id = ?',
+        mealId,
+      );
       if (meal !== null) {
-        await db.runAsync(
+        // Se asigna el id CONFIRMADO, incluso si otra llamada ganó. Usar el
+        // candidato propio partía comida y espejo en grupos distintos.
+        await transaction.runAsync(
           "UPDATE carb_events SET entry_group_id = ? WHERE timestamp = ? AND source = 'meal_confirmed' AND entry_group_id IS NULL",
-          entryGroupId,
+          confirmedGroupId,
           meal.timestamp,
         );
       }
-    }
-  });
-
-  const confirmed = await db.getFirstAsync<{ entry_group_id: string | null }>(
-    `SELECT entry_group_id FROM ${table} WHERE id = ?`,
-    rowId,
-  );
-  // Se devuelve lo que quedó escrito y no `entryGroupId`: si otra escritura
-  // ganó la carrera, el grupo bueno es el suyo.
-  if (confirmed?.entry_group_id == null) throw new Error('No se pudo preparar el registro para editarlo.');
-  return confirmed.entry_group_id;
+    },
+  };
 }
 
 /**
@@ -1357,8 +1394,9 @@ export async function promoteEventToEntryGroup(
  */
 export async function updateUnifiedEntryGroup(
   db: SQLiteDatabase,
-  entryGroupId: string,
+  knownEntryGroupId: string | null,
   input: UnifiedEntryInput,
+  claimTarget?: EntryGroupClaimTarget,
 ): Promise<UnifiedEntryOutcome> {
   const timestamp = input.timestamp;
   assertNotFuture(timestamp);
@@ -1380,10 +1418,15 @@ export async function updateUnifiedEntryGroup(
   // grasa, nota y análisis de IA en silencio, y el formulario decía que había
   // guardado bien.
   const hasMeal = hasMealContent(input);
-  const outcome = EMPTY_OUTCOME();
   const profileNames = input.profileInsulinNames ?? {};
 
-  await db.withTransactionAsync(async () => {
+  return withClaimedEntryGroup(
+    entryGroupClaimStore(db),
+    knownEntryGroupId,
+    claimTarget,
+    () => Crypto.randomUUID(),
+    async (entryGroupId, db) => {
+    const outcome = EMPTY_OUTCOME();
     // Mover PRIMERO, editar después: todo lo que sigue empareja la fila
     // espejo de carbohidratos y el episodio por el timestamp de la comida, y
     // hacerlo al revés dejaría media transacción emparejando por la hora
@@ -1599,6 +1642,10 @@ export async function updateUnifiedEntryGroup(
         units: reclassify.units,
         timestamp,
         profileInsulinNames: profileNames,
+        purposeContext: {
+          hasMeal,
+          includesCorrection: input.rapidIncludesCorrection === true,
+        },
       });
       if (reclassify.nextType === 'rapid') outcome.savedRapid = true;
       else outcome.savedBasal = true;
@@ -1613,7 +1660,7 @@ export async function updateUnifiedEntryGroup(
           units: input.rapidUnits,
           source: 'manual',
           createdAt: timestamp,
-          purpose: hasMeal ? (includesCorrection ? 'combined' : 'meal') : 'correction',
+          purpose: insulinPurposeForEntry('rapid', hasMeal, includesCorrection),
           ...(name === undefined ? {} : { insulinName: name }),
         }, entryGroupId);
       } else {
@@ -1692,9 +1739,8 @@ export async function updateUnifiedEntryGroup(
       && input.note === undefined && remainingVitals === null) {
       await db.runAsync('UPDATE cgm_readings SET entry_group_id = NULL WHERE id = ?', existingGlucose.id);
     }
+    return outcome;
   });
-
-  return outcome;
 }
 
 /**
@@ -1791,14 +1837,6 @@ export async function attachEntryToReading(
   // **Idempotente**: si la lectura ya es parte de un grupo se edita ese
   // grupo, no se acuña uno segundo. Antes esto lanzaba, así que un doble
   // toque terminaba en un error rojo sobre un guardado que sí correspondía.
-  const entryGroupId = row.entry_group_id ?? Crypto.randomUUID();
-  if (row.entry_group_id === null) {
-    await db.runAsync(
-      'UPDATE cgm_readings SET entry_group_id = ? WHERE id = ? AND entry_group_id IS NULL',
-      entryGroupId,
-      readingId,
-    );
-  }
   // Delegate the attachment writes to the same in-place editor used for every
   // later edit, so there's one code path (and one set of safety rules) for a
   // group's contents. It preserves the now-anchored reading because its origin
@@ -1807,14 +1845,14 @@ export async function attachEntryToReading(
   // other origin it's dropped entirely, never passed as undefined.
   const { manualGlucose, timestamp, ...rest } = input;
   const glucoseOverride = reading.origin === 'manual' && manualGlucose !== undefined ? { manualGlucose } : {};
-  return updateUnifiedEntryGroup(db, entryGroupId, {
+  return updateUnifiedEntryGroup(db, row.entry_group_id, {
     ...rest,
     ...glucoseOverride,
     // Una lectura externa fija el momento del grupo: sus adjuntos van a la
     // hora que reportó la fuente y no a otra. Solo una capilar tecleada por
     // ella se puede mover, y entonces manda el timestamp que llegue.
     timestamp: reading.origin === 'manual' ? (timestamp ?? reading.sourceTimestamp) : reading.sourceTimestamp,
-  });
+  }, { table: 'cgm_readings', rowId: readingId });
 }
 
 /**

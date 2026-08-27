@@ -35,6 +35,8 @@
  * `memory-bank/reference/clinical-sources.md`.
  */
 
+import type { InsulinEvent } from '@type1a/schemas';
+
 export type InsulinCategory = 'rapid' | 'basal';
 
 export interface CatalogInsulin {
@@ -170,6 +172,42 @@ export function insulinNameForType(
   if (name === undefined) return undefined;
   const trimmed = name.trim();
   return trimmed === '' ? undefined : trimmed;
+}
+
+/**
+ * Etiqueta descriptiva de una dosis dentro de una entrada.
+ *
+ * No participa en ningún cálculo. Centralizarla evita que una rápida
+ * reclasificada como basal conserve "comida/corrección", o que una basal
+ * convertida en rápida quede sin explicar qué registró la usuaria.
+ */
+export function insulinPurposeForEntry(
+  type: InsulinCategory,
+  hasMeal: boolean,
+  includesCorrection: boolean,
+): InsulinEvent['purpose'] {
+  if (type === 'basal') return undefined;
+  if (!hasMeal) return 'correction';
+  return includesCorrection ? 'combined' : 'meal';
+}
+
+/**
+ * Qué propósito descriptivo sobrevive a una edición de insulina.
+ *
+ * El formulario maestro no conoce el propósito histórico; por eso una
+ * edición que conserva el tipo debe conservar también la etiqueta exacta que
+ * ya estaba guardada. Solo una reclasificación explícita permite derivarla de
+ * la forma nueva de la entrada.
+ */
+export function resolveInsulinPurposeForEdit(input: {
+  existingPurpose?: InsulinEvent['purpose'] | undefined;
+  previousType: InsulinCategory;
+  nextType: InsulinCategory;
+  hasMeal: boolean;
+  includesCorrection: boolean;
+}): InsulinEvent['purpose'] {
+  if (input.previousType === input.nextType) return input.existingPurpose;
+  return insulinPurposeForEntry(input.nextType, input.hasMeal, input.includesCorrection);
 }
 
 /**

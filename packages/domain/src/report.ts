@@ -118,7 +118,27 @@ export function buildReportRows(input: ReportInput): ReportRow[] {
     });
   }
 
+  // `meal_confirmed` es la fila espejo SQL de `MealEvent.confirmedCarbsG`,
+  // no un segundo consumo. Se consume uno-a-uno por hora + gramos: usar solo
+  // la hora ocultaba un espejo huérfano detrás de otra comida sin carbos en
+  // una colisión. La comida muestra la fila rica (confirmado + estimación
+  // separada); un espejo sin pareja se conserva como dato legado/dañado.
+  const mirrorKey = (timestamp: string, carbsG: number): string => `${timestamp}\u0000${carbsG}`;
+  const unmatchedMeals = new Map<string, number>();
+  for (const meal of input.meals) {
+    if (meal.confirmedCarbsG === undefined) continue;
+    const key = mirrorKey(meal.timestamp, meal.confirmedCarbsG);
+    unmatchedMeals.set(key, (unmatchedMeals.get(key) ?? 0) + 1);
+  }
   for (const carb of input.carbs) {
+    if (carb.source === 'meal_confirmed') {
+      const key = mirrorKey(carb.timestamp, carb.carbsG);
+      const matches = unmatchedMeals.get(key) ?? 0;
+      if (matches > 0) {
+        unmatchedMeals.set(key, matches - 1);
+        continue;
+      }
+    }
     rows.push({
       timestamp: carb.timestamp,
       kind: 'carbs',

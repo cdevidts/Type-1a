@@ -55,8 +55,8 @@ Puro, determinístico, con test. **Ningún `.tsx` calcula una métrica de salud.
 | `insulin-catalog.ts` | catálogo de insulinas y su duración. Devuelve `undefined` si no está configurada — nunca un default silencioso |
 | `food-catalog.ts` | `foodKey`, `blendCatalogEntry`; misma implementación en teléfono y servidor. `imageUri` es representación del alimento, nunca base de un macro |
 | `meal-cart.ts` | el carrito multi-alimento: suma líneas y declara qué macro falta. Su total es **estimación**; confirmarlo es un acto de la usuaria |
-| `insulin-catalog.ts` § naming | `insulinNameForType`, `resolveInsulinNameForEdit` — el nombre es configuración, no un campo por registro |
-| `report.ts`, `units.ts`, `ketones.ts`, `meal.ts`, `mysugr-import.ts` | reporte, conversión, cetonas, comida, importación |
+| `insulin-catalog.ts` § naming/purpose | nombre por configuración y propósito descriptivo coherente al reclasificar. Nunca calcula dosis |
+| `report.ts`, `units.ts`, `ketones.ts`, `meal.ts`, `mysugr-import.ts` | reporte (deduplica el espejo de una comida), conversión, cetonas, comida, importación |
 
 ## `packages/cgm`
 
@@ -127,6 +127,10 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
 - `entryTime.ts` — días, meses y la hora de un registro histórico. Puro porque
   "cuándo pasó" es la columna que agrupa episodios y recorta ventanas, y sus
   casos son de calendario (fin de mes, año, medianoche), no de pantalla.
+- `entryGroupClaim.ts` — promoción + edición como una sola transacción:
+  relectura del grupo ganador, alineación del espejo y rollback conjunto. Puro
+  y con tests de fallo, idempotencia y carrera; `db.ts` aporta el adaptador
+  SQLite serializado sobre la conexión SQLCipher ya autenticada.
 - En `db.ts`: `promoteEventToEntryGroup` (evento suelto → grupo, idempotente y
   sin perder identidad), `moveEntryGroupRows` (mover la hora, sin tocar
   `ingestedAt` ni una lectura externa) y `applyVitalsPatchRows` (parche, no
