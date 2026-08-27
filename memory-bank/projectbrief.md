@@ -59,15 +59,22 @@ Decisión de producto de los fundadores. **No se negocia por corrida.**
 - **La edición es retroactiva y sin límite de tipo.** Editar una glucosa
   aislada tiene que permitir agregarle una comida después. El tipo con el que
   se creó un evento no restringe lo que se le puede sumar más tarde.
-- **Las herramientas potentes aparecen condicionalmente.** Si el evento ya
-  tiene comida, el modal muestra la edición de comida con IA; si no, no la
-  ofrece. Condicional por contenido, nunca por qué botón la abrió.
+- **Las herramientas potentes aparecen por contenido, y están siempre
+  disponibles.** Si el evento ya tiene comida, el modal hospeda su editor con
+  IA; si **no** la tiene, la sección de comida ofrece igual foto, IA, catálogo
+  y carrito para **añadirla**. La regla vieja —"si no tiene comida, no se
+  ofrece"— era el hueco central: editar una glucosa de anteayer solo daba un
+  formulario básico, así que agregarle lo que se comió obligaba a rehacer el
+  registro. Lo que decide el contenido es **qué sección arranca abierta**, no
+  qué se puede agregar.
 - **Antes de agregar una capacidad a un modal, se audita dónde más vive.** El
   Modal Maestro se construye consolidando lo mejor de los cuatro formularios
   actuales, no escribiendo un quinto.
 
-Lo que ya está en esa dirección: `MacroFields.tsx` (el trío de macros y el
-campo numérico, compartidos) y `resolveMacrosSource` en `packages/domain`.
+Lo que sostiene esa arquitectura hoy: `UnifiedEntryModal` como componente
+único de creación y edición, `masterModal.ts` con sus reglas puras y con test,
+`MacroFields.tsx` y `MealCart.tsx` compartidos por los tres flujos de comida, y
+`resolveMacrosSource` en `packages/domain` como única voz sobre la procedencia.
 
 ## Estado del producto
 

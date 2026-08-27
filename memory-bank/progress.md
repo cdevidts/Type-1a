@@ -1,15 +1,22 @@
 # Progress
 
-_Última actualización: 2026-08-26._
+_Última actualización: 2026-08-27._
 
 ## Estado de validación
 
 | | |
 |---|---|
 | `pnpm verify` | ✅ verde |
-| Tests | **466** — domain 291, mobile 127, ai 15, schemas 13, cgm 10, api 10 |
-| Bundle de Metro | **1.333 módulos** (línea base; un salto grande = barrel importado) |
+| Tests | **591** — domain 322, mobile 221, ai 15, schemas 13, cgm 10, api 10 |
+| Bundle de Metro | **1.350 módulos** (línea base; un salto grande = barrel importado) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
+
+⚠️ La línea base del bundle que decía este archivo (**1.333**) llevaba tiempo
+desactualizada: medida el 2026-08-27 **antes** de tocar nada, la rama base
+exportaba **1.341**. Los 9 módulos que suma esta corrida son iconos de Lucide
+por subpath (`pencil`, `x`, `chevron-left`, `chevron-right`, `search`) y los
+cinco módulos nuevos; ningún barrel. Si el número vuelve a divergir, la medición
+manda sobre la tabla.
 
 `pnpm verify` corre, en orden: `verify:contracts` (guard de memoria agéntica,
 <1 s), `lint`, `typecheck`, `test`, `verify:bundle` (export real de Metro).
@@ -79,7 +86,15 @@ aunque su comentario promete que sí.
 
 ### 🟡 Menores
 
-- Editar una entrada no ofrece foto ni re-análisis de IA.
+- La UI del Modal Maestro no tiene tests de render: la infraestructura del repo
+  no monta React. Cada decisión suya se extrajo a un módulo puro con test
+  (`masterModal.ts`, `entryTime.ts`, `mealCarbMirror.ts`, `mealFields.ts`,
+  `meal-cart.ts`), que es la salida que pide `AGENTS.md`, pero el cableado
+  entre esas reglas y los campos en pantalla sigue verificándose a mano.
+- Las escrituras de `db.ts` tampoco tienen test: ese módulo importa nativos de
+  Expo. `promoteEventToEntryGroup`, `moveEntryGroupRows` y `applyVitalsPatchRows`
+  son transaccionales y están comentadas, pero su comportamiento se comprobó
+  leyendo el diff, no ejecutándolo.
 - `README.md` sigue en pie (63 líneas). La purga que lo iba a borrar se abortó;
   la decisión tomada es **reescribirlo a ~30 líneas** como puerta de entrada del
   repo en GitHub, no eliminarlo. Pendiente para la Fase 4.
@@ -116,6 +131,12 @@ reporte médico. El detalle completo vive en el historial de git
 | Un modal por combinación (basal, cetonas, entrada) trajo tres copias del mismo formulario | la variante es **qué sección arranca abierta**, no qué componente se monta |
 | `kind === 'meal'` dejaba a una comida empaquetada fuera de su propio editor con IA | las herramientas aparecen por **contenido**, no por tipo del ítem |
 | El catálogo vivía dentro de `MealModal`, así que "Nueva entrada" no podía reusar un alimento guardado | una facultad que solo tiene un camino es una asimetría, no una simplificación: se extrae y la montan los dos |
+| Una comida sin grupo se veía dos veces: su tarjeta y la de su fila espejo de carbohidratos | el filtro de duplicados se empareja con el hecho, no con el `entry_group_id`; y un espejo huérfano se muestra, porque es la única copia que queda |
+| Un formulario de edición por tipo codificaba "una insulina solo edita unidades" | hay **un** payload de edición; lo que decide el tipo es dónde aterriza (`masterTargetOf`), no qué se puede guardar |
+| `updateInsulinEvent` asignaba `insulinName` incondicionalmente y cada guardado del grupo lo borraba | el nombre es configuración, y quién lo resuelve es una función de dominio con test, no el llamador de turno |
+| Editar un carbohidrato suelto lo convertía en comida —con episodio y tres alarmas— solo por guardarlo | los gramos son comida al **crear**; al **editar**, se vuelve comida cuando se agrega algo que solo una comida tiene |
+| Promover un evento a grupo lo dibujaba como "Entrada registrada" aunque siguiera siendo una sola cosa | un grupo de una pieza se emite con su tipo nativo: agrupar es una decisión de datos, "entrada" es una de presentación |
+| Mover la hora de una comida sumaba tres alarmas nuevas a las tres viejas | cancelar va **antes** de programar, siempre; al revés la cancelación se lleva lo recién creado |
 
 ## Redeploy del backend
 

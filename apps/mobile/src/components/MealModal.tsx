@@ -5,9 +5,11 @@ import { Image, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'rea
 
 import {
   calculateMealBolus,
+  cartLineGrams,
   catalogEntryFromPortion,
   resolveMacrosSource,
   scaleCatalogFood,
+  type CartLine,
   type CatalogFood,
 } from '@type1a/domain';
 import type { MealAnalysisResult } from '@type1a/schemas';
@@ -16,7 +18,7 @@ import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api
 import { parseBlankAsUnset, parseNonNegativeNumber, parsePositiveNumber } from '../format';
 import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
-import { CatalogQuickAdd, type CatalogPortion } from './CatalogQuickAdd';
+import { MealCart } from './MealCart';
 import { MacroFields } from './MacroFields';
 import { ModalShell } from './ModalShell';
 
@@ -140,7 +142,7 @@ export function MealModal({
   const [confirmedCarbs, setConfirmedCarbs] = useState('');
   const [busy, setBusy] = useState(false);
   const [macrosOpen, setMacrosOpen] = useState(false);
-  const [catalogResetToken, setCatalogResetToken] = useState(0);
+  const [cartLines, setCartLines] = useState<CartLine[]>([]);
   const [registerToTimeline, setRegisterToTimeline] = useState(true);
   const [saveToCatalog, setSaveToCatalog] = useState(true);
   const [rapidInput, setRapidInput] = useState('');
@@ -197,11 +199,9 @@ export function MealModal({
     setFiberInput('');
     setAiMacros(null);
     setMacrosOpen(false);
-    // Remonta `CatalogQuickAdd`, que es donde vive ahora el alimento a medio
-    // elegir. Un `key` nuevo garantiza que no quede nada de la comida
-    // anterior: heredar los números de la comida previa ya costó una corrida
-    // en este mismo modal.
-    setCatalogResetToken((previous) => previous + 1);
+    // El carrito se vacía: heredar los alimentos de la comida anterior ya
+    // costó una corrida en este mismo modal.
+    setCartLines([]);
     setCatalogSuggestedCarbsG(null);
     setAppliedCatalog(null);
     setCatalogQuestion(null);
@@ -296,7 +296,7 @@ export function MealModal({
   /**
    * Qué hace esta pantalla con una porción del catálogo.
    *
-   * La elección y el escalado los resuelve `CatalogQuickAdd`; acá solo se
+   * La elección y el escalado los resuelve `MealCart`; acá solo se
    * decide dónde aterriza. Los carbohidratos **no** se escriben en el campo de
    * confirmación: se recuerda de dónde salió la sugerencia. Sin eso, si ella
    * transcribe el número sin haber sacado foto, la comida queda sin
@@ -304,14 +304,21 @@ export function MealModal({
    * IA— se vuelve indistinguible de uno pesado en balanza, tanto para ella
    * como para el reporte al médico.
    */
-  function applyCatalogPortion(portion: CatalogPortion): void {
-    setProteinInput(String(portion.proteinG));
-    setFatInput(String(portion.fatG));
-    setFiberInput(String(portion.fiberG));
-    setAiMacros({ proteinG: portion.proteinG, fatG: portion.fatG, fiberG: portion.fiberG });
+  function applyCart(totals: { carbsG: number; proteinG: number; fatG: number; fiberG: number; caloriesKcal: number }): void {
+    setProteinInput(String(totals.proteinG));
+    setFatInput(String(totals.fatG));
+    setFiberInput(String(totals.fiberG));
+    setAiMacros({ proteinG: totals.proteinG, fatG: totals.fatG, fiberG: totals.fiberG });
     setMacrosOpen(true);
-    setCatalogSuggestedCarbsG(portion.carbsG);
-    setAppliedCatalog({ food: portion.food, grams: portion.grams });
+    setCatalogSuggestedCarbsG(totals.carbsG);
+    // **La pregunta de tres salidas solo aplica a un alimento.** Con una sola
+    // línea, una corrección de los macros es inequívocamente de ese alimento
+    // y ofrecer "corregir el alimento / guardar variante / solo esta comida"
+    // tiene sentido. Con dos o más, la diferencia no se puede atribuir a
+    // ninguno en concreto, y atribuírsela corrompería el catálogo en
+    // silencio: `appliedCatalog` queda en `null` y la pregunta no aparece.
+    const only = cartLines.length === 1 ? cartLines[0] : undefined;
+    setAppliedCatalog(only === undefined ? null : { food: only.food, grams: cartLineGrams(only) });
   }
 
   async function analyzeFromDescription(): Promise<void> {
@@ -579,10 +586,26 @@ export function MealModal({
         </View>
       )}
 
-      <CatalogQuickAdd
-        key={catalogResetToken}
+      {/*
+        El carrito multi-alimento. Reemplaza al picker de un alimento por vez:
+        elegir el segundo borraba al primero, así que un sándwich obligaba a
+        sumar de cabeza o a registrar tres comidas.
+      */}
+      <MealCart
         foods={catalogFoods}
-        onApply={applyCatalogPortion}
+        lines={cartLines}
+        onChange={(next) => {
+          setCartLines(next);
+          // Cambiar el carrito invalida la atribución al alimento único y
+          // cualquier dosis calculada con el total anterior.
+          setAppliedCatalog(null);
+          setCatalogQuestion(null);
+          setCatalogPreview(null);
+        }}
+        onUseCarbs={(totals) => {
+          applyCart(totals);
+          setMessage(`Se transcribieron ${totals.carbsG} g del carrito. Revísalos: quedan como carbohidratos que confirmas tú.`);
+        }}
         onMessage={setMessage}
       />
 

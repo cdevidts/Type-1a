@@ -65,6 +65,19 @@ export interface CatalogFood {
   servingGrams?: number;
   /** Cómo se llama esa porción para la usuaria: "taza", "rebanada", "plato". */
   servingLabel?: string;
+  /**
+   * Foto del alimento, si alguna comida real dejó una.
+   *
+   * **Nunca se genera ni se inventa.** Sale exactamente de la foto que la
+   * usuaria sacó al registrar una comida donde ese alimento se identificó, y
+   * si esa comida no tuvo foto, el alimento no tiene foto. Un alimento
+   * anterior a este campo —o sea, todo lo que ya está en el teléfono de
+   * Verónica— simplemente no la trae, y su tarjeta muestra el fallback.
+   *
+   * Es **representación**, no evidencia de macros: nada la vuelve a analizar
+   * al leer el catálogo. Ver `catalogFoodMissingMacros` y `blendCatalogEntry`.
+   */
+  imageUri?: string;
 }
 
 /**
@@ -97,6 +110,11 @@ export const MIN_CATALOG_GRAMS = 5;
 export function toCatalogEntry(
   food: FoodEstimate,
   seenAt: string,
+  /**
+   * La foto de la comida en la que se identificó, si la hubo. Se propaga tal
+   * cual: no se genera, no se recorta y no se deriva nada de ella.
+   */
+  imageUri?: string,
 ): Omit<CatalogFood, 'timesSeen'> | null {
   const grams = food.estimatedGrams;
   if (grams === null || !Number.isFinite(grams) || grams < MIN_CATALOG_GRAMS) return null;
@@ -113,6 +131,7 @@ export function toCatalogEntry(
     fiberPer100g: per100(food.fiberG),
     kcalPer100g: per100(food.caloriesKcal),
     lastSeenAt: seenAt,
+    ...(imageUri === undefined ? {} : { imageUri }),
   };
 }
 
@@ -120,10 +139,12 @@ export function toCatalogEntry(
 export function catalogEntriesFrom(
   foods: readonly FoodEstimate[],
   seenAt: string,
+  /** Foto de la comida analizada, si la hubo. Ver `toCatalogEntry`. */
+  imageUri?: string,
 ): Omit<CatalogFood, 'timesSeen'>[] {
   const byKey = new Map<string, Omit<CatalogFood, 'timesSeen'>>();
   for (const food of foods) {
-    const entry = toCatalogEntry(food, seenAt);
+    const entry = toCatalogEntry(food, seenAt, imageUri);
     // El último gana: si un análisis nombra el mismo alimento dos veces, es
     // más probable que sea una corrección que dos platos distintos.
     if (entry !== null && isPlausibleCatalogEntry(entry)) byKey.set(entry.key, entry);
@@ -181,6 +202,10 @@ export function blendCatalogEntry(
   // son 150 g" que ella escribió: un análisis nuevo nunca trae este campo.
   const servingGrams = next.servingGrams ?? existing.servingGrams;
   const servingLabel = next.servingLabel ?? existing.servingLabel;
+  // La foto se conserva si la nueva no trae una. Un análisis por texto no
+  // tiene imagen, y sin esto reconocer el mismo alimento sin foto borraría la
+  // que ya había — un dato que solo se recupera volviendo a fotografiar.
+  const imageUri = next.imageUri ?? existing.imageUri;
   const mix = (old: number, incoming: number): number =>
     Number(((old * weight + incoming) / (weight + 1)).toFixed(2));
   return {
@@ -195,6 +220,7 @@ export function blendCatalogEntry(
     lastSeenAt: next.lastSeenAt,
     ...(servingGrams === undefined ? {} : { servingGrams }),
     ...(servingLabel === undefined ? {} : { servingLabel }),
+    ...(imageUri === undefined ? {} : { imageUri }),
   };
 }
 
@@ -274,6 +300,13 @@ export interface CatalogFoodEdit {
   /** `null` borra la porción de referencia y vuelve al default de 100 g. */
   servingGrams?: number | null;
   servingLabel?: string | null;
+  /**
+   * `null` quita la foto guardada; ausente la deja como está.
+   *
+   * Quitar es una acción explícita, igual que en el resto de la app: un campo
+   * que no viaja nunca borra nada.
+   */
+  imageUri?: string | null;
 }
 
 /**
@@ -300,6 +333,9 @@ export function applyCatalogEdit(existing: CatalogFood, edit: CatalogFoodEdit): 
   const servingLabel = edit.servingLabel === undefined
     ? existing.servingLabel
     : (edit.servingLabel ?? undefined);
+  const imageUri = edit.imageUri === undefined
+    ? existing.imageUri
+    : (edit.imageUri ?? undefined);
 
   const next: CatalogFood = {
     key: existing.key,
@@ -313,6 +349,7 @@ export function applyCatalogEdit(existing: CatalogFood, edit: CatalogFoodEdit): 
     kcalPer100g: edit.kcalPer100g ?? existing.kcalPer100g,
     ...(servingGrams === undefined ? {} : { servingGrams }),
     ...(servingLabel === undefined ? {} : { servingLabel }),
+    ...(imageUri === undefined ? {} : { imageUri }),
   };
   return isPlausibleCatalogEntry(next) ? next : null;
 }
@@ -345,6 +382,7 @@ export function catalogEntryFromPortion(
     lastSeenAt: seenAt,
     ...(base.servingGrams === undefined ? {} : { servingGrams: base.servingGrams }),
     ...(base.servingLabel === undefined ? {} : { servingLabel: base.servingLabel }),
+    ...(base.imageUri === undefined ? {} : { imageUri: base.imageUri }),
   };
   return isPlausibleCatalogEntry(entry) ? entry : null;
 }

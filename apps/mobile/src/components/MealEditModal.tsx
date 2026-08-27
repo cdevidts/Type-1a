@@ -9,7 +9,7 @@ import Camera from 'lucide-react-native/icons/camera';
 import PencilLine from 'lucide-react-native/icons/pencil-line';
 import WandSparkles from 'lucide-react-native/icons/wand-sparkles';
 
-import { resolveMacrosSource } from '@type1a/domain';
+import { resolveMacrosSource, type CartLine, type CatalogFood } from '@type1a/domain';
 import type { MealAnalysisResult, MealEvent, MealSnapshot } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, editMealWithInstruction, MobileApiError } from '../api';
@@ -17,6 +17,7 @@ import { parseBlankAsClear, parseBlankAsUnset } from '../format';
 import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
 import { MacroFields } from './MacroFields';
+import { MealCart } from './MealCart';
 import { ModalShell } from './ModalShell';
 
 /**
@@ -35,7 +36,12 @@ export interface MealEditResult {
   fiberG?: number | null;
   caloriesKcal?: number | null;
   imageUri?: string | null;
-  macrosSource?: MealEvent['macrosSource'];
+  /**
+   * `null` **borra** la procedencia, que es lo que corresponde cuando la
+   * comida se quedó sin macros: una etiqueta "estimados por IA" colgando
+   * sobre campos vacíos miente en el reporte médico.
+   */
+  macrosSource?: MealEvent['macrosSource'] | null;
   analysis?: { aiEstimatedCarbsG: number; aiAnalysisId: string };
 }
 
@@ -73,11 +79,21 @@ function DiffRow({ label, before, after, unit }: { label: string; before: string
 
 export function MealEditModal({
   meal,
+  catalogFoods,
   onClose,
   onSave,
 }: {
   /** `null` cierra el modal. */
   meal: MealEvent | null;
+  /**
+   * El catálogo, para el carrito multi-alimento.
+   *
+   * Faltaba acá y estaba en el modal de creación: corregir una comida no
+   * podía reusar un alimento guardado, así que había que escribir los macros
+   * a mano o salir y rehacerla. Es la misma asimetría que ya obligó a extraer
+   * `CatalogQuickAdd` una vez.
+   */
+  catalogFoods: readonly CatalogFood[];
   onClose: () => void;
   onSave: (mealId: string, result: MealEditResult) => Promise<void>;
 }) {
@@ -106,6 +122,9 @@ export function MealEditModal({
   /** Lo que precargó la propuesta, para saber después si ella lo corrigió. */
   const [aiMacros, setAiMacros] = useState<{ proteinG: number; fatG: number; fiberG: number; caloriesKcal: number } | null>(null);
   const [appliedAnalysis, setAppliedAnalysis] = useState<MealAnalysisResult | null>(null);
+  const [cartLines, setCartLines] = useState<CartLine[]>([]);
+  /** `true` = la usuaria pidió quitar la foto que ya estaba guardada. */
+  const [imageRemoved, setImageRemoved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -129,6 +148,8 @@ export function MealEditModal({
     setAppliedImageUri(null);
     setAiMacros(null);
     setAppliedAnalysis(null);
+    setCartLines([]);
+    setImageRemoved(false);
     setBusy(false);
     setMessage(null);
   }, [meal]);
@@ -323,8 +344,13 @@ export function MealEditModal({
         fatG: fat,
         fiberG: fiber,
         caloriesKcal: calories,
-        ...(macrosSource === undefined ? {} : { macrosSource }),
-        ...(appliedImageUri === null ? {} : { imageUri: appliedImageUri }),
+        // Se manda **siempre**, `null` incluido: si ya no hay macros, la
+        // etiqueta de procedencia tiene que irse con ellos.
+        macrosSource: macrosSource ?? null,
+        // Quitar la foto es explícito y gana sobre "no se tocó". Una foto
+        // nueva solo llega acá si su propuesta se aplicó (`appliedImageUri`),
+        // así que foto y análisis nunca quedan desalineados.
+        ...(imageRemoved ? { imageUri: null } : (appliedImageUri === null ? {} : { imageUri: appliedImageUri })),
         ...(appliedAnalysis === null
           ? {}
           : {
@@ -425,8 +451,55 @@ export function MealEditModal({
         </Pressable>
       </View>
 
+      {/*
+        La foto **guardada**, visible al abrir. Antes no se mostraba: había que
+        confiar en que seguía ahí, y quitarla o reemplazarla no tenía botón.
+        Va rotulada y separada de la propuesta nueva, porque una imagen recién
+        tomada y una que ya estaba en el registro son indistinguibles si nadie
+        lo escribe — y ahí es donde la foto deja de ser evidencia de lo que
+        dice el registro.
+      */}
+      {meal?.imageUri === undefined || imageRemoved ? null : (
+        <View style={styles.imageBlock}>
+          <Text style={styles.imageLabel}>Foto guardada de esta comida</Text>
+          <Image source={{ uri: meal.imageUri }} style={styles.preview} resizeMode="cover" />
+          <View style={styles.imageActions}>
+            <Pressable
+              style={styles.imageAction}
+              disabled={busy}
+              onPress={() => { void reanalyzeFromPhoto(); }}
+              accessibilityRole="button"
+              accessibilityLabel="Reemplazar la foto guardada tomando otra"
+            >
+              <Text style={styles.imageActionText}>Reemplazar con otra foto</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.imageAction, styles.imageActionDanger]}
+              onPress={() => {
+                setImageRemoved(true);
+                setMessage('La foto se quitará al guardar. Los macros y los carbohidratos no se tocan.');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Quitar la foto guardada"
+            >
+              <Text style={styles.imageActionDangerText}>Quitar foto</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+      {imageRemoved ? (
+        <Text style={styles.sectionHint}>
+          La foto guardada se quitará al guardar. Toma otra si quieres reemplazarla en vez de dejarla sin imagen.
+        </Text>
+      ) : null}
+
       {pendingImageUri === null ? null : (
-        <Image source={{ uri: pendingImageUri }} style={styles.preview} resizeMode="cover" />
+        <View style={styles.imageBlock}>
+          <Text style={styles.imageLabelPending}>
+            Foto nueva · todavía sin aplicar. Reemplaza a la guardada solo si aceptas su propuesta.
+          </Text>
+          <Image source={{ uri: pendingImageUri }} style={styles.preview} resizeMode="cover" />
+        </View>
       )}
 
       {proposal === null ? null : (
@@ -468,6 +541,30 @@ export function MealEditModal({
           </View>
         </View>
       )}
+
+      {/*
+        El carrito multi-alimento, también acá. Corregir una comida podía
+        usar foto e IA pero no reusar un alimento guardado: la misma asimetría
+        que ya obligó a extraer el catálogo de `MealModal` una vez.
+      */}
+      <Text style={styles.sectionTitle}>Agregar del catálogo</Text>
+      <MealCart
+        foods={catalogFoods}
+        lines={cartLines}
+        onChange={setCartLines}
+        onUseCarbs={(totals) => {
+          // Acción explícita. Los números del carrito son estimación del
+          // catálogo; pasan al campo de confirmados porque ella lo pidió, y
+          // se rotula que los revise.
+          setCarbsInput(String(totals.carbsG));
+          setProteinInput(String(totals.proteinG));
+          setFatInput(String(totals.fatG));
+          setFiberInput(String(totals.fiberG));
+          setCaloriesInput(String(totals.caloriesKcal));
+          setMessage(`Se transcribieron ${totals.carbsG} g del carrito a los campos de abajo. Revísalos antes de guardar.`);
+        }}
+        onMessage={setMessage}
+      />
 
       <Text style={styles.sectionTitle}>Valores guardados</Text>
       <Text style={styles.sectionHint}>
@@ -591,6 +688,14 @@ const styles = StyleSheet.create({
   },
   panelActionText: { fontSize: 14, fontWeight: '700', color: colors.teal },
   preview: { width: '100%', height: 180, borderRadius: radius.md, marginBottom: spacing.md },
+  imageBlock: { marginBottom: spacing.sm },
+  imageLabel: { color: colors.navy, fontSize: 11, fontWeight: '800', marginBottom: 4 },
+  imageLabelPending: { color: colors.warning, fontSize: 11, fontWeight: '800', marginBottom: 4, lineHeight: 16 },
+  imageActions: { flexDirection: 'row', gap: spacing.sm, marginTop: -spacing.sm, marginBottom: spacing.md },
+  imageAction: { flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, borderWidth: 1, borderColor: colors.line },
+  imageActionText: { color: colors.navy, fontSize: 13, fontWeight: '700' },
+  imageActionDanger: { borderColor: colors.red },
+  imageActionDangerText: { color: colors.red, fontSize: 13, fontWeight: '700' },
   proposalBox: {
     backgroundColor: colors.warningSoft,
     borderRadius: radius.md,

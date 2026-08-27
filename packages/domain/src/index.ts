@@ -13,6 +13,7 @@ export * from './macro-glucose';
 export * from './macros-source';
 export * from './nutrition-targets';
 export * from './meal';
+export * from './meal-cart';
 export * from './mysugr-import';
 export * from './nutrition-insights';
 export * from './regression';

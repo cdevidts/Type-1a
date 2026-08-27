@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type GestureResponderHandlers } from 'react-native';
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type GestureResponderHandlers } from 'react-native';
 
 // Subpath, nunca el barrel: Metro no hace tree-shaking (ver `/iconography`).
 import Search from 'lucide-react-native/icons/search';
@@ -25,6 +25,7 @@ import { editCatalogFoodWithInstruction, MobileApiError } from '../api';
 import { parseNonNegativeNumber } from '../format';
 import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
+import { FoodCard } from './FoodCard';
 import { ModalShell } from './ModalShell';
 
 const numberText = (value: number): string => String(Number(value.toFixed(2)));
@@ -88,6 +89,8 @@ function FoodEditor({
   );
   const [servingLabel, setServingLabel] = useState(food.servingLabel ?? '');
   const [instruction, setInstruction] = useState('');
+  /** Quitar la foto es una acción explícita, no un efecto de guardar. */
+  const [removePhoto, setRemovePhoto] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -187,6 +190,9 @@ function FoodEditor({
         kcalPer100g: parsed.kcalPer100g!,
         servingGrams: serving,
         servingLabel: servingLabel.trim() === '' ? null : servingLabel.trim(),
+        // Ausente deja la foto como está; `null` la quita. Un campo que no
+        // viaja nunca borra nada.
+        ...(removePhoto ? { imageUri: null } : {}),
       });
       onCancel();
     } catch (error) {
@@ -231,6 +237,34 @@ function FoodEditor({
           <Text style={styles.panelActionText}>{busy ? 'Consultando…' : 'Ver qué propone'}</Text>
         </Pressable>
       </View>
+
+      {/*
+        La foto guardada del alimento. **Nunca se genera**: sale de la imagen
+        que la usuaria sacó al registrar una comida donde ese alimento se
+        identificó, y un alimento sin foto —todo lo anterior a este campo—
+        muestra su fallback en la tarjeta. Acá solo se puede quitar.
+      */}
+      {food.imageUri === undefined ? (
+        <Text style={styles.sectionHint}>
+          Este alimento no tiene foto. Aparece sola la próxima vez que lo registres con una foto de la comida.
+        </Text>
+      ) : (
+        <>
+          <Text style={styles.sectionTitle}>Foto</Text>
+          <Image source={{ uri: food.imageUri }} style={styles.editorPhoto} resizeMode="cover" />
+          <Pressable
+            style={[styles.removePhoto, removePhoto && styles.removePhotoActive]}
+            onPress={() => { setRemovePhoto((previous) => !previous); }}
+            accessibilityRole="button"
+            accessibilityState={{ selected: removePhoto }}
+            accessibilityLabel={removePhoto ? 'Conservar la foto guardada' : 'Quitar la foto guardada'}
+          >
+            <Text style={[styles.removePhotoText, removePhoto && styles.removePhotoTextActive]}>
+              {removePhoto ? 'Se quitará al guardar · tocar para conservarla' : 'Quitar foto'}
+            </Text>
+          </Pressable>
+        </>
+      )}
 
       <Text style={styles.sectionTitle}>Nombre</Text>
       <TextInput
@@ -428,33 +462,46 @@ export function CatalogModal({
               </View>
             ) : null}
 
+            {/*
+              La misma tarjeta que usa el carrito. Lo único que cambia es el
+              control de la derecha: acá un lápiz para editar, allá una X para
+              quitar la línea.
+
+              **Tocar el contenedor ya no abre la edición.** Recorriendo la
+              lista con el pulgar se abría el editor por accidente, y ese
+              editor cambia valores que después sugieren carbohidratos en cada
+              comida que reuse el alimento.
+            */}
             {foods.map((food) => (
-              <View key={food.key} style={styles.card}>
+              <View key={food.key}>
+                <FoodCard
+                  name={food.name}
+                  subtitle={`${numberText(food.carbsPer100g)} g carbos/100 g · porción ${numberText(servingGramsOf(food))} g`
+                    + `${food.servingLabel === undefined ? '' : ` (${food.servingLabel})`}`
+                    + ` · ${food.timesSeen} ${food.timesSeen === 1 ? 'vez' : 'veces'}`}
+                  {...(food.imageUri === undefined ? {} : { imageUri: food.imageUri })}
+                  macros={{
+                    carbsG: food.carbsPer100g,
+                    proteinG: food.proteinPer100g,
+                    fatG: food.fatPer100g,
+                    fiberG: food.fiberPer100g,
+                  }}
+                  action={{ kind: 'edit', label: `Editar ${food.name}`, onPress: () => { setEditing(food); } }}
+                />
+                {/*
+                  El borrado sigue siendo explícito, confirmado y **separado
+                  del lápiz**: es la única acción destructiva de esta pantalla
+                  y no puede compartir gesto con la de corregir.
+                */}
                 <Pressable
-                  style={styles.cardMain}
-                  onPress={() => { setEditing(food); }}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Editar ${food.name}`}
-                >
-                  <Text style={styles.cardName}>{food.name}</Text>
-                  <Text style={styles.cardMacros}>
-                    {numberText(food.carbsPer100g)} g carbos · {numberText(food.proteinPer100g)} g proteína · {numberText(food.fatPer100g)} g grasa, por 100 g
-                  </Text>
-                  <Text style={styles.cardMeta}>
-                    Porción: {numberText(servingGramsOf(food))} g
-                    {food.servingLabel === undefined ? '' : ` (${food.servingLabel})`}
-                    {' · '}
-                    {food.timesSeen} {food.timesSeen === 1 ? 'vez' : 'veces'}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  style={styles.deleteButton}
+                  style={styles.deleteRow}
                   onPress={() => { confirmDelete(food); }}
                   accessibilityRole="button"
-                  accessibilityLabel={`Borrar ${food.name}`}
+                  accessibilityLabel={`Borrar ${food.name} del catálogo`}
                   hitSlop={8}
                 >
-                  <Trash2 size={20} color={colors.red} />
+                  <Trash2 size={16} color={colors.red} />
+                  <Text style={styles.deleteRowText}>Borrar del catálogo</Text>
                 </Pressable>
               </View>
             ))}
@@ -497,19 +544,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.tealSoft,
   },
   retryText: { fontSize: 14, fontWeight: '700', color: colors.teal },
-  card: {
+  deleteRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.lg,
-    marginBottom: spacing.sm,
+    gap: spacing.xs,
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+    marginTop: -spacing.xs,
+    marginBottom: spacing.md,
   },
-  cardMain: { flex: 1, minHeight: 44, justifyContent: 'center' },
-  cardName: { fontSize: 16, fontWeight: '700', color: colors.ink },
-  cardMacros: { fontSize: 12, color: colors.muted, marginTop: 2, lineHeight: 16 },
-  cardMeta: { fontSize: 12, color: colors.muted, marginTop: 2 },
-  deleteButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  deleteRowText: { fontSize: 12, fontWeight: '700', color: colors.red },
   editorBody: { padding: spacing.lg, paddingBottom: spacing.xxl },
   editorTitle: { fontSize: 20, fontWeight: '800', color: colors.ink },
   editorMeta: { fontSize: 12, color: colors.muted, marginTop: spacing.xs, marginBottom: spacing.lg, lineHeight: 16 },
@@ -570,6 +614,14 @@ const styles = StyleSheet.create({
     color: colors.ink,
     textAlignVertical: 'top',
   },
+  editorPhoto: { width: '100%', height: 160, borderRadius: radius.md, marginBottom: spacing.sm },
+  removePhoto: {
+    minHeight: 44, justifyContent: 'center', alignItems: 'center',
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.red,
+  },
+  removePhotoActive: { backgroundColor: colors.redSoft },
+  removePhotoText: { fontSize: 13, fontWeight: '700', color: colors.red },
+  removePhotoTextActive: { fontWeight: '900' },
   message: { fontSize: 13, color: colors.navy, marginTop: spacing.md, lineHeight: 18 },
   editorActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xl },
   secondaryButton: {

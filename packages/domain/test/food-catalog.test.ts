@@ -344,3 +344,94 @@ describe('applyCatalogEdit (la puerta de toda escritura manual al catálogo)', (
     expect(applyCatalogEdit(base, { name: '   ' })?.name).toBe('Arroz');
   });
 });
+
+/**
+ * La foto del alimento (2026-08-27).
+ *
+ * Es **representación**, no evidencia de macros: nada la vuelve a analizar al
+ * leer el catálogo. Lo que sí exige es no perderse — una foto solo se
+ * recupera volviendo a fotografiar el plato.
+ */
+describe('imagen del catálogo', () => {
+  const base: CatalogFood = {
+    key: 'pan',
+    name: 'Pan',
+    carbsPer100g: 50,
+    proteinPer100g: 8,
+    fatPer100g: 3,
+    fiberPer100g: 4,
+    kcalPer100g: 260,
+    timesSeen: 3,
+    lastSeenAt: '2026-08-20T12:00:00.000Z',
+    imageUri: 'file:///pan.jpg',
+  };
+
+  it('toCatalogEntry propaga la foto de la comida analizada, sin inventarla', () => {
+    const conFoto = toCatalogEntry(
+      { name: 'Pan', estimatedGrams: 100, carbsG: 50, proteinG: 8, fatG: 3, fiberG: 4, caloriesKcal: 260, confidence: 0.8 },
+      '2026-08-27T12:00:00.000Z',
+      'file:///nueva.jpg',
+    );
+    expect(conFoto?.imageUri).toBe('file:///nueva.jpg');
+
+    const sinFoto = toCatalogEntry(
+      { name: 'Pan', estimatedGrams: 100, carbsG: 50, proteinG: 8, fatG: 3, fiberG: 4, caloriesKcal: 260, confidence: 0.8 },
+      '2026-08-27T12:00:00.000Z',
+    );
+    expect(sinFoto?.imageUri).toBeUndefined();
+  });
+
+  /**
+   * Un análisis por texto no trae imagen. Sin conservar la anterior, reconocer
+   * el mismo alimento sin foto borraría la que ya había.
+   */
+  it('blendCatalogEntry conserva la foto anterior cuando la nueva no trae una', () => {
+    const merged = blendCatalogEntry(base, {
+      key: 'pan',
+      name: 'Pan',
+      carbsPer100g: 52,
+      proteinPer100g: 8,
+      fatPer100g: 3,
+      fiberPer100g: 4,
+      kcalPer100g: 262,
+      lastSeenAt: '2026-08-27T12:00:00.000Z',
+    });
+    expect(merged.imageUri).toBe('file:///pan.jpg');
+  });
+
+  it('una foto nueva reemplaza a la anterior', () => {
+    const merged = blendCatalogEntry(base, {
+      key: 'pan',
+      name: 'Pan',
+      carbsPer100g: 50,
+      proteinPer100g: 8,
+      fatPer100g: 3,
+      fiberPer100g: 4,
+      kcalPer100g: 260,
+      lastSeenAt: '2026-08-27T12:00:00.000Z',
+      imageUri: 'file:///pan-2.jpg',
+    });
+    expect(merged.imageUri).toBe('file:///pan-2.jpg');
+  });
+
+  it('un alimento sin foto sigue siendo válido: no se le inventa una', () => {
+    const { imageUri: _omitted, ...sinFoto } = base;
+    void _omitted;
+    const merged = blendCatalogEntry(sinFoto, {
+      key: 'pan',
+      name: 'Pan',
+      carbsPer100g: 50,
+      proteinPer100g: 8,
+      fatPer100g: 3,
+      fiberPer100g: 4,
+      kcalPer100g: 260,
+      lastSeenAt: '2026-08-27T12:00:00.000Z',
+    });
+    expect(merged.imageUri).toBeUndefined();
+  });
+
+  it('applyCatalogEdit conserva la foto por defecto y la quita solo con null', () => {
+    expect(applyCatalogEdit(base, { name: 'Pan integral' })?.imageUri).toBe('file:///pan.jpg');
+    expect(applyCatalogEdit(base, { imageUri: null })?.imageUri).toBeUndefined();
+  });
+});

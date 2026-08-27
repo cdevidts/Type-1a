@@ -50,12 +50,31 @@ const ICON_SIZE = 24;
 export function BottomNav({
   active,
   onSelect,
+  pastEntryLabel = null,
 }: {
   /** Destino resaltado. `null` cuando se está en la pantalla principal. */
   active: NavDestination | null;
   onSelect: (destination: NavDestination) => void;
+  /**
+   * Cuando no es `null`, el "+" va a registrar en esa fecha pasada y lo dice.
+   *
+   * ## Por qué el estado no puede ser solo un color
+   *
+   * Cambiar el botón a naranja comunica "algo es distinto" a quien lo nota y
+   * nada a quien no. Guardar en la fecha equivocada no es un error cosmético:
+   * una comida que aterriza el día que no fue contamina el episodio, la
+   * ventana de patrones y el reporte que va al control médico. Por eso el
+   * estado va con **texto visible** bajo el icono y con una
+   * `accessibilityLabel` que nombra la fecha completa
+   * (`contracts/ux-checklist.md`).
+   *
+   * Quien lo pasa (`App`) lo apaga solo al volver a hoy, al cerrar Nutrición y
+   * al navegar a otro destino: la barra dibuja, no decide.
+   */
+  pastEntryLabel?: string | null;
 }) {
   const insets = useSafeAreaInsets();
+  const past = pastEntryLabel !== null;
 
   return (
     <View style={[styles.bar, { paddingBottom: insets.bottom + spacing.sm }]}>
@@ -73,15 +92,21 @@ export function BottomNav({
       />
 
       {/* Acción primaria: más grande y con fondo, única en la barra. */}
-      <Pressable
-        style={({ pressed }) => [styles.primary, pressed && styles.pressed]}
-        onPress={() => { onSelect('entry'); }}
-        accessibilityRole="button"
-        accessibilityLabel="Nueva entrada"
-        hitSlop={6}
-      >
-        <Plus size={30} color="#FFFFFF" strokeWidth={2.5} />
-      </Pressable>
+      <View style={styles.primaryWrap}>
+        <Pressable
+          style={({ pressed }) => [styles.primary, past && styles.primaryPast, pressed && styles.pressed]}
+          onPress={() => { onSelect('entry'); }}
+          accessibilityRole="button"
+          accessibilityLabel={past ? `Agregar al pasado: ${pastEntryLabel}` : 'Nueva entrada'}
+          hitSlop={6}
+        >
+          <Plus size={30} color="#FFFFFF" strokeWidth={2.5} />
+        </Pressable>
+        {past ? (
+          // La señal textual. El color solo no basta.
+          <Text style={styles.primaryPastLabel} numberOfLines={1}>Al pasado</Text>
+        ) : null}
+      </View>
 
       <NavButton
         label="Chat"
@@ -157,6 +182,7 @@ const styles = StyleSheet.create({
   tab: { flex: 1, minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'flex-end', gap: 3 },
   tabLabel: { color: colors.muted, fontSize: 10, fontWeight: '600' },
   tabLabelActive: { color: colors.teal, fontWeight: '800' },
+  primaryWrap: { alignItems: 'center', justifyContent: 'flex-end' },
   primary: {
     width: 58,
     height: 58,
@@ -173,6 +199,10 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     elevation: 4,
   },
+  // Naranja, el color que la app ya usa para comida y registro, **más** la
+  // etiqueta de abajo: dos señales, no una.
+  primaryPast: { backgroundColor: colors.orange },
+  primaryPastLabel: { color: colors.orange, fontSize: 9, fontWeight: '900', marginTop: 2 },
   logo: { width: ICON_SIZE, height: ICON_SIZE, borderRadius: 6 },
   logoInactive: { opacity: 0.55 },
   pressed: { opacity: 0.65 },

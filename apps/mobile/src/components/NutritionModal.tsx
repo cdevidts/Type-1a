@@ -15,12 +15,15 @@ import {
 } from '@type1a/domain';
 import type { CarbEvent, MealEvent, NutritionProfile } from '@type1a/schemas';
 
+import { clampDayToMonth, isSameDay, monthLabel, shiftMonth, startOfDay } from '../entryTime';
 import { formatClock } from '../format';
 import { logSaveError } from '../log';
+import { sumDayCarbs } from '../mealCarbMirror';
 import { colors, macroColors, radius, spacing } from '../theme';
 import type { NutritionDayData } from '../types';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ModalShell } from './ModalShell';
+import { StripCalendar } from './StripCalendar';
 
 /**
  * Pantalla "Nutrición" (Fase 14).
@@ -50,7 +53,7 @@ import { ModalShell } from './ModalShell';
 type NutritionTab = 'today' | 'goals' | 'patterns';
 
 const TABS: { key: NutritionTab; label: string }[] = [
-  { key: 'today', label: 'Hoy' },
+  { key: 'today', label: 'Día' },
   { key: 'goals', label: 'Metas' },
   { key: 'patterns', label: 'Patrones' },
 ];
@@ -107,13 +110,29 @@ export function NutritionModal({
   profile,
   onSaveProfile,
   onLoadDay,
+  selectedDay,
+  onSelectDay,
   swipeHandlers,
 }: {
   visible: boolean;
   onClose: () => void;
   profile: NutritionProfile | null;
   onSaveProfile: (profile: NutritionProfile) => Promise<void>;
-  onLoadDay: () => Promise<NutritionDayData>;
+  /**
+   * Carga **el día que se le pasa**, no "hoy".
+   *
+   * Antes no recibía nada y las consultas se filtraban contra `new Date()`:
+   * la pantalla estaba clavada en el día actual y revisar lo de ayer —que es
+   * la razón por la que existe esta pantalla— no se podía.
+   */
+  onLoadDay: (day: Date) => Promise<NutritionDayData>;
+  /**
+   * El día elegido vive en `App` y no acá porque **el botón "+" de la barra
+   * inferior depende de él**: registrar en el pasado hereda esta fecha, y un
+   * estado local se perdería al cerrar la pantalla.
+   */
+  selectedDay: Date;
+  onSelectDay: (day: Date) => void;
   /** Navegación lateral por gesto — es un destino de la barra inferior. */
   swipeHandlers?: GestureResponderHandlers;
 }) {
@@ -122,13 +141,28 @@ export function NutritionModal({
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
+  /** Mes que muestra la fila de días. Puede diferir del día elegido al navegar. */
+  const [month, setMonth] = useState(() => ({ year: selectedDay.getFullYear(), month: selectedDay.getMonth() }));
 
+  // Al abrir, el mes vuelve al del día elegido: dejarlo donde quedó la vez
+  // anterior haría que la fila no contuviera el día seleccionado.
+  useEffect(() => {
+    if (!visible) return;
+    setMonth({ year: selectedDay.getFullYear(), month: selectedDay.getMonth() });
+    // Solo depende de `visible` a propósito: si dependiera de `selectedDay`,
+    // navegar de mes y elegir un día volvería a saltar al mes de ese día.
+    // `selectedDay` se lee dentro, y su valor al abrir es el que interesa.
+  }, [visible, selectedDay]);
+
+  // Seleccionar un día recarga **toda** la información dependiente de la
+  // fecha: comidas, carbohidratos sueltos, energía, macros y fibra. La ventana
+  // de patrones de 90 días no se mueve — es otra pregunta.
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;
     setLoading(true);
     setFailed(false);
-    onLoadDay()
+    onLoadDay(selectedDay)
       .then((loaded) => { if (!cancelled) setData(loaded); })
       .catch((error: unknown) => {
         logSaveError('NutritionModal.load', error);
@@ -136,7 +170,7 @@ export function NutritionModal({
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [visible, onLoadDay, reloadToken]);
+  }, [visible, onLoadDay, reloadToken, selectedDay]);
 
   const targets = useMemo<NutritionTargets | null>(
     () => (profile === null ? null : calculateNutritionTargets(profile)),
@@ -145,6 +179,35 @@ export function NutritionModal({
 
   return (
     <ModalShell visible={visible} title="Nutrición" onClose={onClose} scroll={false} swipeHandlers={swipeHandlers}>
+      <StripCalendar
+        year={month.year}
+        month={month.month}
+        selected={selectedDay}
+        onSelect={onSelectDay}
+        onChangeMonth={(delta) => {
+          const next = shiftMonth(month.year, month.month, delta);
+          setMonth(next);
+          // Al cambiar de mes se mantiene una fecha válida: el mismo día del
+          // mes cuando existe, el último cuando no (31 de enero → febrero), y
+          // nunca una futura.
+          onSelectDay(clampDayToMonth(next.year, next.month, selectedDay.getDate()));
+        }}
+        onToday={() => {
+          const today = startOfDay(new Date());
+          setMonth({ year: today.getFullYear(), month: today.getMonth() });
+          onSelectDay(today);
+        }}
+      />
+      {isSameDay(selectedDay, new Date()) ? null : (
+        <View style={styles.pastBanner}>
+          {/* Texto, no solo un tono: el estado "estás mirando otro día" no
+              puede comunicarse con un color de fondo. */}
+          <Text style={styles.pastBannerText}>
+            Estás viendo {monthLabel(month.year, month.month)}, día {selectedDay.getDate()}. El botón "+" registra en
+            esa fecha y te pedirá la hora exacta.
+          </Text>
+        </View>
+      )}
       <View style={styles.tabBar}>
         {TABS.map((entry) => {
           const active = entry.key === tab;
@@ -227,35 +290,46 @@ function EmptyState({ title, body, action }: { title: string; body: string; acti
  * registrar carbos. Contar solo las comidas mostraba "0 g" a alguien que
  * había registrado 120 g esa mañana, e invitaba a comer un día entero de más.
  *
- * Se excluyen los `CarbEvent` con `source: 'meal_confirmed'` porque esos los
- * escribe la propia confirmación de una comida: sumarlos otra vez duplicaría
- * los carbohidratos de cada comida.
+ * La regla de qué no contar dos veces vive en `mealCarbMirror.ts`, pura y con
+ * test: una fila espejo de una comida que está en la lista **no** suma
+ * encima, pero una espejo huérfana —cuya comida ya no existe— sí, porque es
+ * la única copia que queda de esos gramos. Antes se descartaba todo
+ * `meal_confirmed` a ciegas y esos gramos desaparecían del día.
  */
 function dayTotals(
   meals: readonly MealEvent[],
   carbEvents: readonly CarbEvent[],
-): { carbsG: number; proteinG: number; fatG: number; fiberG: number; anyMissing: boolean } {
-  let carbsG = 0;
+): {
+  carbsG: number; proteinG: number; fatG: number; fiberG: number;
+  anyMissing: boolean;
+  /** Cuántas comidas del día no tienen fibra anotada. "Sin anotar" ≠ 0 g. */
+  fiberMissingMeals: number;
+} {
+  const carbs = sumDayCarbs(meals, carbEvents);
   let proteinG = 0;
   let fatG = 0;
   let fiberG = 0;
   let anyMissing = false;
+  let fiberMissingMeals = 0;
   for (const meal of meals) {
-    carbsG += meal.confirmedCarbsG ?? 0;
     proteinG += meal.proteinG ?? 0;
     fatG += meal.fatG ?? 0;
     fiberG += meal.fiberG ?? 0;
     // "Sin anotar" no es 0: si falta un macro, el total del día es un piso.
     if (meal.proteinG === undefined || meal.fatG === undefined) anyMissing = true;
+    if (meal.fiberG === undefined) fiberMissingMeals += 1;
   }
-  for (const event of carbEvents) {
-    if (event.source === 'meal_confirmed') continue;
-    carbsG += event.carbsG;
-    // Un carbo suelto no trae proteína ni grasa por definición, así que la
-    // energía del día queda incompleta: es un piso, no el total.
-    anyMissing = true;
-  }
-  return { carbsG, proteinG, fatG, fiberG, anyMissing };
+  // Un carbo suelto no trae proteína ni grasa por definición, así que la
+  // energía del día queda incompleta: es un piso, no el total.
+  if (carbs.fromLooseCarbs > 0) anyMissing = true;
+  return {
+    carbsG: carbs.total,
+    proteinG: Number(proteinG.toFixed(1)),
+    fatG: Number(fatG.toFixed(1)),
+    fiberG: Number(fiberG.toFixed(1)),
+    anyMissing,
+    fiberMissingMeals,
+  };
 }
 
 function TodayTab({
@@ -279,8 +353,8 @@ function TodayTab({
   if (data === null || (data.dayMeals.length === 0 && data.dayCarbs.length === 0)) {
     return (
       <EmptyState
-        title="Sin comidas registradas hoy"
-        body="Registra una comida desde la pantalla principal y aparecerá acá con sus carbohidratos, proteína y grasa."
+        title="Sin comidas registradas este día"
+        body="Registra una comida y aparecerá acá con sus carbohidratos, proteína, grasa y fibra. Para anotar algo de un día pasado, usa el botón + con ese día seleccionado."
       />
     );
   }
@@ -297,7 +371,7 @@ function TodayTab({
     <View>
       {/* Número protagonista: una sola cifra grande, no un tablero de cinco. */}
       <View style={styles.heroCard}>
-        <Text style={styles.heroEyebrow}>ENERGÍA DE HOY</Text>
+        <Text style={styles.heroEyebrow}>ENERGÍA DEL DÍA</Text>
         <View style={styles.heroRow}>
           <Text style={styles.heroValue}>{energy.kcal}</Text>
           <Text style={styles.heroUnit}>de {targets.caloriesKcal} kcal</Text>
@@ -315,8 +389,8 @@ function TodayTab({
         </Text>
         {totals.anyMissing ? (
           <Text style={styles.heroWarning}>
-            Alguna comida de hoy no tiene proteína o grasa anotada, así que este total es un mínimo: lo comido
-            fue al menos esto.
+            Alguna comida de este día no tiene proteína o grasa anotada, o hay carbohidratos sueltos sin macros,
+            así que este total es un mínimo: lo comido fue al menos esto.
           </Text>
         ) : null}
       </View>
@@ -324,9 +398,33 @@ function TodayTab({
       <MacroBar label="Carbohidratos" eatenG={totals.carbsG} targetG={targets.carbsG} color={macroColors.carbs} />
       <MacroBar label="Proteína" eatenG={totals.proteinG} targetG={targets.proteinG} color={macroColors.protein} />
       <MacroBar label="Grasa" eatenG={totals.fatG} targetG={targets.fatG} color={macroColors.fat} />
-      {totals.fiberG > 0 ? <Text style={styles.fiberNote}>Fibra registrada hoy: {Math.round(totals.fiberG)} g</Text> : null}
 
-      <Text style={styles.sectionTitle}>Comidas de hoy</Text>
+      {/*
+        La fibra, como métrica de primera clase.
+
+        Antes era una nota al pie que **solo aparecía si era mayor que cero**,
+        así que un día sin fibra anotada y un día sin fibra comida se veían
+        igual: no se veían. Ahora siempre está, con su total y su completitud.
+
+        **No lleva barra de progreso ni meta**, y eso es deliberado: el
+        producto no tiene una meta de fibra aprobada, y dibujar una barra
+        exige un denominador. Inventarlo convertiría un número descriptivo en
+        un objetivo clínico que nadie definió.
+      */}
+      <View style={styles.fiberCard}>
+        <Text style={styles.fiberLabel}>FIBRA REGISTRADA</Text>
+        <Text style={styles.fiberValue}>{Math.round(totals.fiberG)} g</Text>
+        <Text style={styles.fiberFoot}>
+          {totals.fiberMissingMeals === 0
+            ? 'Todas las comidas de este día tienen la fibra anotada.'
+            : `${totals.fiberMissingMeals} comida(s) de este día no tienen fibra anotada, así que este total es un mínimo. "Sin anotar" no es 0 g.`}
+        </Text>
+        <Text style={styles.fiberFoot}>
+          Type 1A no define una meta de fibra: muestra lo que registraste y qué tan completo está.
+        </Text>
+      </View>
+
+      <Text style={styles.sectionTitle}>Comidas de este día</Text>
       {data.dayMeals.map((meal) => {
         const perMeal = energyFromMacros({
           carbsG: meal.confirmedCarbsG,
@@ -345,6 +443,9 @@ function TodayTab({
               <MealMacroChip label="Carbos" value={meal.confirmedCarbsG} color={macroColors.carbs} />
               <MealMacroChip label="Proteína" value={meal.proteinG} color={macroColors.protein} />
               <MealMacroChip label="Grasa" value={meal.fatG} color={macroColors.fat} />
+              {/* La fibra por comida, siempre presente. Un "—" dice "no lo
+                  anoté", que es distinto de 0 g. */}
+              <MealMacroChip label="Fibra" value={meal.fiberG} color={macroColors.fiber} />
             </View>
             {perMeal.partial ? (
               <Text style={styles.mealPartial}>
@@ -790,7 +891,19 @@ const styles = StyleSheet.create({
   macroTrack: { height: 8, borderRadius: 4, backgroundColor: colors.line, overflow: 'hidden' },
   macroFill: { height: '100%', borderRadius: 4 },
   macroOver: { color: colors.muted, fontSize: 11, marginTop: 4 },
-  fiberNote: { color: colors.muted, fontSize: 12, marginBottom: spacing.md },
+  fiberCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: macroColors.fiber,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  fiberLabel: { color: macroColors.fiber, fontSize: 10, fontWeight: '900', letterSpacing: 0.6 },
+  fiberValue: { color: colors.ink, fontSize: 26, fontWeight: '900', marginTop: 2 },
+  fiberFoot: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: 4 },
+  pastBanner: { backgroundColor: colors.warningSoft, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
+  pastBannerText: { color: colors.warning, fontSize: 12, lineHeight: 17, fontWeight: '700' },
 
   sectionTitle: { color: colors.ink, fontSize: 17, fontWeight: '800', marginTop: spacing.lg, marginBottom: spacing.sm },
   mealCard: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.sm },

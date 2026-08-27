@@ -136,6 +136,17 @@ export interface NutritionDayData {
 export type QuickRoute = 'meal' | 'basal' | 'correction';
 
 /**
+ * Las tablas cuyo evento suelto se puede **promover** a entrada agrupada.
+ *
+ * Vive acá, en el módulo de tipos sin dependencias, porque la usan las dos
+ * puntas: `masterModal.ts` para decidir la ruta de guardado (puro, con test) y
+ * `db.ts` para ejecutarla. Duplicar la lista es cómo se abre la puerta a que
+ * una tabla exista en una y no en la otra, y el síntoma sería un botón
+ * "Editar" que no hace nada.
+ */
+export type PromotableTable = 'insulin_events' | 'carb_events' | 'note_events' | 'meal_events' | 'vitals_events';
+
+/**
  * Con qué sección arranca abierto el Modal Maestro. Vive acá y no en el
  * componente para que la regla se pueda probar sin montar React.
  */
@@ -292,6 +303,14 @@ export interface TimelineEntryGroupRaw {
   /** Cetonas en sangre del grupo, si las tiene (mmol/L). */
   ketonesMmolL?: number;
   /**
+   * Peso y presión del grupo, cuando los tiene. Se leen de vuelta por la
+   * misma razón que las cetonas: el formulario que no ve un dato guardado es
+   * el formulario que lo borra al guardar.
+   */
+  weightKg?: number;
+  systolicBP?: number;
+  diastolicBP?: number;
+  /**
    * Foto de la comida del grupo, si la tiene.
    *
    * Se lee ya, pero **todavía no se muestra ni se puede cambiar**: editar con
@@ -302,6 +321,18 @@ export interface TimelineEntryGroupRaw {
   imageUri?: string;
   rapidUnits?: number;
   basalUnits?: number;
+  /**
+   * Qué insulina se usó, tal como quedó estampada al crear el registro.
+   *
+   * Se lee de vuelta para poder **mostrarla** (es dato de solo lectura: se
+   * cambia en Ajustes → Terapia, no por registro) y, sobre todo, para que el
+   * editor no la pise. Que el formulario no la conociera es lo que permitía
+   * que una actualización parcial la borrara en silencio.
+   */
+  rapidInsulinName?: string;
+  basalInsulinName?: string;
+  /** Calorías de la comida del grupo, si las tiene. */
+  caloriesKcal?: number;
   note?: string;
 }
 
@@ -322,62 +353,63 @@ export interface MealWithEpisode {
 }
 
 /**
- * What a Timeline edit form can submit, one variant per editable kind.
- * `episode` has none — its metrics/insight are computed, not user-entered,
- * so it's delete-only (see TimelineDetailModal / deleteMealEpisode).
+ * Lo que el Modal Maestro devuelve al guardar la edición de un registro.
+ *
+ * ## Por qué reemplazó a `TimelineEditPayload`
+ *
+ * Aquel tipo tenía **una variante por tipo de ítem** —insulina, carbos,
+ * glucosa, nota, entrada— y cada variante llevaba su propio subconjunto de
+ * campos. Esa forma era el problema, no un síntoma: codificaba en el tipo que
+ * "una insulina solo puede editar unidades", que es exactamente la regla que
+ * `projectbrief.md` prohíbe. El tipo con el que nació un evento no restringe
+ * lo que se le puede sumar después, así que **hay un solo payload** y lo que
+ * cambia es qué sección se abre primero.
+ *
+ * ## Semántica de cada campo
+ *
+ * Reemplazo completo para lo que el formulario muestra entero (un campo
+ * vaciado se borra); **parche** para lo que no es un campo de texto: la foto,
+ * el análisis y los vitales. Ver `UnifiedEntryInput` y `VitalsPatch` en
+ * `db.ts`, que hablan el mismo idioma.
  */
-export type TimelineEditPayload =
-  | { kind: 'insulin'; type: 'rapid' | 'basal'; units: number; insulinName?: string }
-  | { kind: 'carbs'; carbsG: number }
-  // La comida NO tiene variante acá: desde la Fase 17 se edita en
-  // `MealEditModal`, que además de la nota toca macros, carbohidratos
-  // confirmados y foto, y ofrece los tres modos de IA. Un segundo camino de
-  // edición inline para lo mismo garantizaba que los dos se fueran
-  // separando.
-  // A standalone glucose reading. `glucose` (the value) is only present when
-  // editing a hand-typed 'manual' reading — a sensor/imported/synthetic value
-  // is read-only. The optional attachment fields turn a bare reading into a
-  // packaged entry anchored on it (Verónica adding carbs/insulina to an
-  // auto-saved sensor reading she measured a meal against after the fact).
-  | {
-      kind: 'glucose';
-      glucose?: number;
-      carbsG?: number;
-      description?: string;
-      proteinG?: number;
-      fatG?: number;
-      fiberG?: number;
-      /** Ver la nota homónima en la variante `'entry'`. */
-      ketonesMmolL?: number;
-      /** La usuaria vació el campo: borrar las cetonas de esta entrada. */
-      clearKetones?: true;
-      rapidUnits?: number;
-      basalUnits?: number;
-      note?: string;
-      rapidIncludesCorrection?: boolean;
-    }
-  | { kind: 'note'; text: string }
-  // Whatever a field omits gets deleted from the group, not left alone —
-  // this is a full replace of the packaged entry's contents, matching what
-  // the edit form shows (every field, blank ones included).
-  | {
-      kind: 'entry';
-      manualGlucose?: number;
-      carbsG?: number;
-      description?: string;
-      proteinG?: number;
-      fatG?: number;
-      fiberG?: number;
-      /**
-       * Cetonas en sangre, mmol/L (2026-08-25). El editor tiene que poder
-       * guardar lo mismo que "Nueva entrada" — pedido repetido de Verónica.
-       */
-      ketonesMmolL?: number;
-      rapidUnits?: number;
-      basalUnits?: number;
-      note?: string;
-      rapidIncludesCorrection?: boolean;
-    };
+export interface MasterEditPayload {
+  /**
+   * Fecha y hora corregidas. Ausente = el registro no se mueve.
+   *
+   * Mover es una transacción única que arrastra el episodio, la fila espejo
+   * de carbohidratos y todas las filas del grupo. Lo que **nunca** se mueve
+   * es `ingestedAt` ni la hora de una lectura de sensor.
+   */
+  timestamp?: string;
+  /** Solo para una glucosa capilar tecleada por la usuaria. */
+  manualGlucose?: number;
+  carbsG?: number;
+  description?: string;
+  proteinG?: number;
+  fatG?: number;
+  fiberG?: number;
+  caloriesKcal?: number;
+  /** Parche: ausente no toca la foto guardada, `null` la quita. */
+  imageUri?: string | null;
+  /** Un análisis nuevo, cuando la edición pasó por la IA o por el carrito. */
+  aiEstimatedCarbsG?: number;
+  aiAnalysisId?: string;
+  macrosSource?: MealEvent['macrosSource'] | null;
+  rapidUnits?: number;
+  basalUnits?: number;
+  rapidIncludesCorrection?: boolean;
+  /**
+   * Cetonas, peso y presión. `undefined` = no se tocó · `null` = borrar.
+   * Corregir una cetona no puede llevarse el peso de la misma fila.
+   */
+  vitals?: {
+    ketonesMmolL?: number | null;
+    weightKg?: number | null;
+    systolicBP?: number | null;
+    diastolicBP?: number | null;
+  };
+  note?: string;
+}
 
 export interface PendingInsulinAssociation {
   episodeId: string;

@@ -25,6 +25,7 @@ import {
   buildReportRows,
   catalogEntriesFrom,
   catalogEntryFromPortion,
+  insulinNameForType,
   isPlausibleInsulinDuration,
   latestLiveReading,
   MAX_INSULIN_DURATION_HOURS,
@@ -47,12 +48,14 @@ import type {
 // no UI on screen — see backgroundSync.ts.
 import { registerBackgroundSync } from './src/backgroundSync';
 import { CorrectionModal } from './src/components/CorrectionModal';
-import { UnifiedEntryModal, type UnifiedEntryDraft } from './src/components/UnifiedEntryModal';
+import { UnifiedEntryModal, type MasterMode, type UnifiedEntryDraft } from './src/components/UnifiedEntryModal';
+import { MealEditModal } from './src/components/MealEditModal';
+import { QuickNumericModal, type QuickNumericKind } from './src/components/QuickNumericModal';
 import { insulinProfileFields } from './src/components/InsulinPicker';
 import { GlucoseCard } from './src/components/GlucoseCard';
 import { InsulinAssociationModal } from './src/components/InsulinAssociationModal';
-import type { MealEditResult } from './src/components/MealEditModal';
 import { CatalogModal, type CatalogEdit } from './src/components/CatalogModal';
+import type { MealEditResult } from './src/components/MealEditModal';
 import { MealModal, type ConfirmedMealDraft } from './src/components/MealModal';
 import { SettingsModal } from './src/components/SettingsModal';
 import { BottomNav, type NavDestination } from './src/components/BottomNav';
@@ -124,14 +127,14 @@ import {
   resolveLegacyBackendSensor,
   saveTherapyProfile,
   saveUnifiedEntry,
+  saveVitalsEvent,
   setSetting,
-  updateCarbEvent,
-  updateInsulinEvent,
-  updateManualCGMReading,
+  promoteEventToEntryGroup,
   updateMealFromEdit,
-  updateNoteEvent,
   updateUnifiedEntryGroup,
   upsertCGMReadings,
+  type UnifiedEntryInput,
+  type UnifiedEntryOutcome,
   type CapillaryReminderSettings,
   type CorrectionReminderSettings,
 } from './src/db';
@@ -144,6 +147,7 @@ import {
   quickRouteFromNotificationAction,
   ensureReminderChannels,
   setActiveAlertStyle,
+  cancelEpisodeNotifications,
   scheduleCapillaryReminders,
   scheduleCorrectionReminder,
   scheduleEpisodeNotifications,
@@ -152,7 +156,9 @@ import { capillaryReminderTimes } from './src/format';
 import { colors, radius, spacing } from './src/theme';
 import type { NutritionProfile } from '@type1a/schemas';
 import { normalizeQuickRoute } from './src/types';
-import type { EntryFocus, LegacyQuickRoute, NutritionDayData, PendingInsulinAssociation, QuickRoute, ReminderAlertStyle, ReportExport, SummaryData, TimelineEditPayload, TimelineItem } from './src/types';
+import { masterSeedFrom, masterTargetOf, masterTitleFor } from './src/masterModal';
+import { dayRange, isSameDay, MONTH_NAMES, startOfDay } from './src/entryTime';
+import type { EntryFocus, LegacyQuickRoute, MasterEditPayload, NutritionDayData, PendingInsulinAssociation, QuickRoute, ReminderAlertStyle, ReportExport, SummaryData, TimelineItem } from './src/types';
 
 /** Flag de "ya vio la bienvenida"; vive en `settings`, no en el perfil de terapia. */
 const ONBOARDING_SEEN_KEY = 'onboardingSeenAt';
@@ -189,12 +195,26 @@ function Type1AApp() {
   const [quickRoute, setQuickRoute] = useState<QuickRoute | null>(null);
   const [mealOpen, setMealOpen] = useState(false);
   /**
-   * El Modal Maestro: `null` = cerrado, un foco = abierto con esa sección
-   * expandida. Reemplaza a `entryOpen` + `ketonesOpen` + la ruta 'basal' de
-   * `NumericEntryModal`, que eran tres banderas para tres modales distintos
-   * cuando lo que cambiaba entre ellos era qué mostrar primero.
+   * El Modal Maestro: `null` = cerrado.
+   *
+   * Un solo estado para **crear y editar**, porque es un solo componente
+   * (`projectbrief.md`: "Nueva entrada y TODOS los modales de edición
+   * consumen un mismo componente maestro"). Antes esto era un `EntryFocus`
+   * suelto y la edición vivía en formularios inline dentro del detalle del
+   * timeline, que sabían menos que el de creación.
    */
-  const [entryFocus, setEntryFocus] = useState<EntryFocus | null>(null);
+  const [masterMode, setMasterMode] = useState<MasterMode | null>(null);
+  /** Con qué sección arranca abierto al **crear**. Al editar manda el contenido. */
+  const [entryFocus, setEntryFocus] = useState<EntryFocus>('all');
+  /** Los accesos rápidos dedicados de Basal y Cetonas. `null` = cerrados. */
+  const [quickNumeric, setQuickNumeric] = useState<QuickNumericKind | null>(null);
+  /** La comida abierta en su editor con IA, hospedado desde el maestro. */
+  const [editingMeal, setEditingMeal] = useState<MealEvent | null>(null);
+  /**
+   * El día que muestra Nutrición. Manda sobre las consultas del día y sobre el
+   * estado del botón "+", que cambia cuando no es hoy.
+   */
+  const [nutritionDay, setNutritionDay] = useState<Date>(() => startOfDay(new Date()));
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [nutritionOpen, setNutritionOpen] = useState(false);
@@ -387,10 +407,12 @@ function Type1AApp() {
    */
   const openQuickRoute = useCallback((route: QuickRoute): void => {
     if (route === 'meal') { setMealOpen(true); return; }
-    // Basal ya no monta su propio modal numérico: es el Modal Maestro abierto
-    // en la sección de insulina. Así anotar la basal y acordarse de la
-    // glucosa deja de ser dos flujos separados.
-    if (route === 'basal') { setEntryFocus('insulin'); return; }
+    // Basal vuelve a tener su modal dedicado y breve. No es volver atrás: el
+    // fallo que produjo la fusión no fue tener modales pequeños, fue que cada
+    // uno traía su copia del parseo y la escritura. `QuickNumericModal` es uno
+    // solo, parametrizado, sin lógica clínica propia — y ofrece la salida al
+    // maestro para quien además quiera anotar la glucosa.
+    if (route === 'basal') { setQuickNumeric('basal'); return; }
     setQuickRoute(route);
   }, []);
 
@@ -445,13 +467,60 @@ function Type1AApp() {
       source: 'manual',
       createdAt: timestamp,
       purpose: 'correction',
-      ...(profile.rapidInsulinName === undefined ? {} : { insulinName: profile.rapidInsulinName }),
+      ...(insulinNameForType(profile, 'rapid') === undefined
+        ? {}
+        : { insulinName: insulinNameForType(profile, 'rapid')! }),
     });
     await loadLocalState();
     if (correctionReminder.enabled) {
       await scheduleCorrectionReminder(timestamp, correctionReminder.offsetMinutes, reminderAlertStyle);
     }
     setNotice(`Se registraron ${units} U de rápida tras confirmación.`);
+  }
+
+  /**
+   * El acceso rápido de basal.
+   *
+   * Escribe por la misma función que el maestro (`saveInsulinEvent`) y estampa
+   * el nombre con la misma función de dominio (`insulinNameForType`): lo único
+   * propio del acceso rápido es cuántos toques cuesta llegar, no qué se
+   * guarda.
+   */
+  async function registerBasal(units: number): Promise<void> {
+    const timestamp = new Date().toISOString();
+    const name = insulinNameForType(profile, 'basal');
+    await saveInsulinEvent(db, {
+      id: Crypto.randomUUID(),
+      timestamp,
+      type: 'basal',
+      units,
+      source: 'manual',
+      createdAt: timestamp,
+      ...(name === undefined ? {} : { insulinName: name }),
+    });
+    await loadLocalState();
+    setNotice(`Se registraron ${units} U de basal.`);
+  }
+
+  /**
+   * El acceso rápido de cetonas.
+   *
+   * La banda la decide `assessKetones` en `packages/domain` y la muestra el
+   * propio modal; acá solo se escribe la fila. Es el dato de triage de
+   * cetoacidosis, así que va a `vitals_events` como cualquier otra medición y
+   * el timeline la lee por el mismo camino.
+   */
+  async function registerKetones(ketonesMmolL: number): Promise<void> {
+    const timestamp = new Date().toISOString();
+    await saveVitalsEvent(db, {
+      id: Crypto.randomUUID(),
+      timestamp,
+      ketonesMmolL,
+      source: 'manual',
+      createdAt: timestamp,
+    });
+    await loadLocalState();
+    setNotice(`Se registraron ${ketonesMmolL} mmol/L de cetonas.`);
   }
 
   /**
@@ -575,7 +644,7 @@ function Type1AApp() {
       if (draft.catalogWrite !== undefined) await applyCatalogWrite(draft.catalogWrite, timestamp);
       if (draft.analysis !== undefined && draft.saveToCatalog !== false) {
         try {
-          await recordCatalogFoods(db, catalogEntriesFrom(draft.analysis.estimate.foods, timestamp));
+          await recordCatalogFoods(db, catalogEntriesFrom(draft.analysis.estimate.foods, timestamp, draft.imageUri));
         } catch (error) {
           logSaveError('App.recordCatalogFoods', error);
           setNotice('No se pudo guardar en el catálogo.');
@@ -607,7 +676,9 @@ function Type1AApp() {
           source: 'manual',
           createdAt: timestamp,
           purpose: 'meal',
-          ...(profile.rapidInsulinName === undefined ? {} : { insulinName: profile.rapidInsulinName }),
+          ...(insulinNameForType(profile, 'rapid') === undefined
+            ? {}
+            : { insulinName: insulinNameForType(profile, 'rapid')! }),
         });
       } catch (error) {
         logSaveError('App.confirmMealInsulin', error);
@@ -623,7 +694,9 @@ function Type1AApp() {
     // comida se guarde: es una comodidad, no parte del registro.
     if (draft.analysis !== undefined && draft.saveToCatalog !== false) {
       try {
-        await recordCatalogFoods(db, catalogEntriesFrom(draft.analysis.estimate.foods, timestamp));
+        // Ver `saveEntry`: la foto es representación del alimento, no
+        // evidencia de sus macros.
+        await recordCatalogFoods(db, catalogEntriesFrom(draft.analysis.estimate.foods, timestamp, draft.imageUri));
       } catch (error) {
         logSaveError('App.recordCatalogFoods', error);
       }
@@ -631,6 +704,40 @@ function Type1AApp() {
     await scheduleEpisodeNotifications(episodeId, timestamp, mealAlarmOffsets, reminderAlertStyle);
     setNotice(`Comida guardada. El episodio se completará con CGM a ${mealAlarmOffsets.map((minutes) => `+${minutes}`).join(', ')} minutos.`);
     await loadLocalState();
+  }
+
+  /** Abre el maestro en modo creación, con la sección `focus` desplegada. */
+  function openMasterCreate(focus: EntryFocus, presetDay: Date | null = null): void {
+    setEntryFocus(focus);
+    setMasterMode({
+      kind: 'create',
+      ...(presetDay === null ? {} : { presetDay }),
+      onSave: saveEntry,
+    });
+  }
+
+  /**
+   * Abre el maestro sobre un registro existente.
+   *
+   * La semilla y el título los calcula `masterModal.ts`, puro y con test: qué
+   * secciones arrancan abiertas depende del **contenido**, no de qué botón lo
+   * abrió, y qué se puede mover en el tiempo depende de si el dato lo escribió
+   * ella o lo reportó una fuente externa.
+   */
+  function openMasterEdit(item: TimelineItem): void {
+    setMasterMode({
+      kind: 'edit',
+      seed: masterSeedFrom(item),
+      title: masterTitleFor(item),
+      onSave: (payload) => saveMasterEdit(item, payload),
+      onEditMeal: (meal) => {
+        // Se cierra el maestro ANTES de abrir el editor de comida: dos `Modal`
+        // de React Native encimados en Android dejan el de abajo capturando
+        // los toques, y el de arriba se ve pero no responde.
+        setMasterMode(null);
+        setEditingMeal(meal);
+      },
+    });
   }
 
   async function saveEntry(draft: UnifiedEntryDraft): Promise<void> {
@@ -679,12 +786,23 @@ function Type1AApp() {
       ...(draft.proteinG === undefined ? {} : { proteinG: draft.proteinG }),
       ...(draft.fatG === undefined ? {} : { fatG: draft.fatG }),
       ...(draft.fiberG === undefined ? {} : { fiberG: draft.fiberG }),
+      ...(draft.caloriesKcal === undefined ? {} : { caloriesKcal: draft.caloriesKcal }),
       // `UnifiedEntryInput` declara `macrosSource` desde el 2026-08-26. Antes
       // no, y como esto es un spread, TypeScript lo dejaba pasar y `db.ts` lo
       // descartaba: los macros de la IA llegaban al reporte médico sin
       // procedencia. No agregues un campo acá sin verlo en esa interfaz.
       ...(macrosSource === undefined ? {} : { macrosSource }),
-      ...(draft.ketonesMmolL === undefined ? {} : { ketonesMmolL: draft.ketonesMmolL }),
+      // Cetonas, peso y presión en el mismo idioma de parche que usa la
+      // edición: un número es un valor, la ausencia no borra nada.
+      vitals: {
+        ...(draft.ketonesMmolL === undefined ? {} : { ketonesMmolL: draft.ketonesMmolL }),
+        ...(draft.weightKg === undefined ? {} : { weightKg: draft.weightKg }),
+        ...(draft.systolicBP === undefined ? {} : { systolicBP: draft.systolicBP }),
+        ...(draft.diastolicBP === undefined ? {} : { diastolicBP: draft.diastolicBP }),
+      },
+      // El nombre se estampa al crear y queda congelado. La app no inventa uno
+      // si no hay configuración.
+      profileInsulinNames: profileInsulinNames(),
     });
     // Mismo trato que `confirmMeal`: una comida analizada por IA alimenta el
     // catálogo, venga del formulario que venga. Esta hoja no lo hacía, así que
@@ -698,7 +816,10 @@ function Type1AApp() {
     // sin ofrecer la decisión: dos caminos para lo mismo con reglas distintas.
     if (draft.analysis !== undefined && draft.saveToCatalog !== false) {
       try {
-        await recordCatalogFoods(db, catalogEntriesFrom(draft.analysis.estimate.foods, draft.timestamp));
+        // La foto de la comida viaja al catálogo como **representación** del
+        // alimento. Sale de la imagen real que ella sacó, nunca se genera, y
+        // no se usa para inferir macros: los macros vienen del análisis.
+        await recordCatalogFoods(db, catalogEntriesFrom(draft.analysis.estimate.foods, draft.timestamp, draft.imageUri));
       } catch (error) {
         logSaveError('App.recordCatalogFoods', error);
       }
@@ -755,32 +876,47 @@ function Type1AApp() {
   );
 
   /**
-   * Dos ventanas distintas a propósito: el día de hoy para las metas, y 90
-   * días para los patrones de grasa/proteína, que necesitan muchas comidas
-   * con macros anotados para tener algo que comparar. Las lecturas cubren la
-   * ventana larga más un margen, porque la respuesta a una comida tardía cae
-   * al día siguiente.
+   * Dos ventanas distintas a propósito: el **día seleccionado** para las metas,
+   * y 90 días para los patrones de grasa/proteína, que necesitan muchas
+   * comidas con macros anotados para tener algo que comparar. Las lecturas
+   * cubren la ventana larga más un margen, porque la respuesta a una comida
+   * tardía cae al día siguiente.
+   *
+   * ## Por qué recibe el día
+   *
+   * Antes no lo recibía: filtraba contra `new Date()` y la pantalla estaba
+   * clavada en "hoy". Revisar lo que se comió ayer —que es *la* razón por la
+   * que existe una pantalla de nutrición— no se podía. El rango llega
+   * explícito desde el Strip Calendar (`dayRange`, puro y con test), así que
+   * "el día" es siempre un rango local semiabierto y no una comparación
+   * contra el reloj.
+   *
+   * **La ventana de patrones no se mueve con el día seleccionado.** Son dos
+   * preguntas distintas: "qué comí el martes" y "qué patrón se ve en 90 días".
+   * Anclar la segunda al día elegido rompería la ventana analítica cada vez
+   * que ella navega el calendario.
    */
-  const loadNutritionDay = useCallback(async (): Promise<NutritionDayData> => {
+  const loadNutritionDay = useCallback(async (day: Date): Promise<NutritionDayData> => {
     const tally = createDecodeTally();
     const now = new Date();
-    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const { from: dayStart, to: dayEnd } = dayRange(day);
     const patternStart = new Date(now.getTime() - 90 * 24 * 60 * 60_000);
     // La insulina, los carbohidratos y la actividad de la ventana LARGA son
     // los que permiten descartar episodios confundidos (Fase 23) — sin ellos,
     // una colación a las 2 h entra al promedio de grasa/proteína como si
-    // fuera efecto tardío de la comida. `dayCarbs` sigue siendo la ventana
-    // corta porque alimenta las metas del día, que es otra pregunta.
-    const [patternMeals, dayCarbs, readings, patternInsulin, patternCarbs, patternActivity] = await Promise.all([
+    // fuera efecto tardío de la comida. `dayCarbs` y `dayMeals` son la ventana
+    // del día seleccionado, que es otra pregunta.
+    const [dayMeals, dayCarbs, patternMeals, readings, patternInsulin, patternCarbs, patternActivity] = await Promise.all([
+      getMealEvents(db, dayStart, dayEnd, tally),
+      getCarbEvents(db, dayStart, dayEnd, tally),
       getMealEvents(db, patternStart, now, tally),
-      getCarbEvents(db, dayStart, now, tally),
       getCGMReadings(db, patternStart, now, tally),
       getInsulinEvents(db, patternStart, now, tally),
       getCarbEvents(db, patternStart, now, tally),
       getActivityEvents(db, patternStart, now),
     ]);
     return {
-      dayMeals: patternMeals.filter((meal) => Date.parse(meal.timestamp) >= dayStart.getTime()),
+      dayMeals,
       dayCarbs,
       patternMeals,
       patternInsulin,
@@ -789,11 +925,6 @@ function Type1AApp() {
       readings,
       rapidLookbackMinutes: rapidInsulinLookbackMinutes(profile),
       basalLookbackMinutes: basalInsulinLookbackMinutes(profile),
-      // Al control médico: con qué insulina se generaron estos números.
-      ...(profile.rapidInsulinId === undefined ? {} : { rapidInsulinId: profile.rapidInsulinId }),
-      ...(profile.basalInsulinId === undefined ? {} : { basalInsulinId: profile.basalInsulinId }),
-      ...(profile.rapidInsulinDurationHours === undefined ? {} : { rapidInsulinDurationHours: profile.rapidInsulinDurationHours }),
-      ...(profile.basalInsulinDurationHours === undefined ? {} : { basalInsulinDurationHours: profile.basalInsulinDurationHours }),
       unreadableCount: tally.unreadable,
     };
   }, [db, profile]);
@@ -871,71 +1002,117 @@ function Type1AApp() {
     await scheduleCapillaryReminders(times ?? [], reminderAlertStyle);
   }
 
-  async function saveTimelineItem(item: TimelineItem, payload: TimelineEditPayload): Promise<void> {
-    if (payload.kind === 'insulin') {
-      await updateInsulinEvent(db, item.id, {
-        type: payload.type,
-        units: payload.units,
-        ...(payload.insulinName === undefined ? {} : { insulinName: payload.insulinName }),
-      });
-    } else if (payload.kind === 'carbs') {
-      await updateCarbEvent(db, item.id, payload.carbsG);
-    } else if (payload.kind === 'glucose') {
-      const hasAttachments = payload.carbsG !== undefined || payload.description !== undefined
-        || payload.rapidUnits !== undefined || payload.basalUnits !== undefined || payload.note !== undefined
-        || payload.proteinG !== undefined || payload.fatG !== undefined || payload.fiberG !== undefined
-        || payload.ketonesMmolL !== undefined;
-      if (hasAttachments) {
-        // Turn the standalone reading into a packaged entry anchored on it.
-        const outcome = await attachEntryToReading(db, item.id, {
-          rapidIncludesCorrection: payload.rapidIncludesCorrection === true,
-          ...(payload.glucose === undefined ? {} : { manualGlucose: payload.glucose }),
-          ...(payload.carbsG === undefined ? {} : { carbsG: payload.carbsG }),
-          ...(payload.description === undefined ? {} : { description: payload.description }),
-          // Fase 21: los macros viajan igual que al crear. Sin esto, el
-          // formulario los pedía y el guardado los tiraba.
-          ...(payload.proteinG === undefined ? {} : { proteinG: payload.proteinG }),
-          ...(payload.fatG === undefined ? {} : { fatG: payload.fatG }),
-          ...(payload.fiberG === undefined ? {} : { fiberG: payload.fiberG }),
-          ...(payload.ketonesMmolL === undefined ? {} : { ketonesMmolL: payload.ketonesMmolL }),
-        ...(payload.clearKetones === true ? { clearKetones: true } : {}),
-          ...(payload.rapidUnits === undefined ? {} : { rapidUnits: payload.rapidUnits }),
-          ...(payload.basalUnits === undefined ? {} : { basalUnits: payload.basalUnits }),
-          ...(payload.note === undefined ? {} : { note: payload.note }),
-        });
-        if (outcome.episodeId !== null) {
-          // Offsets in the past self-skip; a reading measured minutes ago can
-          // still have future check-ins worth scheduling.
-          await scheduleEpisodeNotifications(outcome.episodeId, item.timestamp, mealAlarmOffsets, reminderAlertStyle);
-        }
-        if (outcome.savedRapid && payload.rapidIncludesCorrection === true && correctionReminder.enabled) {
-          await scheduleCorrectionReminder(item.timestamp, correctionReminder.offsetMinutes, reminderAlertStyle);
-        }
-        // Compute the retroactive episode right away from the CGM around that
-        // time, rather than waiting for the next refresh.
-        await processReadyEpisodes(db);
-      } else if (payload.glucose !== undefined) {
-        await updateManualCGMReading(db, item.id, payload.glucose);
-      }
-    } else if (payload.kind === 'note') {
-      await updateNoteEvent(db, item.id, payload.text);
-    } else {
-      await updateUnifiedEntryGroup(db, item.id, {
-        timestamp: item.timestamp,
-        rapidIncludesCorrection: payload.rapidIncludesCorrection === true,
-        ...(payload.manualGlucose === undefined ? {} : { manualGlucose: payload.manualGlucose }),
-        ...(payload.carbsG === undefined ? {} : { carbsG: payload.carbsG }),
-        ...(payload.description === undefined ? {} : { description: payload.description }),
-        ...(payload.proteinG === undefined ? {} : { proteinG: payload.proteinG }),
-        ...(payload.fatG === undefined ? {} : { fatG: payload.fatG }),
-        ...(payload.fiberG === undefined ? {} : { fiberG: payload.fiberG }),
-        ...(payload.ketonesMmolL === undefined ? {} : { ketonesMmolL: payload.ketonesMmolL }),
-        ...(payload.rapidUnits === undefined ? {} : { rapidUnits: payload.rapidUnits }),
-        ...(payload.basalUnits === undefined ? {} : { basalUnits: payload.basalUnits }),
-        ...(payload.note === undefined ? {} : { note: payload.note }),
-      });
+  /**
+   * Los nombres de insulina configurados, para estampar y reestampar.
+   *
+   * Viajan como dato hasta `db.ts`, que se los pasa a
+   * `resolveInsulinNameForEdit` en `packages/domain`. La app no infiere
+   * ninguno: si no hay configuración, el registro se guarda sin nombre.
+   */
+  function profileInsulinNames(): { rapidInsulinName?: string; basalInsulinName?: string } {
+    return {
+      ...(profile.rapidInsulinName === undefined ? {} : { rapidInsulinName: profile.rapidInsulinName }),
+      ...(profile.basalInsulinName === undefined ? {} : { basalInsulinName: profile.basalInsulinName }),
+    };
+  }
+
+  /**
+   * Cancela y reprograma las alarmas de los episodios que se movieron de hora.
+   *
+   * **Cancelar va primero, siempre.** Al revés, la cancelación por episodio se
+   * llevaría por delante las que se acaban de crear. Sin esto, corregir la
+   * hora de una comida no reemplazaba sus tres alarmas: las sumaba, y el
+   * teléfono avisaba seis veces por un solo plato.
+   */
+  async function rescheduleMovedEpisodes(outcome: UnifiedEntryOutcome, timestamp: string): Promise<void> {
+    for (const episodeId of outcome.movedEpisodeIds) {
+      await cancelEpisodeNotifications(episodeId);
     }
+    for (const episodeId of outcome.movedEpisodeIds) {
+      // Los offsets que ya quedaron en el pasado se saltan solos; los que no,
+      // se reprograman sobre la hora nueva.
+      await scheduleEpisodeNotifications(episodeId, timestamp, mealAlarmOffsets, reminderAlertStyle);
+    }
+  }
+
+  /**
+   * Guarda la edición de **cualquier** registro histórico, desde el Modal
+   * Maestro.
+   *
+   * ## La regla que reemplaza a las cinco ramas anteriores
+   *
+   * Antes había una rama por tipo de ítem, y cada una sabía guardar un
+   * subconjunto distinto: la de insulina solo unidades, la de carbos solo
+   * gramos, la de nota solo texto. Eso codificaba "el tipo con el que nació un
+   * evento restringe lo que se le puede sumar", que es exactamente lo que
+   * `projectbrief.md` prohíbe.
+   *
+   * Ahora hay **una** ruta de escritura, y lo único que decide el tipo del
+   * ítem es *dónde* aterriza (`masterTargetOf`, puro y con test):
+   *
+   * - ya es un grupo → se edita en su sitio;
+   * - es una lectura suelta → se le adjunta sin tocar su valor ni su hora;
+   * - es un evento suelto → se **promueve** a grupo, conservando id,
+   *   timestamp, `created_at`, `source` y procedencia, y después se edita por
+   *   el mismo camino que todos.
+   */
+  async function saveMasterEdit(item: TimelineItem, payload: MasterEditPayload): Promise<void> {
+    const target = masterTargetOf(item);
+    // Un episodio es un agregado calculado: se lee y se borra, no se edita.
+    if (target.kind === 'readonly') return;
+
+    const timestamp = payload.timestamp ?? item.timestamp;
+    const input: UnifiedEntryInput = {
+      timestamp,
+      rapidIncludesCorrection: payload.rapidIncludesCorrection === true,
+      profileInsulinNames: profileInsulinNames(),
+      ...(payload.manualGlucose === undefined ? {} : { manualGlucose: payload.manualGlucose }),
+      ...(payload.carbsG === undefined ? {} : { carbsG: payload.carbsG }),
+      ...(payload.description === undefined ? {} : { description: payload.description }),
+      ...(payload.proteinG === undefined ? {} : { proteinG: payload.proteinG }),
+      ...(payload.fatG === undefined ? {} : { fatG: payload.fatG }),
+      ...(payload.fiberG === undefined ? {} : { fiberG: payload.fiberG }),
+      ...(payload.caloriesKcal === undefined ? {} : { caloriesKcal: payload.caloriesKcal }),
+      ...(payload.imageUri === undefined ? {} : { imageUri: payload.imageUri }),
+      ...(payload.aiEstimatedCarbsG === undefined ? {} : { aiEstimatedCarbsG: payload.aiEstimatedCarbsG }),
+      ...(payload.aiAnalysisId === undefined ? {} : { aiAnalysisId: payload.aiAnalysisId }),
+      ...(payload.macrosSource === undefined ? {} : { macrosSource: payload.macrosSource }),
+      ...(payload.rapidUnits === undefined ? {} : { rapidUnits: payload.rapidUnits }),
+      ...(payload.basalUnits === undefined ? {} : { basalUnits: payload.basalUnits }),
+      ...(payload.vitals === undefined ? {} : { vitals: payload.vitals }),
+      ...(payload.note === undefined ? {} : { note: payload.note }),
+    };
+
+    let outcome: UnifiedEntryOutcome;
+    if (target.kind === 'group') {
+      outcome = await updateUnifiedEntryGroup(db, target.entryGroupId, input);
+    } else if (target.kind === 'reading') {
+      // La lectura conserva valor, origen y hora de su fuente. Solo una
+      // capilar que ella tecleó admite corregir el valor, y eso lo decide
+      // `attachEntryToReading`, no esta capa.
+      outcome = await attachEntryToReading(db, target.readingId, input);
+    } else {
+      // Promoción: idempotente, así que un doble toque no acuña dos grupos.
+      const entryGroupId = await promoteEventToEntryGroup(db, target.table, target.rowId);
+      outcome = await updateUnifiedEntryGroup(db, entryGroupId, input);
+    }
+
+    // Primero cancelar lo que dejó de describir la realidad, después
+    // recalcular, y solo entonces programar lo nuevo.
+    await rescheduleMovedEpisodes(outcome, timestamp);
+    if (outcome.episodeId !== null) {
+      await cancelEpisodeNotifications(outcome.episodeId);
+      await scheduleEpisodeNotifications(outcome.episodeId, timestamp, mealAlarmOffsets, reminderAlertStyle);
+    }
+    if (outcome.savedRapid && payload.rapidIncludesCorrection === true && correctionReminder.enabled) {
+      await scheduleCorrectionReminder(timestamp, correctionReminder.offsetMinutes, reminderAlertStyle);
+    }
+    // El episodio se recalcula acá y no en el próximo refresh: el resumen
+    // post-comida quedaría en blanco mientras tanto, y ella acaba de mirar
+    // justo ese registro.
+    await processReadyEpisodes(db);
     await loadLocalState();
+    setNotice('Cambios guardados.');
   }
 
   /**
@@ -1012,18 +1189,36 @@ function Type1AApp() {
         : summaryOpen ? 'summary'
           : null;
 
+  /**
+   * `true` cuando el "+" registraría en una fecha pasada.
+   *
+   * Es exactamente "Nutrición abierta en un día que no es hoy". Se calcula acá
+   * y no dentro de la barra porque la barra dibuja, no decide: el estado del
+   * botón tiene que apagarse solo al volver a hoy, al cerrar Nutrición y al
+   * navegar a cualquier otro destino, y esas tres condiciones viven en este
+   * estado.
+   */
+  const pastEntryDay: Date | null = nutritionOpen && !isSameDay(nutritionDay, new Date())
+    ? nutritionDay
+    : null;
+
   function navigateTo(destination: NavDestination | null): void {
     // Se cierra todo antes de abrir: dos modales encimados dejan uno
     // inalcanzable detrás del otro. `null` = volver a la pantalla principal,
     // que es lo que hace el swipe cuando vuelve al centro del recorrido.
+    //
+    // ⚠️ El "+" se lee **antes** de cerrar Nutrición: cerrarla apaga
+    // `pastEntryDay`, así que leerlo después perdería la fecha heredada y la
+    // entrada se guardaría con la hora de ahora, en silencio.
+    const inheritedDay = destination === 'entry' ? pastEntryDay : null;
     setNutritionOpen(false);
     setCatalogOpen(false);
     setSummaryOpen(false);
-    setEntryFocus(null);
+    setMasterMode(null);
     if (destination === null) return;
     if (destination === 'nutrition') setNutritionOpen(true);
     else if (destination === 'summary') setSummaryOpen(true);
-    else if (destination === 'entry') setEntryFocus('all');
+    else if (destination === 'entry') openMasterCreate('all', inheritedDay);
     else if (destination === 'catalog') setCatalogOpen(true);
     else if (destination === 'chat') {
       setNotice('El chat de IA todavía no está disponible.');
@@ -1151,12 +1346,14 @@ function Type1AApp() {
             Icon={Syringe}
             color={colors.navy}
             soft="#E7EDF2"
-            onPress={() => { setEntryFocus('insulin'); }}
+            onPress={() => { setQuickNumeric('basal'); }}
           />
           {/*
-            Cetonas queda acá y no dentro de "Nueva entrada" porque el momento
-            en que se mide —enfermedad, glucosa alta sostenida— es justo
-            cuando no se quiere navegar.
+            Cetonas tiene modal propio y no una sección del maestro: el momento
+            en que se mide —enfermedad, glucosa alta sostenida— es justo cuando
+            no se quiere navegar, y un formulario de seis secciones se lee como
+            un formulario largo aunque cinco vengan plegadas. Desde adentro hay
+            una salida al maestro para quien además quiera anotar la glucosa.
           */}
           <QuickButton
             label="Cetonas"
@@ -1164,11 +1361,11 @@ function Type1AApp() {
             Icon={FlaskConical}
             color={colors.red}
             soft={colors.redSoft}
-            onPress={() => { setEntryFocus('ketones'); }}
+            onPress={() => { setQuickNumeric('ketones'); }}
           />
         </View>
 
-        <Timeline items={timeline} onSaveItem={saveTimelineItem} onDeleteItem={deleteTimelineItem} onSaveMealEdit={saveMealEdit} />
+        <Timeline items={timeline} onEditItem={openMasterEdit} onDeleteItem={deleteTimelineItem} />
 
         <View style={styles.footerSafety}>
           <Text style={styles.footerTitle}>Software de desarrollo</Text>
@@ -1192,15 +1389,51 @@ function Type1AApp() {
         }}
         onRegister={registerCorrection}
       />
+      {/*
+        **Un solo Modal Maestro montado**, para crear y para editar. Montar dos
+        instancias —una en el timeline, otra acá— es cómo se termina con dos
+        formularios que divergen, que es la historia que este archivo ya vivió.
+      */}
       <UnifiedEntryModal
-        visible={entryFocus !== null}
-        focus={entryFocus ?? 'all'}
+        mode={masterMode}
+        focus={entryFocus}
         latest={latest}
         profile={profile}
         therapyConfigured={therapyConfigured}
         catalogFoods={catalogFoods}
-        onClose={() => { setEntryFocus(null); }}
-        onSave={saveEntry}
+        onClose={() => { setMasterMode(null); }}
+        onOpenTherapySettings={() => { setMasterMode(null); setSettingsOpen(true); }}
+      />
+      {/*
+        Los accesos rápidos dedicados. Un solo componente parametrizado, sin
+        lógica clínica propia: la banda de cetonas la decide `assessKetones` en
+        `packages/domain` y se muestra escrita, no solo en el tono.
+      */}
+      <QuickNumericModal
+        kind={quickNumeric ?? 'basal'}
+        visible={quickNumeric !== null}
+        {...(quickNumeric === 'basal' && profile.basalInsulinName !== undefined
+          ? { insulinName: profile.basalInsulinName }
+          : {})}
+        onClose={() => { setQuickNumeric(null); }}
+        onSave={quickNumeric === 'basal' ? registerBasal : registerKetones}
+        onOpenFullEntry={() => {
+          const focus: EntryFocus = quickNumeric === 'basal' ? 'insulin' : 'ketones';
+          setQuickNumeric(null);
+          openMasterCreate(focus);
+        }}
+      />
+      {/*
+        El editor de comida con IA, hospedado desde el maestro. Se conserva
+        entero —foto nueva, re-análisis, instrucción libre, propuesta antes →
+        después— porque es la herramienta madura: reconstruirlo como campos
+        básicos sería justo la degradación que este trabajo evita.
+      */}
+      <MealEditModal
+        meal={editingMeal}
+        catalogFoods={catalogFoods}
+        onClose={() => { setEditingMeal(null); }}
+        onSave={saveMealEdit}
       />
       <MealModal
         visible={mealOpen}
@@ -1301,6 +1534,8 @@ function Type1AApp() {
           setNutritionProfile(next);
         }}
         onLoadDay={loadNutritionDay}
+        selectedDay={nutritionDay}
+        onSelectDay={setNutritionDay}
       />
       <InsulinAssociationModal
         pending={pendingAssociations[0] ?? null}
@@ -1312,7 +1547,13 @@ function Type1AApp() {
         sin esa espera, la bienvenida parpadearía en cada arranque antes de
         que la base de datos conteste que ya se vio.
       */}
-      <BottomNav active={activeDestination} onSelect={navigateTo} />
+      <BottomNav
+        active={activeDestination}
+        onSelect={navigateTo}
+        pastEntryLabel={pastEntryDay === null
+          ? null
+          : `${pastEntryDay.getDate()} de ${MONTH_NAMES[pastEntryDay.getMonth()] ?? ''}`}
+      />
       <OnboardingModal
         visible={onboardingDone === false}
         onSaveInsulins={async (rapid, basal) => {

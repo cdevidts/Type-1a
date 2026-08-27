@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { z } from 'zod';
 
-import { applyCatalogEdit, blendCatalogEntry, convertGlucose, foodKey, isPlausibleCatalogEntry, planMySugrImport, resolveMacrosSource, type CatalogFood, type CatalogFoodEdit } from '@type1a/domain';
+import { applyCatalogEdit, blendCatalogEntry, convertGlucose, foodKey, insulinNameForType, isPlausibleCatalogEntry, planMySugrImport, resolveInsulinNameForEdit, type CatalogFood, type CatalogFoodEdit } from '@type1a/domain';
 import {
   ActivityEventSchema,
   CGMReadingSchema,
@@ -31,10 +31,11 @@ import {
   type VitalsEvent,
 } from '@type1a/schemas';
 
-import { hasMealContent, MEAL_FIELDS } from './mealFields';
+import { hasMealContent, MEAL_FIELDS, promotesLooseCarbToMeal } from './mealFields';
 import { standaloneVitalsItems } from './timelineVitals';
 import { decodeRow, decodeTherapyProfileRow, safeJsonParse, tallyParsed, type DecodeTally, type TherapyProfileRead } from './rowDecode';
-import type { PendingInsulinAssociation, ReminderAlertStyle, StoredMealEpisode, TimelineItem } from './types';
+import { partitionCarbRows, type CarbRowForTimeline } from './mealCarbMirror';
+import type { PendingInsulinAssociation, PromotableTable, ReminderAlertStyle, StoredMealEpisode, TimelineEntryGroupRaw, TimelineItem } from './types';
 
 const DATABASE_KEY_NAME = 'type1a.database-key.v1';
 
@@ -178,6 +179,14 @@ export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
   if (!catalogColumns.some((column) => column.name === 'serving_label')) {
     await db.execAsync('ALTER TABLE food_catalog ADD COLUMN serving_label TEXT;');
   }
+  // Foto del alimento. Aditiva y nullable por la misma razón que las dos de
+  // arriba: la tabla ya tiene datos reales en el teléfono de Verónica y todos
+  // ellos son anteriores a este campo. NULL = sin foto, que es exactamente lo
+  // que son, y la tarjeta muestra su fallback. **Nunca se rellena con una
+  // imagen inventada.**
+  if (!catalogColumns.some((column) => column.name === 'image_uri')) {
+    await db.execAsync('ALTER TABLE food_catalog ADD COLUMN image_uri TEXT;');
+  }
 
   const episodeColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(meal_episodes)');
   if (!episodeColumns.some((column) => column.name === 'rapid_insulin_event_id')) {
@@ -304,27 +313,61 @@ export async function saveCarbEvent(
   );
 }
 
+/** Los nombres configurados en Ajustes → Terapia, para estampar y reestampar. */
+export interface ProfileInsulinNames {
+  rapidInsulinName?: string | undefined;
+  basalInsulinName?: string | undefined;
+}
+
+/**
+ * Corrige una dosis ya guardada.
+ *
+ * **Ya no recibe un nombre de insulina escrito a mano**, y esa ausencia es el
+ * cambio: el nombre no es un campo por registro sino configuración
+ * (`insulinNameForType` en `packages/domain`). Antes esta función lo asignaba
+ * incondicionalmente, así que cada llamada de `updateUnifiedEntryGroup` —que
+ * nunca lo pasaba— borraba en silencio el nombre de una dosis que sí lo tenía.
+ *
+ * Qué nombre queda lo decide `resolveInsulinNameForEdit`, con test: importado
+ * conserva el suyo, un cambio de rápida ↔ basal reestampa el del tipo nuevo, y
+ * un tipo que no cambió conserva lo que ya había.
+ */
 export async function updateInsulinEvent(
   db: SQLiteDatabase,
   id: string,
-  updates: { type: 'rapid' | 'basal'; units: number; insulinName?: string },
+  updates: {
+    type: 'rapid' | 'basal';
+    units: number;
+    /** Mover la dosis en el tiempo. Ausente = se queda donde está. */
+    timestamp?: string;
+    profileInsulinNames?: ProfileInsulinNames;
+  },
 ): Promise<void> {
   const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM insulin_events WHERE id = ?', id);
   if (row === null) return;
   const existing = InsulinEventSchema.parse(JSON.parse(row.payload));
+  const insulinName = resolveInsulinNameForEdit({
+    source: existing.source,
+    existingName: existing.insulinName,
+    previousType: existing.type,
+    nextType: updates.type,
+    profile: updates.profileInsulinNames ?? {},
+  });
   const next = InsulinEventSchema.parse({
     ...existing,
     type: updates.type,
     units: updates.units,
-    // Assigned unconditionally, not conditionally spread: passing
-    // `undefined` here must actually clear a previously-set name, not leave
-    // `existing.insulinName` untouched.
-    insulinName: updates.insulinName,
+    ...(updates.timestamp === undefined ? {} : { timestamp: updates.timestamp }),
+    // Se asigna siempre, no con un spread condicional: si la resolución dice
+    // `undefined` (no hay nada configurado y no había nada guardado), tiene
+    // que quedar sin nombre y no heredar el de `...existing`.
+    insulinName,
   });
   await db.runAsync(
-    'UPDATE insulin_events SET type = ?, units = ?, payload = ? WHERE id = ?',
+    'UPDATE insulin_events SET type = ?, units = ?, timestamp = ?, payload = ? WHERE id = ?',
     next.type,
     next.units,
+    next.timestamp,
     JSON.stringify(next),
     id,
   );
@@ -381,7 +424,22 @@ export async function deleteCarbEvent(db: SQLiteDatabase, id: string): Promise<v
  * can't fork apart, same reasoning as `updateCarbEvent`'s propagation the
  * other direction.
  */
-/** Non-transactional core — see `writeMealWithEpisode` for why this exists. */
+/**
+ * Non-transactional core — see `writeMealWithEpisode` for why this exists.
+ *
+ * **Dos semánticas en el mismo objeto, y la diferencia es deliberada:**
+ *
+ * - Carbohidratos, nota, macros y calorías son **reemplazo completo**: el
+ *   formulario los muestra todos, así que un campo vaciado es una instrucción
+ *   de borrar. `undefined` = borrar.
+ * - Foto y análisis son **parche**: `undefined` = no se tocó, `null` = quitar.
+ *   Una foto no es un campo que se deje "en blanco" — se reemplaza o se quita
+ *   con una acción propia. Tratarla como reemplazo haría que guardar
+ *   cualquier corrección de macros borrara la imagen de la comida.
+ *
+ * Delega en `updateMealFromEditRows` para que **haya un solo escritor** del
+ * payload de una comida: la fase anterior tuvo dos y se separaron.
+ */
 async function updateMealCarbsAndNoteRows(
   db: SQLiteDatabase,
   id: string,
@@ -392,46 +450,35 @@ async function updateMealCarbsAndNoteRows(
      * Macros (Fase 21). Se escriben **siempre**, incluso en `undefined`: el
      * formulario manda el estado completo, así que un campo vaciado tiene que
      * borrarse y no quedarse con el valor viejo. Un macro en blanco significa
-     * "no lo anoté", que es distinto de "0 g" — la misma regla que rige en
-     * `MealModal`.
-     *
-     * Lo demás del payload (foto, `aiEstimatedCarbsG`, `aiAnalysisId`) NO se
-     * toca: sobrevive por el spread de `...existing`.
+     * "no lo anoté", que es distinto de "0 g".
      */
     proteinG?: number | undefined;
     fatG?: number | undefined;
     fiberG?: number | undefined;
+    caloriesKcal?: number | undefined;
+    /** Parche: ausente no toca la foto guardada, `null` la quita. */
+    imageUri?: string | null | undefined;
+    /** Parche: un análisis nuevo reemplaza al anterior; ausente lo conserva. */
+    analysis?: { aiEstimatedCarbsG: number; aiAnalysisId: string } | undefined;
+    /**
+     * Procedencia ya resuelta por `packages/domain`. `null` la borra, que es
+     * lo que corresponde cuando la comida se quedó sin macros: una etiqueta
+     * de procedencia colgando sobre campos vacíos miente en el reporte.
+     */
+    macrosSource?: MealEvent['macrosSource'] | null;
   },
 ): Promise<void> {
-  const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM meal_events WHERE id = ?', id);
-  if (row === null) return;
-  const existing = MealEventSchema.parse(JSON.parse(row.payload));
-  const next = MealEventSchema.parse({
-    ...existing,
-    confirmedCarbsG: updates.confirmedCarbsG,
-    note: updates.note,
-    proteinG: updates.proteinG,
-    fatG: updates.fatG,
-    fiberG: updates.fiberG,
-    // La procedencia la decide `packages/domain`, no esta capa. Acá no hay
-    // análisis de por medio (es la edición a mano), así que la referencia es
-    // lo que ya estaba guardado.
-    //
-    // La clave se escribe **siempre**, incluso como `undefined`, para que pise
-    // la de `...existing`: si la usuaria vació todos los macros, la comida se
-    // queda sin procedencia porque ya no hay nada cuya procedencia declarar.
-    // Antes esto spreaba `{}` y dejaba colgada la etiqueta vieja sobre una
-    // comida sin macros.
-    macrosSource: resolveMacrosSource({
-      entered: { proteinG: updates.proteinG, fatG: updates.fatG, fiberG: updates.fiberG },
-      previous: {
-        values: { proteinG: existing.proteinG, fatG: existing.fatG, fiberG: existing.fiberG },
-        source: existing.macrosSource,
-      },
-    }),
+  await updateMealFromEditRows(db, id, {
+    confirmedCarbsG: updates.confirmedCarbsG ?? null,
+    note: updates.note ?? null,
+    proteinG: updates.proteinG ?? null,
+    fatG: updates.fatG ?? null,
+    fiberG: updates.fiberG ?? null,
+    caloriesKcal: updates.caloriesKcal ?? null,
+    ...(updates.imageUri === undefined ? {} : { imageUri: updates.imageUri }),
+    ...(updates.analysis === undefined ? {} : { analysis: updates.analysis }),
+    ...(updates.macrosSource === undefined ? {} : { macrosSource: updates.macrosSource }),
   });
-  await db.runAsync('UPDATE meal_events SET payload = ? WHERE id = ?', JSON.stringify(next), id);
-  await syncConfirmedCarbRow(db, existing, next.confirmedCarbsG);
 }
 
 /**
@@ -458,26 +505,23 @@ async function syncConfirmedCarbRow(
   if (confirmedCarbsG === undefined) {
     if (carbRow !== null) await db.runAsync('DELETE FROM carb_events WHERE id = ?', carbRow.id);
   } else if (carbRow === null) {
+    // La fila espejo hereda el grupo de la comida: sin eso, una comida
+    // empaquetada a la que se le agregan carbohidratos por primera vez dejaba
+    // su espejo suelto, y el timeline lo dibujaba como una tarjeta más.
+    const mealRow = await db.getFirstAsync<{ entry_group_id: string | null }>(
+      'SELECT entry_group_id FROM meal_events WHERE id = ?',
+      existing.id,
+    );
     await saveCarbEvent(db, {
       id: Crypto.randomUUID(),
       timestamp: existing.timestamp,
       carbsG: confirmedCarbsG,
       source: 'meal_confirmed',
       createdAt: existing.createdAt,
-    });
+    }, mealRow?.entry_group_id ?? undefined);
   } else {
     await db.runAsync('UPDATE carb_events SET carbs_g = ? WHERE id = ?', confirmedCarbsG, carbRow.id);
   }
-}
-
-export async function updateMealCarbsAndNote(
-  db: SQLiteDatabase,
-  id: string,
-  updates: { confirmedCarbsG?: number | undefined; note?: string | undefined },
-): Promise<void> {
-  await db.withTransactionAsync(async () => {
-    await updateMealCarbsAndNoteRows(db, id, updates);
-  });
 }
 
 /**
@@ -500,7 +544,12 @@ export interface MealEditPatch {
   fiberG?: number | null;
   caloriesKcal?: number | null;
   imageUri?: string | null;
-  macrosSource?: MealEvent['macrosSource'];
+  /**
+   * `null` **borra** la procedencia. Hace falta: una comida que se quedó sin
+   * macros no puede conservar la etiqueta "estimados por IA" colgando sobre
+   * campos vacíos, porque esa etiqueta se imprime en el reporte médico.
+   */
+  macrosSource?: MealEvent['macrosSource'] | null;
   /**
    * Análisis nuevo, cuando la edición pasó por la IA. `aiEstimatedCarbsG` y
    * `aiAnalysisId` se **reemplazan**, no se borran: son el registro de lo
@@ -534,7 +583,7 @@ async function updateMealFromEditRows(
     fiberG: apply(existing.fiberG, patch.fiberG),
     caloriesKcal: apply(existing.caloriesKcal, patch.caloriesKcal),
     imageUri: apply(existing.imageUri, patch.imageUri),
-    ...(patch.macrosSource === undefined ? {} : { macrosSource: patch.macrosSource }),
+    ...(patch.macrosSource === undefined ? {} : { macrosSource: patch.macrosSource ?? undefined }),
     ...(patch.analysis === undefined
       ? {}
       : {
@@ -671,21 +720,58 @@ async function writeMealWithEpisode(db: SQLiteDatabase, meal: MealEvent, entryGr
   );
   if (parsed.confirmedCarbsG !== undefined) {
     // El CarbEvent comparte timestamp con el MealEvent a propósito, y ese
-    // timestamp compartido es load-bearing en tres lugares que emparejan
-    // ambas filas por él: `updateCarbEvent`, `deleteMealEventRows` y
+    // timestamp compartido es load-bearing en cuatro lugares que emparejan
+    // ambas filas por él: `updateCarbEvent`, `deleteMealEventRows`,
+    // `partitionCarbRows` (el que evita que la comida se vea dos veces) y
     // `buildNutritionInsights` (packages/domain), que lo usa para no contar
     // dos veces el mismo plato en el promedio de carbohidratos por franja.
-    // Si alguna vez se permite editar la HORA de una comida, hay que mover
-    // también su fila de carbohidratos o los tres se rompen juntos.
-    await saveCarbEvent(db, {
-      id: Crypto.randomUUID(),
-      timestamp: parsed.timestamp,
-      carbsG: parsed.confirmedCarbsG,
-      source: 'meal_confirmed',
-      createdAt: parsed.createdAt,
-    }, entryGroupId);
+    // Mover la HORA de una comida mueve también esta fila — ver
+    // `moveEntryGroupRows`.
+    await writeMirrorCarbRow(db, parsed, entryGroupId);
   }
   return episodeId;
+}
+
+/**
+ * Escribe la fila espejo de carbohidratos de una comida **adoptando** la que
+ * ya haya en vez de crear una segunda.
+ *
+ * Existe por el camino de promoción: un carbohidrato suelto al que se le
+ * agrega una comida encima ya tiene su fila, y crear otra dejaría los mismos
+ * gramos contados dos veces en Nutrición y en el reporte. Adoptarla conserva
+ * además el id y el `created_at` originales, que es lo que la promoción
+ * promete no perder.
+ *
+ * `source` pasa a `'meal_confirmed'` a propósito: esos gramos ahora **son**
+ * los carbohidratos confirmados de la comida que acaba de crearse a su
+ * alrededor. La alternativa —borrar y recrear— pierde la identidad de la fila,
+ * que es justo lo que no se puede perder.
+ */
+async function writeMirrorCarbRow(db: SQLiteDatabase, meal: MealEvent, entryGroupId?: string): Promise<void> {
+  if (meal.confirmedCarbsG === undefined) return;
+  const mirror = await db.getFirstAsync<{ id: string }>(
+    "SELECT id FROM carb_events WHERE timestamp = ? AND source = 'meal_confirmed'",
+    meal.timestamp,
+  );
+  const adopted = mirror ?? (entryGroupId === undefined
+    ? null
+    : await db.getFirstAsync<{ id: string }>('SELECT id FROM carb_events WHERE entry_group_id = ?', entryGroupId));
+  if (adopted !== null) {
+    await db.runAsync(
+      "UPDATE carb_events SET carbs_g = ?, timestamp = ?, source = 'meal_confirmed' WHERE id = ?",
+      meal.confirmedCarbsG,
+      meal.timestamp,
+      adopted.id,
+    );
+    return;
+  }
+  await saveCarbEvent(db, {
+    id: Crypto.randomUUID(),
+    timestamp: meal.timestamp,
+    carbsG: meal.confirmedCarbsG,
+    source: 'meal_confirmed',
+    createdAt: meal.createdAt,
+  }, entryGroupId);
 }
 
 export async function saveMealWithEpisode(db: SQLiteDatabase, meal: MealEvent): Promise<string> {
@@ -706,11 +792,48 @@ const CarbGramsSchema = CarbEventSchema.shape.carbsG;
 const MacroGramsSchema = MealEventSchema.shape.proteinG.unwrap();
 const GlucoseValueSchema = CGMReadingSchema.shape.glucose;
 
+/**
+ * Corrección de un registro de vitales, campo por campo.
+ *
+ * `undefined` = **no se tocó** · `null` = **borrar** · número = el valor.
+ *
+ * La distinción no es estilística: una fila de `vitals_events` puede traer
+ * cetonas, peso y presión juntos, y reescribir el objeto entero para corregir
+ * una cetona mal tecleada se llevaba el peso de esa misma fila en silencio.
+ * "Ausente" y "vacíalo" tienen que ser dos afirmaciones distintas, igual que
+ * en `MealEditPatch`, y por la misma razón: un borrado se pide, no se deduce.
+ */
+export interface VitalsPatch {
+  ketonesMmolL?: number | null;
+  weightKg?: number | null;
+  systolicBP?: number | null;
+  diastolicBP?: number | null;
+}
+
+/** True si el parche no dice nada — ni un valor, ni un borrado. */
+function isEmptyVitalsPatch(patch: VitalsPatch | undefined): boolean {
+  if (patch === undefined) return true;
+  return patch.ketonesMmolL === undefined && patch.weightKg === undefined
+    && patch.systolicBP === undefined && patch.diastolicBP === undefined;
+}
+
+/** True si el parche trae al menos un valor real que guardar. */
+function vitalsPatchHasValue(patch: VitalsPatch | undefined): boolean {
+  if (patch === undefined) return false;
+  return [patch.ketonesMmolL, patch.weightKg, patch.systolicBP, patch.diastolicBP]
+    .some((value) => typeof value === 'number');
+}
+
 export interface UnifiedEntryInput {
   manualGlucose?: number;
   description?: string;
   carbsG?: number;
-  imageUri?: string;
+  /**
+   * Foto de la comida. Al **crear** es la ruta de la imagen; al **editar** es
+   * un parche: ausente no toca la foto guardada y `null` la quita. Una foto
+   * no es un campo que se deje en blanco.
+   */
+  imageUri?: string | null;
   aiEstimatedCarbsG?: number;
   proteinG?: number;
   fatG?: number;
@@ -725,21 +848,24 @@ export interface UnifiedEntryInput {
    * Passed in rather than taken at write time so a sheet left open for
    * twenty minutes doesn't stamp everything — including the meal episode's
    * +60/+120/+180 window — twenty minutes after the header said.
+   *
+   * **Al editar, este es también el mecanismo de "mover de hora".** Si difiere
+   * del que tienen las filas del grupo, `updateUnifiedEntryGroup` las mueve
+   * todas en la misma transacción — ver `moveEntryGroupRows`.
    */
   timestamp: string;
   /** True when the rapid dose covers a correction as well as carbs. */
   rapidIncludesCorrection?: boolean;
   /**
-   * Cetonas en sangre, mmol/L (2026-08-25).
+   * Cetonas, peso y presión (2026-08-27).
    *
-   * "Nueva entrada" tiene que poder guardar todo lo que guardan los accesos
-   * rápidos — pedido explícito de Verónica. Se escribe como `VitalsEvent`,
-   * que es donde ya viven, no como un campo nuevo: el acceso rápido de
-   * cetonas y este campo terminan en la misma tabla y se leen igual.
+   * Se escriben como `VitalsEvent`, que es donde ya viven, no como campos
+   * nuevos: el acceso rápido de cetonas y este parche terminan en la misma
+   * tabla y se leen igual. Ver `VitalsPatch` para la semántica de cada valor.
    */
-  ketonesMmolL?: number;
+  vitals?: VitalsPatch;
   /**
-   * Procedencia de los macros: `'ai'`, `'user'` o `'mixed'`.
+   * Procedencia de los macros: `'ai'`, `'user'` o `'mixed'`; `null` la borra.
    *
    * **Se imprime en el reporte del control médico**, así que perderlo no es
    * cosmético: un macro estimado por IA que llega sin procedencia se lee como
@@ -750,15 +876,16 @@ export interface UnifiedEntryInput {
    * TypeScript no lo atrapó: el chequeo de propiedades en exceso **no aplica a
    * un spread**, y por eso `pnpm verify` seguía en verde.
    */
-  macrosSource?: MealEvent['macrosSource'];
+  macrosSource?: MealEvent['macrosSource'] | null;
   /**
-   * `true` = la usuaria vació el campo de cetonas y quiere que se borren.
+   * Los nombres de insulina configurados en Ajustes → Terapia.
    *
-   * Existe para que "borrar" sea una petición y no una deducción. Ver la rama
-   * de borrado en `updateUnifiedEntryGroup`: sin esto, cualquier llamador que
-   * simplemente no maneje cetonas las destruye al guardar cualquier otra cosa.
+   * Viajan como dato y no se leen acá dentro para que la resolución siga
+   * siendo la función pura de `packages/domain`. Sin ellos, una dosis nueva
+   * dentro de un grupo quedaría sin nombre y una reclasificada rápida ↔ basal
+   * conservaría el del tipo anterior.
    */
-  clearKetones?: boolean;
+  profileInsulinNames?: ProfileInsulinNames;
 }
 
 /**
@@ -777,6 +904,46 @@ export interface UnifiedEntryOutcome {
   savedRapid: boolean;
   savedBasal: boolean;
   savedNote: boolean;
+  /**
+   * Episodios cuyas notificaciones ya programadas dejaron de describir la
+   * realidad y hay que **cancelar antes** de programar las nuevas.
+   *
+   * Se devuelve en vez de cancelarse acá porque `db.ts` no habla con
+   * `expo-notifications`: una alarma es una decisión de la capa que orquesta.
+   * Sin esto, mover una comida de las 21:00 a las 13:00 dejaba las tres
+   * alarmas viejas en pie y sumaba tres nuevas.
+   */
+  movedEpisodeIds: string[];
+}
+
+const EMPTY_OUTCOME = (): UnifiedEntryOutcome => ({
+  episodeId: null,
+  savedGlucose: false,
+  savedRapid: false,
+  savedBasal: false,
+  savedNote: false,
+  movedEpisodeIds: [],
+});
+
+/**
+ * Margen de reloj al rechazar una fecha futura.
+ *
+ * Un minuto: el suficiente para que un reloj apenas adelantado no rechace un
+ * "ahora" legítimo, y demasiado poco para que sirva de puerta a un registro
+ * de mañana. Rechazar el futuro no es una preferencia de UI — un evento que
+ * todavía no pasó contamina episodios, ventanas de patrones y el reporte.
+ */
+export const FUTURE_TIMESTAMP_TOLERANCE_MS = 60_000;
+
+export function isFutureTimestamp(timestamp: string, now = Date.now()): boolean {
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) && parsed > now + FUTURE_TIMESTAMP_TOLERANCE_MS;
+}
+
+function assertNotFuture(timestamp: string): void {
+  if (isFutureTimestamp(timestamp)) {
+    throw new Error('No se puede guardar un registro con fecha y hora futuras.');
+  }
 }
 
 /**
@@ -794,13 +961,8 @@ export async function saveUnifiedEntry(
   input: UnifiedEntryInput,
 ): Promise<UnifiedEntryOutcome> {
   const timestamp = input.timestamp;
-  const outcome: UnifiedEntryOutcome = {
-    episodeId: null,
-    savedGlucose: false,
-    savedRapid: false,
-    savedBasal: false,
-    savedNote: false,
-  };
+  assertNotFuture(timestamp);
+  const outcome = EMPTY_OUTCOME();
 
   // Validate every piece up front. Each write below is an independent
   // INSERT, so a schema rejection partway through would otherwise leave a
@@ -850,14 +1012,14 @@ export async function saveUnifiedEntry(
         createdAt: timestamp,
         ...(input.carbsG === undefined ? {} : { confirmedCarbsG: input.carbsG }),
         ...(input.description === undefined ? {} : { note: input.description }),
-        ...(input.imageUri === undefined ? {} : { imageUri: input.imageUri }),
+        ...(input.imageUri === undefined || input.imageUri === null ? {} : { imageUri: input.imageUri }),
         ...(input.aiEstimatedCarbsG === undefined ? {} : { aiEstimatedCarbsG: input.aiEstimatedCarbsG }),
         ...(input.proteinG === undefined ? {} : { proteinG: input.proteinG }),
         ...(input.fatG === undefined ? {} : { fatG: input.fatG }),
         ...(input.fiberG === undefined ? {} : { fiberG: input.fiberG }),
         ...(input.caloriesKcal === undefined ? {} : { caloriesKcal: input.caloriesKcal }),
         ...(input.aiAnalysisId === undefined ? {} : { aiAnalysisId: input.aiAnalysisId }),
-        ...(input.macrosSource === undefined ? {} : { macrosSource: input.macrosSource }),
+        ...(input.macrosSource === undefined || input.macrosSource === null ? {} : { macrosSource: input.macrosSource }),
       }, entryGroupId);
     }
 
@@ -875,6 +1037,11 @@ export async function saveUnifiedEntry(
         source: 'manual',
         createdAt: timestamp,
         purpose: hasMeal ? (includesCorrection ? 'combined' : 'meal') : 'correction',
+        // El nombre se estampa al crear y queda congelado: si mañana cambia
+        // de tratamiento, lo de hoy siguió siendo lo de hoy.
+        ...(insulinNameForType(input.profileInsulinNames ?? {}, 'rapid') === undefined
+          ? {}
+          : { insulinName: insulinNameForType(input.profileInsulinNames ?? {}, 'rapid')! }),
       }, entryGroupId);
       outcome.savedRapid = true;
     }
@@ -887,15 +1054,22 @@ export async function saveUnifiedEntry(
         units: input.basalUnits,
         source: 'manual',
         createdAt: timestamp,
+        ...(insulinNameForType(input.profileInsulinNames ?? {}, 'basal') === undefined
+          ? {}
+          : { insulinName: insulinNameForType(input.profileInsulinNames ?? {}, 'basal')! }),
       }, entryGroupId);
       outcome.savedBasal = true;
     }
 
-    if (input.ketonesMmolL !== undefined) {
+    if (vitalsPatchHasValue(input.vitals)) {
+      const vitals = input.vitals!;
       await saveVitalsEvent(db, {
         id: Crypto.randomUUID(),
         timestamp,
-        ketonesMmolL: input.ketonesMmolL,
+        ...(typeof vitals.ketonesMmolL === 'number' ? { ketonesMmolL: vitals.ketonesMmolL } : {}),
+        ...(typeof vitals.weightKg === 'number' ? { weightKg: vitals.weightKg } : {}),
+        ...(typeof vitals.systolicBP === 'number' ? { systolicBP: vitals.systolicBP } : {}),
+        ...(typeof vitals.diastolicBP === 'number' ? { diastolicBP: vitals.diastolicBP } : {}),
         source: 'manual',
         createdAt: timestamp,
       }, entryGroupId);
@@ -917,6 +1091,195 @@ export async function saveUnifiedEntry(
 }
 
 /**
+ * Mueve **todas** las filas de un grupo a otro momento, en la transacción que
+ * abrió quien llama.
+ *
+ * ## Qué se mueve y qué no
+ *
+ * Se mueve la columna `timestamp` **y** el `timestamp` de dentro del payload:
+ * son dos copias del mismo dato y actualizar una sola las bifurca — la lista
+ * ordenaría por una y el detalle mostraría la otra. Se mueve también
+ * `meal_episodes.meal_timestamp` y la fila espejo de carbohidratos, que se
+ * empareja por hora.
+ *
+ * **`ingestedAt` no se mueve nunca.** Es cuándo la app recibió el dato, no
+ * cuándo ocurrió; moverlo fingiría otro momento de ingestión y rompería
+ * `assessFreshness`, que es la garantía de que una lectura atrasada no pase
+ * por actual (`AGENTS.md`).
+ *
+ * **Una lectura que no es `'manual'` tampoco se mueve.** La hora de un sensor
+ * es parte de lo que reportó el sensor. En un grupo anclado a una lectura
+ * externa se mueven los adjuntos y la lectura se queda donde estaba.
+ *
+ * ## Por qué devuelve los episodios
+ *
+ * Un episodio movido tiene que **recalcularse** (sus métricas describían otra
+ * ventana de CGM) y sus notificaciones tienen que cancelarse antes de
+ * programar las nuevas. Ambas cosas viven fuera de `db.ts`.
+ */
+async function moveEntryGroupRows(
+  db: SQLiteDatabase,
+  entryGroupId: string,
+  nextTimestamp: string,
+): Promise<{ movedEpisodeIds: string[]; previousTimestamp: string | null }> {
+  const movedEpisodeIds: string[] = [];
+  let previousTimestamp: string | null = null;
+
+  for (const table of ['insulin_events', 'carb_events', 'note_events', 'meal_events', 'vitals_events'] as const) {
+    const rows = await db.getAllAsync<{ id: string; timestamp: string; payload: string | null }>(
+      // `carb_events` no tiene payload: sus datos son columnas. El SELECT
+      // pide NULL en su lugar para que el bucle sea uno solo.
+      table === 'carb_events'
+        ? 'SELECT id, timestamp, NULL as payload FROM carb_events WHERE entry_group_id = ?'
+        : `SELECT id, timestamp, payload FROM ${table} WHERE entry_group_id = ?`,
+      entryGroupId,
+    );
+    for (const row of rows) {
+      if (row.timestamp === nextTimestamp) continue;
+      previousTimestamp ??= row.timestamp;
+      if (row.payload === null) {
+        await db.runAsync(`UPDATE ${table} SET timestamp = ? WHERE id = ?`, nextTimestamp, row.id);
+        continue;
+      }
+      const parsed = safeJsonParse(row.payload);
+      const payload = typeof parsed === 'object' && parsed !== null ? { ...parsed, timestamp: nextTimestamp } : null;
+      if (payload === null) {
+        // Una fila ilegible se mueve igual en su columna: dejarla atrás la
+        // separaría del resto del grupo, y el payload roto ya lo declara
+        // `DecodeTally` en cada lectura.
+        await db.runAsync(`UPDATE ${table} SET timestamp = ? WHERE id = ?`, nextTimestamp, row.id);
+        continue;
+      }
+      await db.runAsync(
+        `UPDATE ${table} SET timestamp = ?, payload = ? WHERE id = ?`,
+        nextTimestamp,
+        JSON.stringify(payload),
+        row.id,
+      );
+      if (table === 'meal_events') {
+        // El episodio vuelve a 'collecting' y suelta sus métricas: describían
+        // la ventana de CGM del horario anterior. `processReadyEpisodes` lo
+        // recalcula con las lecturas del horario nuevo.
+        const episode = await db.getFirstAsync<{ id: string }>(
+          'SELECT id FROM meal_episodes WHERE meal_id = ?',
+          row.id,
+        );
+        if (episode !== null) {
+          await db.runAsync(
+            `UPDATE meal_episodes
+             SET meal_timestamp = ?, status = 'collecting', metrics_json = NULL, insight_json = NULL, updated_at = ?
+             WHERE id = ?`,
+            nextTimestamp,
+            new Date().toISOString(),
+            episode.id,
+          );
+          movedEpisodeIds.push(episode.id);
+        }
+      }
+    }
+  }
+
+  // La lectura del grupo: solo si es capilar tecleada por ella. Se mueven la
+  // medición (`timestamp`, `sourceTimestamp`) y nunca `ingestedAt`.
+  const reading = await db.getFirstAsync<{ id: string; payload: string }>(
+    'SELECT id, payload FROM cgm_readings WHERE entry_group_id = ?',
+    entryGroupId,
+  );
+  if (reading !== null) {
+    const parsed = CGMReadingSchema.safeParse(safeJsonParse(reading.payload));
+    if (parsed.success && parsed.data.origin === 'manual' && parsed.data.sourceTimestamp !== nextTimestamp) {
+      previousTimestamp ??= parsed.data.sourceTimestamp;
+      const next = CGMReadingSchema.parse({
+        ...parsed.data,
+        timestamp: nextTimestamp,
+        sourceTimestamp: nextTimestamp,
+        // `ingestedAt` intacto a propósito. Ver la cabecera.
+      });
+      await db.runAsync(
+        'UPDATE cgm_readings SET source_timestamp = ?, payload = ? WHERE id = ?',
+        nextTimestamp,
+        JSON.stringify(next),
+        reading.id,
+      );
+    }
+  }
+
+  return { movedEpisodeIds, previousTimestamp };
+}
+
+/**
+ * Convierte un evento suelto en una entrada agrupada, sin perder su
+ * identidad.
+ *
+ * ## Qué problema resuelve
+ *
+ * "El tipo con el que se creó un evento no restringe lo que se le puede sumar
+ * más tarde" (`projectbrief.md`). Una insulina suelta a la que hoy se le
+ * quiere agregar la comida que la acompañó no tiene grupo, y sin grupo no hay
+ * dónde colgar nada: el timeline agrupa por `entry_group_id` y **jamás** por
+ * hora (Regla 3b).
+ *
+ * ## Lo que garantiza
+ *
+ * - **No borra ni recrea el evento.** Es un `UPDATE` de una columna: id,
+ *   timestamp, `created_at`, `source`, `origin` y el payload entero siguen
+ *   siendo los mismos objetos. Un borrado y una reinserción perderían el id,
+ *   y con él cualquier notificación, episodio o referencia que lo apuntara.
+ * - **Es idempotente.** Si la fila ya tiene grupo, devuelve ese mismo id sin
+ *   escribir. Un doble toque o un reintento no puede producir dos grupos, que
+ *   es exactamente cómo un registro se parte en dos tarjetas.
+ * - **No duplica el episodio de una comida.** Promover un `meal_events` no
+ *   crea uno nuevo: el que ya tiene sigue siendo suyo.
+ * - **Es atómica.** La abre en su propia transacción, así que un fallo a
+ *   mitad deja la fila exactamente como estaba.
+ */
+export async function promoteEventToEntryGroup(
+  db: SQLiteDatabase,
+  table: PromotableTable,
+  rowId: string,
+): Promise<string> {
+  const existing = await db.getFirstAsync<{ entry_group_id: string | null }>(
+    `SELECT entry_group_id FROM ${table} WHERE id = ?`,
+    rowId,
+  );
+  if (existing === null) throw new Error('Ese registro ya no existe.');
+  if (existing.entry_group_id !== null) return existing.entry_group_id;
+
+  const entryGroupId = Crypto.randomUUID();
+  await db.withTransactionAsync(async () => {
+    // El `WHERE entry_group_id IS NULL` es la guarda de idempotencia real:
+    // dos toques simultáneos leen `null` los dos, pero solo uno escribe.
+    await db.runAsync(
+      `UPDATE ${table} SET entry_group_id = ? WHERE id = ? AND entry_group_id IS NULL`,
+      entryGroupId,
+      rowId,
+    );
+    if (table === 'meal_events') {
+      // La fila espejo de carbohidratos viaja con su comida: si se quedara
+      // suelta, el timeline la dibujaría como una tarjeta aparte de la
+      // entrada recién formada.
+      const meal = await db.getFirstAsync<{ timestamp: string }>('SELECT timestamp FROM meal_events WHERE id = ?', rowId);
+      if (meal !== null) {
+        await db.runAsync(
+          "UPDATE carb_events SET entry_group_id = ? WHERE timestamp = ? AND source = 'meal_confirmed' AND entry_group_id IS NULL",
+          entryGroupId,
+          meal.timestamp,
+        );
+      }
+    }
+  });
+
+  const confirmed = await db.getFirstAsync<{ entry_group_id: string | null }>(
+    `SELECT entry_group_id FROM ${table} WHERE id = ?`,
+    rowId,
+  );
+  // Se devuelve lo que quedó escrito y no `entryGroupId`: si otra escritura
+  // ganó la carrera, el grupo bueno es el suyo.
+  if (confirmed?.entry_group_id == null) throw new Error('No se pudo preparar el registro para editarlo.');
+  return confirmed.entry_group_id;
+}
+
+/**
  * Edits a packaged "Nueva entrada" group as one operation: whichever pieces
  * `input` supplies get updated in place (preserving their row/episode
  * identity — so editing a note doesn't reset an already-`complete` episode
@@ -925,6 +1288,12 @@ export async function saveUnifiedEntry(
  * created and tagged with this same `entryGroupId`. Mirrors
  * `saveUnifiedEntry`'s validation and `purpose` bookkeeping exactly, since
  * this is the same data shape mid-edit rather than freshly created.
+ *
+ * Las tres excepciones a "lo que se omite se borra", todas escritas con
+ * sangre: los vitales son un **parche** (`VitalsPatch`), la foto y el análisis
+ * de la comida son un parche, y el nombre de la insulina lo resuelve
+ * `resolveInsulinNameForEdit`. Un formulario que no conoce un campo no puede
+ * destruirlo.
  */
 export async function updateUnifiedEntryGroup(
   db: SQLiteDatabase,
@@ -932,6 +1301,7 @@ export async function updateUnifiedEntryGroup(
   input: UnifiedEntryInput,
 ): Promise<UnifiedEntryOutcome> {
   const timestamp = input.timestamp;
+  assertNotFuture(timestamp);
   if (input.rapidUnits !== undefined) InsulinUnitsSchema.parse(input.rapidUnits);
   if (input.basalUnits !== undefined) InsulinUnitsSchema.parse(input.basalUnits);
   if (input.carbsG !== undefined) CarbGramsSchema.parse(input.carbsG);
@@ -950,15 +1320,17 @@ export async function updateUnifiedEntryGroup(
   // grasa, nota y análisis de IA en silencio, y el formulario decía que había
   // guardado bien.
   const hasMeal = hasMealContent(input);
-  const outcome: UnifiedEntryOutcome = {
-    episodeId: null,
-    savedGlucose: false,
-    savedRapid: false,
-    savedBasal: false,
-    savedNote: false,
-  };
+  const outcome = EMPTY_OUTCOME();
+  const profileNames = input.profileInsulinNames ?? {};
 
   await db.withTransactionAsync(async () => {
+    // Mover PRIMERO, editar después: todo lo que sigue empareja la fila
+    // espejo de carbohidratos y el episodio por el timestamp de la comida, y
+    // hacerlo al revés dejaría media transacción emparejando por la hora
+    // vieja y la otra media por la nueva.
+    const moved = await moveEntryGroupRows(db, entryGroupId, timestamp);
+    outcome.movedEpisodeIds = moved.movedEpisodeIds;
+
     const existingGlucose = await db.getFirstAsync<{ id: string; payload: string }>(
       'SELECT id, payload FROM cgm_readings WHERE entry_group_id = ?',
       entryGroupId,
@@ -1001,23 +1373,65 @@ export async function updateUnifiedEntryGroup(
       'SELECT id FROM meal_events WHERE entry_group_id = ?',
       entryGroupId,
     );
-    if (hasMeal) {
+    // Un carbohidrato **suelto** del grupo: el que se promovió desde su propia
+    // fila del timeline y todavía no tiene comida alrededor.
+    const looseCarb = await db.getFirstAsync<{ id: string }>(
+      "SELECT id FROM carb_events WHERE entry_group_id = ? AND source != 'meal_confirmed'",
+      entryGroupId,
+    );
+    // ¿La edición trae algo de comida **más allá** de los gramos? La lista es
+    // la misma de `MEAL_FIELDS`, sin `carbsG`, y vive en `mealFields.ts` con
+    // test: tenerla duplicada acá es exactamente cómo se desincronizaron los
+    // dos booleanos `hasMeal` que borraron comidas dos veces.
+    const hasMealBeyondCarbs = promotesLooseCarbToMeal(input);
+
+    // **Un carbohidrato manual suelto sigue siendo un carbohidrato suelto.**
+    //
+    // `hasMealContent` cuenta los gramos como comida, y para "Nueva entrada"
+    // eso es correcto: anotar 25 g ahí es registrar lo que comiste. Pero al
+    // **editar** una fila que nació como carbohidrato suelto, aplicar la misma
+    // regla la convertía en comida solo por abrirla y guardar — con episodio
+    // nuevo y tres alarmas encima. Una colación anotada a las 16:00 no puede
+    // volverse un plato porque alguien corrigió los gramos.
+    //
+    // Se vuelve comida cuando la edición **agrega** algo que solo una comida
+    // tiene: descripción, macros, foto o análisis. Ahí la promoción es lo que
+    // se pidió, y `writeMirrorCarbRow` adopta esta misma fila como espejo en
+    // vez de crear una segunda.
+    if (hasMeal && existingMeal === null && looseCarb !== null && !hasMealBeyondCarbs) {
+      if (input.carbsG !== undefined) {
+        await db.runAsync(
+          'UPDATE carb_events SET carbs_g = ?, timestamp = ? WHERE id = ?',
+          input.carbsG,
+          timestamp,
+          looseCarb.id,
+        );
+      }
+    } else if (hasMeal) {
       if (existingMeal === null) {
+        // **Todas** las facultades de una comida, también al crearla desde una
+        // edición: foto, análisis de IA, carbohidratos estimados, calorías y
+        // procedencia. Antes acá solo llegaban carbos, nota y los tres macros,
+        // así que adjuntar una comida completa a una glucosa de anteayer
+        // perdía en silencio la foto y el análisis — el hueco central que este
+        // cambio viene a cerrar.
         outcome.episodeId = await writeMealWithEpisode(db, {
           id: Crypto.randomUUID(),
           timestamp,
           createdAt: timestamp,
           ...(input.carbsG === undefined ? {} : { confirmedCarbsG: input.carbsG }),
           ...(input.description === undefined ? {} : { note: input.description }),
-          // Fase 21: los macros también al crear la comida desde una edición.
-          // Sin esto, agregar carbohidratos y macros a una glucosa ya
-          // guardada perdía los macros en silencio.
+          ...(input.imageUri === undefined || input.imageUri === null ? {} : { imageUri: input.imageUri }),
+          ...(input.aiEstimatedCarbsG === undefined ? {} : { aiEstimatedCarbsG: input.aiEstimatedCarbsG }),
+          ...(input.aiAnalysisId === undefined ? {} : { aiAnalysisId: input.aiAnalysisId }),
           ...(input.proteinG === undefined ? {} : { proteinG: input.proteinG }),
           ...(input.fatG === undefined ? {} : { fatG: input.fatG }),
           ...(input.fiberG === undefined ? {} : { fiberG: input.fiberG }),
-          ...(input.proteinG === undefined && input.fatG === undefined && input.fiberG === undefined
-            ? {}
-            : { macrosSource: 'user' as const }),
+          ...(input.caloriesKcal === undefined ? {} : { caloriesKcal: input.caloriesKcal }),
+          // La procedencia la decide `packages/domain` antes de llegar acá.
+          // Nunca se marca `'user'` una estimación: eso lo resuelve
+          // `resolveMacrosSource` en quien llama.
+          ...(input.macrosSource === undefined || input.macrosSource === null ? {} : { macrosSource: input.macrosSource }),
         }, entryGroupId);
       } else {
         await updateMealCarbsAndNoteRows(db, existingMeal.id, {
@@ -1026,61 +1440,31 @@ export async function updateUnifiedEntryGroup(
           proteinG: input.proteinG,
           fatG: input.fatG,
           fiberG: input.fiberG,
+          caloriesKcal: input.caloriesKcal,
+          ...(input.imageUri === undefined ? {} : { imageUri: input.imageUri }),
+          ...(input.aiEstimatedCarbsG === undefined || input.aiAnalysisId === undefined
+            ? {}
+            : { analysis: { aiEstimatedCarbsG: input.aiEstimatedCarbsG, aiAnalysisId: input.aiAnalysisId } }),
+          ...(input.macrosSource === undefined ? {} : { macrosSource: input.macrosSource }),
         });
       }
     } else if (existingMeal !== null) {
       await deleteMealEventRows(db, existingMeal.id);
+    } else if (looseCarb !== null) {
+      // La usuaria vació los gramos del carbohidrato suelto: eso es pedir que
+      // se borre, igual que en el resto del formulario.
+      await db.runAsync('DELETE FROM carb_events WHERE id = ?', looseCarb.id);
     }
 
-    // Cetonas del grupo (2026-08-25). Mismo contrato que el resto: el
-    // formulario manda el estado completo, así que vaciarlo borra la fila en
-    // vez de dejar el valor viejo.
-    const existingVitals = await db.getFirstAsync<{ id: string }>(
-      'SELECT id FROM vitals_events WHERE entry_group_id = ?',
+    // Vitales del grupo: **parche**, no reemplazo. Corregir una cetona mal
+    // tecleada no puede llevarse el peso ni la presión de la misma fila, y un
+    // campo que el formulario no muestra no puede borrar nada.
+    const existingVitals = await db.getFirstAsync<{ id: string; payload: string }>(
+      'SELECT id, payload FROM vitals_events WHERE entry_group_id = ?',
       entryGroupId,
     );
-    if (input.ketonesMmolL !== undefined) {
-      if (existingVitals === null) {
-        await saveVitalsEvent(db, {
-          id: Crypto.randomUUID(),
-          timestamp,
-          ketonesMmolL: input.ketonesMmolL,
-          source: 'manual',
-          createdAt: timestamp,
-        }, entryGroupId);
-      } else {
-        // Merge sobre el payload existente, no reemplazo. Hoy ningún camino
-        // adjunta peso ni presión a un `entry_group_id`, así que es
-        // inalcanzable — pero el día que exista, reescribir el objeto entero
-        // borraría el peso en silencio al editar las cetonas.
-        const row = await db.getFirstAsync<{ payload: string }>(
-          'SELECT payload FROM vitals_events WHERE id = ?',
-          existingVitals.id,
-        );
-        const previous = row === null ? {} : (safeJsonParse(row.payload) ?? {});
-        await db.runAsync(
-          'UPDATE vitals_events SET payload = ?, timestamp = ? WHERE id = ?',
-          JSON.stringify(VitalsEventSchema.parse({
-            ...(typeof previous === 'object' ? previous : {}),
-            id: existingVitals.id,
-            timestamp,
-            ketonesMmolL: input.ketonesMmolL,
-            source: 'manual',
-            createdAt: timestamp,
-          })),
-          timestamp,
-          existingVitals.id,
-        );
-      }
-    } else if (existingVitals !== null && input.clearKetones === true) {
-      // **Solo con la señal explícita.** Antes bastaba con que
-      // `ketonesMmolL` viniera ausente, y "ausente" es indistinguible de "el
-      // formulario nunca cargó el valor" — que es exactamente lo que pasó
-      // cuando la fila se caía de la ventana del timeline: guardar una
-      // corrección de carbohidratos borraba las cetonas que ella nunca vio ni
-      // tocó. Un dato guardado se borra porque alguien lo pidió, no porque un
-      // campo llegó vacío.
-      await db.runAsync('DELETE FROM vitals_events WHERE id = ?', existingVitals.id);
+    if (!isEmptyVitalsPatch(input.vitals)) {
+      await applyVitalsPatchRows(db, existingVitals, input.vitals!, timestamp, entryGroupId);
     }
 
     const existingRapid = await db.getFirstAsync<{ id: string }>(
@@ -1090,6 +1474,7 @@ export async function updateUnifiedEntryGroup(
     if (input.rapidUnits !== undefined) {
       const includesCorrection = input.rapidIncludesCorrection === true;
       if (existingRapid === null) {
+        const name = insulinNameForType(profileNames, 'rapid');
         await saveInsulinEvent(db, {
           id: Crypto.randomUUID(),
           timestamp,
@@ -1098,9 +1483,15 @@ export async function updateUnifiedEntryGroup(
           source: 'manual',
           createdAt: timestamp,
           purpose: hasMeal ? (includesCorrection ? 'combined' : 'meal') : 'correction',
+          ...(name === undefined ? {} : { insulinName: name }),
         }, entryGroupId);
       } else {
-        await updateInsulinEvent(db, existingRapid.id, { type: 'rapid', units: input.rapidUnits });
+        await updateInsulinEvent(db, existingRapid.id, {
+          type: 'rapid',
+          units: input.rapidUnits,
+          timestamp,
+          profileInsulinNames: profileNames,
+        });
       }
       outcome.savedRapid = true;
     } else if (existingRapid !== null) {
@@ -1113,6 +1504,7 @@ export async function updateUnifiedEntryGroup(
     );
     if (input.basalUnits !== undefined) {
       if (existingBasal === null) {
+        const name = insulinNameForType(profileNames, 'basal');
         await saveInsulinEvent(db, {
           id: Crypto.randomUUID(),
           timestamp,
@@ -1120,9 +1512,15 @@ export async function updateUnifiedEntryGroup(
           units: input.basalUnits,
           source: 'manual',
           createdAt: timestamp,
+          ...(name === undefined ? {} : { insulinName: name }),
         }, entryGroupId);
       } else {
-        await updateInsulinEvent(db, existingBasal.id, { type: 'basal', units: input.basalUnits });
+        await updateInsulinEvent(db, existingBasal.id, {
+          type: 'basal',
+          units: input.basalUnits,
+          timestamp,
+          profileInsulinNames: profileNames,
+        });
       }
       outcome.savedBasal = true;
     } else if (existingBasal !== null) {
@@ -1155,13 +1553,76 @@ export async function updateUnifiedEntryGroup(
     // (clear the group id) rather than leave a one-item group that would
     // render as "Entrada registrada" wrapping a lone glucose value. The
     // reading itself is never deleted here.
+    const remainingVitals = await db.getFirstAsync<{ id: string }>(
+      'SELECT id FROM vitals_events WHERE entry_group_id = ?',
+      entryGroupId,
+    );
     if (hasSensorAnchor && existingGlucose !== null
-      && !hasMeal && input.rapidUnits === undefined && input.basalUnits === undefined && input.note === undefined) {
+      && !hasMeal && input.rapidUnits === undefined && input.basalUnits === undefined
+      && input.note === undefined && remainingVitals === null) {
       await db.runAsync('UPDATE cgm_readings SET entry_group_id = NULL WHERE id = ?', existingGlucose.id);
     }
   });
 
   return outcome;
+}
+
+/**
+ * Aplica un `VitalsPatch` sobre la fila del grupo, creándola si hace falta y
+ * borrándola solo cuando se queda sin ninguna medición.
+ *
+ * Un campo ausente del parche **no se toca**; uno en `null` se borra. La fila
+ * entera desaparece únicamente cuando ya no queda nada que guardar en ella,
+ * porque `VitalsEventSchema` exige al menos una medición.
+ */
+async function applyVitalsPatchRows(
+  db: SQLiteDatabase,
+  existing: { id: string; payload: string } | null,
+  patch: VitalsPatch,
+  timestamp: string,
+  entryGroupId: string | undefined,
+): Promise<void> {
+  const previous = existing === null ? {} : (safeJsonParse(existing.payload) ?? {});
+  const base = typeof previous === 'object' && previous !== null ? previous as Record<string, unknown> : {};
+  const merged: Record<string, unknown> = { ...base };
+  for (const field of ['ketonesMmolL', 'weightKg', 'systolicBP', 'diastolicBP'] as const) {
+    const value = patch[field];
+    if (value === undefined) continue;         // no se tocó
+    if (value === null) delete merged[field];  // borrado explícito
+    else merged[field] = value;
+  }
+  const hasAnyMeasurement = ['ketonesMmolL', 'weightKg', 'systolicBP', 'diastolicBP']
+    .some((field) => typeof merged[field] === 'number');
+
+  if (!hasAnyMeasurement) {
+    if (existing !== null) await db.runAsync('DELETE FROM vitals_events WHERE id = ?', existing.id);
+    return;
+  }
+  if (existing === null) {
+    await saveVitalsEvent(db, VitalsEventSchema.parse({
+      ...merged,
+      id: Crypto.randomUUID(),
+      timestamp,
+      source: 'manual',
+      createdAt: timestamp,
+    }), entryGroupId);
+    return;
+  }
+  const next = VitalsEventSchema.parse({
+    ...merged,
+    id: existing.id,
+    timestamp,
+    // `source` y `createdAt` salen de `merged`, o sea de la fila que ya
+    // estaba: una corrección no reescribe cuándo ni de dónde vino el dato.
+    source: typeof base['source'] === 'string' ? base['source'] : 'manual',
+    createdAt: typeof base['createdAt'] === 'string' ? base['createdAt'] : timestamp,
+  });
+  await db.runAsync(
+    'UPDATE vitals_events SET payload = ?, timestamp = ? WHERE id = ?',
+    JSON.stringify(next),
+    timestamp,
+    existing.id,
+  );
 }
 
 /**
@@ -1180,19 +1641,13 @@ export async function updateUnifiedEntryGroup(
 export async function attachEntryToReading(
   db: SQLiteDatabase,
   readingId: string,
-  input: Omit<UnifiedEntryInput, 'timestamp'>,
+  input: Omit<UnifiedEntryInput, 'timestamp'> & { timestamp?: string },
 ): Promise<UnifiedEntryOutcome> {
   const row = await db.getFirstAsync<{ payload: string; entry_group_id: string | null }>(
     'SELECT payload, entry_group_id FROM cgm_readings WHERE id = ?',
     readingId,
   );
   if (row === null) throw new Error('La lectura ya no existe.');
-  if (row.entry_group_id !== null) {
-    // Already part of a group — the caller should be editing it via
-    // updateUnifiedEntryGroup, not re-attaching. Guarded so a double-tap
-    // can't mint a second group id over the same reading.
-    throw new Error('Esta lectura ya es parte de una entrada.');
-  }
   const reading = CGMReadingSchema.parse(JSON.parse(row.payload));
   // Validate the attachments up front, before tagging the reading — the only
   // pre-write throw inside the delegated updateUnifiedEntryGroup is this same
@@ -1202,20 +1657,33 @@ export async function attachEntryToReading(
   if (input.basalUnits !== undefined) InsulinUnitsSchema.parse(input.basalUnits);
   if (input.carbsG !== undefined) CarbGramsSchema.parse(input.carbsG);
   if (input.manualGlucose !== undefined) GlucoseValueSchema.parse(input.manualGlucose);
-  const entryGroupId = Crypto.randomUUID();
-  await db.runAsync('UPDATE cgm_readings SET entry_group_id = ? WHERE id = ?', entryGroupId, readingId);
+
+  // **Idempotente**: si la lectura ya es parte de un grupo se edita ese
+  // grupo, no se acuña uno segundo. Antes esto lanzaba, así que un doble
+  // toque terminaba en un error rojo sobre un guardado que sí correspondía.
+  const entryGroupId = row.entry_group_id ?? Crypto.randomUUID();
+  if (row.entry_group_id === null) {
+    await db.runAsync(
+      'UPDATE cgm_readings SET entry_group_id = ? WHERE id = ? AND entry_group_id IS NULL',
+      entryGroupId,
+      readingId,
+    );
+  }
   // Delegate the attachment writes to the same in-place editor used for every
   // later edit, so there's one code path (and one set of safety rules) for a
   // group's contents. It preserves the now-anchored reading because its origin
   // isn't 'manual' — or, for a manual reading, applies `manualGlucose` if given.
   // The glucose value is only ever forwarded for a 'manual' reading; for any
   // other origin it's dropped entirely, never passed as undefined.
-  const { manualGlucose, ...rest } = input;
+  const { manualGlucose, timestamp, ...rest } = input;
   const glucoseOverride = reading.origin === 'manual' && manualGlucose !== undefined ? { manualGlucose } : {};
   return updateUnifiedEntryGroup(db, entryGroupId, {
     ...rest,
     ...glucoseOverride,
-    timestamp: reading.sourceTimestamp,
+    // Una lectura externa fija el momento del grupo: sus adjuntos van a la
+    // hora que reportó la fuente y no a otra. Solo una capilar tecleada por
+    // ella se puede mover, y entonces manda el timestamp que llegue.
+    timestamp: reading.origin === 'manual' ? (timestamp ?? reading.sourceTimestamp) : reading.sourceTimestamp,
   });
 }
 
@@ -1374,15 +1842,27 @@ export async function deleteNoteEvent(db: SQLiteDatabase, id: string): Promise<v
 }
 
 /**
- * Borra un registro de vitales suelto (cetonas, peso, presión).
+ * Borra un registro de vitales (cetonas, peso, presión) desde su propia
+ * tarjeta del timeline.
  *
- * Solo alcanza a los que no pertenecen a una entrada empaquetada: los que sí
- * se borran con su grupo, en `deleteUnifiedEntryGroup`. Existe desde que las
- * cetonas sueltas se muestran en el timeline — un ítem que se ve y no se puede
- * quitar es un callejón sin salida.
+ * Existe desde que las cetonas sueltas se muestran ahí: un ítem que se ve y no
+ * se puede quitar es un callejón sin salida.
+ *
+ * ⚠️ **Tenía un `AND entry_group_id IS NULL` y hubo que quitarlo.** La guarda
+ * era correcta cuando "tener grupo" implicaba "estar dentro de una entrada
+ * empaquetada", que se borra por `deleteUnifiedEntryGroup`. Desde que editar
+ * un registro lo **promueve** a grupo, una fila de cetonas puede tener grupo y
+ * seguir siendo la única pieza que hay: el timeline la dibuja con su tipo
+ * nativo (ver `singleGroupItem`) y la guarda hacía que el botón Eliminar no
+ * hiciera nada, en silencio. El callejón sin salida volvía por la puerta de
+ * atrás.
+ *
+ * Borrar la fila es suficiente: si el grupo tenía más piezas, la tarjeta de
+ * este ítem no existe y nadie llega hasta acá; si no las tenía, el grupo queda
+ * sin filas y deja de existir solo.
  */
 export async function deleteVitalsEvent(db: SQLiteDatabase, id: string): Promise<void> {
-  await db.runAsync('DELETE FROM vitals_events WHERE id = ? AND entry_group_id IS NULL', id);
+  await db.runAsync('DELETE FROM vitals_events WHERE id = ?', id);
 }
 
 export async function getNoteEvents(db: SQLiteDatabase, from: Date, to: Date): Promise<NoteEvent[]> {
@@ -1729,6 +2209,15 @@ interface EntryGroupAccumulator {
   timestamp: string;
   glucose?: CGMReading;
   meal?: MealEvent;
+  /**
+   * Un carbohidrato del grupo que **no** es el espejo de su comida.
+   *
+   * Aparece cuando un carbohidrato suelto se promueve a entrada: la fila
+   * conserva su identidad y se une al grupo, pero todavía no hay comida
+   * alrededor. Sin esta rama la tarjeta decía "Entrada vacía" sobre unos
+   * gramos que sí estaban guardados.
+   */
+  carb?: { id: string; carbsG: number; source: 'manual' | 'meal_confirmed' | 'imported' };
   rapid?: InsulinEvent;
   basal?: InsulinEvent;
   note?: NoteEvent;
@@ -1857,20 +2346,48 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
       raw: event.data,
     });
   }
-  for (const row of carbRows) {
-    // A `meal_confirmed` row belonging to a group is the same fact as its
-    // group's meal.confirmedCarbsG (writeMealWithEpisode keeps them in
-    // sync) — showing both would be exactly the un-packaged duplication
-    // this feature exists to remove.
-    if (row.entry_group_id !== null) continue;
+  // Las filas espejo se resuelven contra **todas** las comidas que podrían
+  // explicarlas, no solo contra las que entraron en el `LIMIT` de arriba: si
+  // la comida se cayó de la ventana y su espejo no, la usuaria vería una
+  // tarjeta de "Carbohidratos confirmados" huérfana al lado de nada. Una
+  // ventana de visualización no puede cambiar qué es un hecho.
+  const mirrorTimestamps = [...new Set(
+    carbRows.filter((row) => row.source === 'meal_confirmed').map((row) => row.timestamp),
+  )];
+  const mealAnchors = mirrorTimestamps.length === 0
+    ? []
+    : await db.getAllAsync<{ id: string; timestamp: string }>(
+      `SELECT id, timestamp FROM meal_events WHERE timestamp IN (${mirrorTimestamps.map(() => '?').join(',')})`,
+      ...mirrorTimestamps,
+    );
+  const carbPartition = partitionCarbRows(
+    carbRows.map((row): CarbRowForTimeline => ({
+      id: row.id,
+      timestamp: row.timestamp,
+      carbsG: row.carbs_g,
+      source: row.source,
+      entryGroupId: row.entry_group_id,
+    })),
+    mealAnchors,
+  );
+  for (const row of carbPartition.standalone) {
+    // Una fila agrupada la dibuja la tarjeta de su grupo. Las espejo de una
+    // comida las escondió `partitionCarbRows`: para la usuaria comer una vez
+    // es un solo acontecimiento, aunque por dentro se guarde dos veces.
+    if (row.entryGroupId !== null) {
+      groupFor(row.entryGroupId, row.timestamp).carb = { id: row.id, carbsG: row.carbsG, source: row.source };
+      continue;
+    }
     items.push({
       id: row.id,
       kind: 'carbs',
       timestamp: row.timestamp,
-      title: row.source === 'meal_confirmed' ? 'Carbohidratos confirmados' : 'Carbohidratos',
-      detail: `${row.carbs_g} g`,
+      // Un espejo que llega hasta acá es huérfano: su comida ya no existe.
+      // Se nombra como lo que es, para que no parezca la comida que falta.
+      title: row.source === 'meal_confirmed' ? 'Carbohidratos de una comida borrada' : 'Carbohidratos',
+      detail: `${row.carbsG} g`,
       tone: 'orange',
-      raw: { carbsG: row.carbs_g, source: row.source },
+      raw: { carbsG: row.carbsG, source: row.source },
     });
   }
   for (const row of mealRows) {
@@ -1950,13 +2467,32 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
   }
 
   for (const [entryGroupId, group] of groups) {
+    // **Un grupo de una sola pieza no es una entrada empaquetada.**
+    //
+    // Desde que editar cualquier registro lo promueve a grupo (para poder
+    // sumarle lo que falte), corregir las unidades de una insulina suelta la
+    // dejaba dentro de un grupo de un solo elemento — y el timeline la
+    // dibujaba como "Entrada registrada · 3 U rápida". Un cambio de forma que
+    // nadie pidió y que además le quita su tarjeta propia.
+    //
+    // La regla es de presentación y va acá, junto a la que arma los grupos:
+    // se cuenta lo que hay dentro y, si es una sola cosa, se emite con su tipo
+    // nativo. El `entry_group_id` **se conserva en la base**, así que volver a
+    // editarla reusa el mismo grupo en vez de acuñar otro.
+    const singleton = singleGroupItem(entryGroupId, group);
+    if (singleton !== null) {
+      items.push(singleton);
+      continue;
+    }
     const parts = [
       // A grouped reading is usually a hand-typed 'manual' value, but can now
       // be an auto-saved sensor reading Verónica attached carbs/insulin to
       // after the fact — so the provenance suffix is derived from the reading,
       // never hardcoded, keeping every glucose display honest about its source.
       group.glucose === undefined ? null : `${convertGlucose(group.glucose.glucose, group.glucose.unit, 'mg/dL')} mg/dL${glucoseOriginSuffix(group.glucose.origin)}`,
-      group.meal?.confirmedCarbsG === undefined ? null : `${group.meal.confirmedCarbsG} g`,
+      group.meal?.confirmedCarbsG === undefined
+        ? (group.carb === undefined ? null : `${group.carb.carbsG} g`)
+        : `${group.meal.confirmedCarbsG} g`,
       group.rapid === undefined ? null : `${group.rapid.units} U rápida`,
       group.basal === undefined ? null : `${group.basal.units} U basal`,
       // Las cetonas van en el detalle, no solo dentro del editor (corregido
@@ -1976,33 +2512,156 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
       title: 'Entrada registrada',
       detail: parts.length === 0 ? 'Entrada vacía' : parts.join(' · '),
       tone: 'teal',
-      raw: {
-        entryGroupId,
-        // Convertido a mg/dL acá también — TimelineDetailModal muestra
-        // `raw.glucose` con la etiqueta "mg/dL" fija, sin volver a
-        // convertir, así que el valor tiene que serlo ya en este punto.
-        ...(group.glucose === undefined ? {} : { glucose: convertGlucose(group.glucose.glucose, group.glucose.unit, 'mg/dL'), glucoseOrigin: group.glucose.origin }),
-        ...(group.meal === undefined ? {} : { meal: group.meal }),
-        ...(group.meal?.note === undefined ? {} : { description: group.meal.note }),
-        ...(group.meal?.confirmedCarbsG === undefined ? {} : { carbsG: group.meal.confirmedCarbsG }),
-        ...(group.meal?.aiEstimatedCarbsG === undefined ? {} : { aiEstimatedCarbsG: group.meal.aiEstimatedCarbsG }),
-        // Fase 21: sin leerlos de vuelta, el formulario de edición abría con
-        // los macros en blanco y al guardar los borraba.
-        ...(group.meal?.proteinG === undefined ? {} : { proteinG: group.meal.proteinG }),
-        ...(group.meal?.fatG === undefined ? {} : { fatG: group.meal.fatG }),
-        ...(group.meal?.fiberG === undefined ? {} : { fiberG: group.meal.fiberG }),
-        ...(group.meal?.imageUri === undefined ? {} : { imageUri: group.meal.imageUri }),
-        ...(group.rapid === undefined ? {} : { rapidUnits: group.rapid.units }),
-        ...(group.basal === undefined ? {} : { basalUnits: group.basal.units }),
-        ...(group.note === undefined ? {} : { note: group.note.text }),
-        ...(group.vitals?.ketonesMmolL === undefined ? {} : { ketonesMmolL: group.vitals.ketonesMmolL }),
-      },
+      raw: entryGroupRaw(entryGroupId, group),
     });
   }
 
   return items
     .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
     .slice(0, limit);
+}
+
+/**
+ * El `raw` de una entrada empaquetada, con **todo** lo que el editor necesita
+ * para no destruir nada.
+ *
+ * La regla que lo gobierna es una sola y ya costó dos bugs: **un dato que el
+ * formulario no ve es un dato que el guardado borra.** Por eso viajan de
+ * vuelta también el nombre de la insulina, las calorías, el peso y la presión,
+ * aunque la fila del timeline no los muestre.
+ */
+function entryGroupRaw(entryGroupId: string, group: EntryGroupAccumulator): TimelineEntryGroupRaw {
+  const carbsG = group.meal?.confirmedCarbsG ?? group.carb?.carbsG;
+  return {
+    entryGroupId,
+    // Convertido a mg/dL acá también — `TimelineDetailModal` muestra
+    // `raw.glucose` con la etiqueta "mg/dL" fija, sin volver a convertir,
+    // así que el valor tiene que serlo ya en este punto.
+    ...(group.glucose === undefined ? {} : { glucose: convertGlucose(group.glucose.glucose, group.glucose.unit, 'mg/dL'), glucoseOrigin: group.glucose.origin }),
+    ...(group.meal === undefined ? {} : { meal: group.meal }),
+    ...(group.meal?.note === undefined ? {} : { description: group.meal.note }),
+    ...(carbsG === undefined ? {} : { carbsG }),
+    ...(group.meal?.aiEstimatedCarbsG === undefined ? {} : { aiEstimatedCarbsG: group.meal.aiEstimatedCarbsG }),
+    // Fase 21: sin leerlos de vuelta, el formulario de edición abría con
+    // los macros en blanco y al guardar los borraba.
+    ...(group.meal?.proteinG === undefined ? {} : { proteinG: group.meal.proteinG }),
+    ...(group.meal?.fatG === undefined ? {} : { fatG: group.meal.fatG }),
+    ...(group.meal?.fiberG === undefined ? {} : { fiberG: group.meal.fiberG }),
+    ...(group.meal?.caloriesKcal === undefined ? {} : { caloriesKcal: group.meal.caloriesKcal }),
+    ...(group.meal?.imageUri === undefined ? {} : { imageUri: group.meal.imageUri }),
+    ...(group.rapid === undefined ? {} : { rapidUnits: group.rapid.units }),
+    ...(group.basal === undefined ? {} : { basalUnits: group.basal.units }),
+    // El nombre estampado viaja de vuelta al editor. Sin esto el formulario
+    // no sabía que existía, y una actualización parcial lo borraba.
+    ...(group.rapid?.insulinName === undefined ? {} : { rapidInsulinName: group.rapid.insulinName }),
+    ...(group.basal?.insulinName === undefined ? {} : { basalInsulinName: group.basal.insulinName }),
+    ...(group.note === undefined ? {} : { note: group.note.text }),
+    ...(group.vitals?.ketonesMmolL === undefined ? {} : { ketonesMmolL: group.vitals.ketonesMmolL }),
+    // Peso y presión, por la misma razón que las cetonas.
+    ...(group.vitals?.weightKg === undefined ? {} : { weightKg: group.vitals.weightKg }),
+    ...(group.vitals?.systolicBP === undefined ? {} : { systolicBP: group.vitals.systolicBP }),
+    ...(group.vitals?.diastolicBP === undefined ? {} : { diastolicBP: group.vitals.diastolicBP }),
+  };
+}
+
+/**
+ * El ítem nativo de un grupo que solo tiene una pieza, o `null` si tiene más
+ * de una.
+ *
+ * Ver el comentario en `getTimeline`. La comida es la excepción que **no** se
+ * colapsa cuando además hay un espejo de carbohidratos: ese par es una sola
+ * pieza por definición y ya viene contado como una.
+ */
+function singleGroupItem(entryGroupId: string, group: EntryGroupAccumulator): TimelineItem | null {
+  const pieces = [
+    group.glucose === undefined ? null : 'glucose',
+    group.meal === undefined ? null : 'meal',
+    // El espejo de la comida no cuenta como pieza propia: es la misma.
+    group.carb === undefined || group.meal !== undefined ? null : 'carb',
+    group.rapid === undefined ? null : 'rapid',
+    group.basal === undefined ? null : 'basal',
+    group.note === undefined ? null : 'note',
+    group.vitals === undefined ? null : 'vitals',
+  ].filter((piece): piece is string => piece !== null);
+  if (pieces.length !== 1) return null;
+
+  if (group.glucose !== undefined) {
+    const reading = group.glucose;
+    return {
+      id: reading.id,
+      kind: 'glucose',
+      timestamp: reading.sourceTimestamp,
+      title: 'Glucosa',
+      detail: `${convertGlucose(reading.glucose, reading.unit, 'mg/dL')} mg/dL${glucoseOriginSuffix(reading.origin)}`,
+      tone: reading.origin === 'synthetic'
+        ? 'warning'
+        : reading.origin === 'imported' || reading.origin === 'manual'
+          ? 'muted'
+          : 'teal',
+      raw: reading,
+    };
+  }
+  if (group.meal !== undefined) {
+    const meal = group.meal;
+    return {
+      id: meal.id,
+      kind: 'meal',
+      timestamp: meal.timestamp,
+      title: 'Comida registrada',
+      detail: meal.confirmedCarbsG === undefined
+        ? 'Sin carbohidratos confirmados'
+        : `${meal.confirmedCarbsG} g confirmados`,
+      tone: 'orange',
+      raw: meal,
+    };
+  }
+  if (group.carb !== undefined) {
+    const carb = group.carb;
+    return {
+      id: carb.id,
+      kind: 'carbs',
+      timestamp: group.timestamp,
+      title: 'Carbohidratos',
+      detail: `${carb.carbsG} g`,
+      tone: 'orange',
+      raw: { carbsG: carb.carbsG, source: carb.source },
+    };
+  }
+  const insulin = group.rapid ?? group.basal;
+  if (insulin !== undefined) {
+    return {
+      id: insulin.id,
+      kind: 'insulin',
+      timestamp: insulin.timestamp,
+      title: insulin.type === 'rapid' ? 'Insulina rápida' : 'Insulina basal',
+      detail: `${insulin.units} U`,
+      tone: insulin.type === 'rapid' ? 'blue' : 'navy',
+      raw: insulin,
+    };
+  }
+  if (group.note !== undefined) {
+    return {
+      id: group.note.id,
+      kind: 'note',
+      timestamp: group.note.timestamp,
+      title: 'Nota',
+      detail: group.note.text,
+      tone: 'navy',
+      raw: group.note,
+    };
+  }
+  if (group.vitals !== undefined) {
+    // `entry_group_id: null` a propósito: `standaloneVitalsItems` descarta las
+    // agrupadas porque su tarjeta la dibuja el grupo, y acá se está pidiendo
+    // exactamente lo contrario — el grupo tiene una sola pieza y hay que
+    // dibujarla con su tipo nativo. Lo que se reusa es el mapeo fila → ítem
+    // (título, banda de cetonas escrita, tono), que es donde estaba el hueco
+    // y por eso vive con test en su propio módulo.
+    void entryGroupId;
+    const [item] = standaloneVitalsItems([{ payload: JSON.stringify(group.vitals), entry_group_id: null }]);
+    return item ?? null;
+  }
+  return null;
 }
 
 /**
@@ -2099,11 +2758,11 @@ export async function recordCatalogFoods(
       if (row === null) {
         await db.runAsync(
           `INSERT INTO food_catalog
-             (key, name, carbs_per_100g, protein_per_100g, fat_per_100g, fiber_per_100g, kcal_per_100g, times_seen, last_seen_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+             (key, name, carbs_per_100g, protein_per_100g, fat_per_100g, fiber_per_100g, kcal_per_100g, times_seen, last_seen_at, image_uri)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
           entry.key, entry.name,
           entry.carbsPer100g, entry.proteinPer100g, entry.fatPer100g, entry.fiberPer100g, entry.kcalPer100g,
-          entry.lastSeenAt,
+          entry.lastSeenAt, entry.imageUri ?? null,
         );
         continue;
       }
@@ -2116,11 +2775,14 @@ export async function recordCatalogFoods(
         `UPDATE food_catalog SET
            name = ?, carbs_per_100g = ?, protein_per_100g = ?, fat_per_100g = ?,
            fiber_per_100g = ?, kcal_per_100g = ?, times_seen = ?, last_seen_at = ?,
-           serving_grams = ?, serving_label = ?
+           serving_grams = ?, serving_label = ?, image_uri = ?
          WHERE key = ?`,
         merged.name, merged.carbsPer100g, merged.proteinPer100g, merged.fatPer100g,
         merged.fiberPer100g, merged.kcalPer100g, merged.timesSeen, merged.lastSeenAt,
         merged.servingGrams ?? null, merged.servingLabel ?? null,
+        // `blendCatalogEntry` conserva la foto anterior cuando la nueva no
+        // trae una, así que escribir el resultado nunca la borra.
+        merged.imageUri ?? null,
         merged.key,
       );
     }
@@ -2148,11 +2810,13 @@ export async function updateCatalogFood(
   await db.runAsync(
     `UPDATE food_catalog SET
        name = ?, carbs_per_100g = ?, protein_per_100g = ?, fat_per_100g = ?,
-       fiber_per_100g = ?, kcal_per_100g = ?, serving_grams = ?, serving_label = ?
+       fiber_per_100g = ?, kcal_per_100g = ?, serving_grams = ?, serving_label = ?,
+       image_uri = ?
      WHERE key = ?`,
     next.name, next.carbsPer100g, next.proteinPer100g, next.fatPer100g,
     next.fiberPer100g, next.kcalPer100g,
     next.servingGrams ?? null, next.servingLabel ?? null,
+    next.imageUri ?? null,
     key,
   );
   return next;
@@ -2192,12 +2856,13 @@ export async function createCatalogFoodVariant(
   }
   await db.runAsync(
     `INSERT INTO food_catalog
-       (key, name, carbs_per_100g, protein_per_100g, fat_per_100g, fiber_per_100g, kcal_per_100g, times_seen, last_seen_at, serving_grams, serving_label)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+       (key, name, carbs_per_100g, protein_per_100g, fat_per_100g, fiber_per_100g, kcal_per_100g, times_seen, last_seen_at, serving_grams, serving_label, image_uri)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
     key, created.name,
     created.carbsPer100g, created.proteinPer100g, created.fatPer100g,
     created.fiberPer100g, created.kcalPer100g, created.lastSeenAt,
     created.servingGrams ?? null, created.servingLabel ?? null,
+    created.imageUri ?? null,
   );
   return created;
 }
@@ -2211,6 +2876,7 @@ interface FoodCatalogRow {
   fat_per_100g: number; fiber_per_100g: number; kcal_per_100g: number;
   times_seen: number; last_seen_at: string;
   serving_grams: number | null; serving_label: string | null;
+  image_uri: string | null;
 }
 
 function rowToCatalogFood(row: FoodCatalogRow): CatalogFood {
@@ -2226,6 +2892,9 @@ function rowToCatalogFood(row: FoodCatalogRow): CatalogFood {
     lastSeenAt: row.last_seen_at,
     ...(row.serving_grams === null ? {} : { servingGrams: row.serving_grams }),
     ...(row.serving_label === null ? {} : { servingLabel: row.serving_label }),
+    // Una fila anterior a la columna llega con `undefined` y así se queda: no
+    // se inventa una imagen para datos viejos, se muestra el fallback.
+    ...(row.image_uri === null || row.image_uri === undefined ? {} : { imageUri: row.image_uri }),
   };
 }
 

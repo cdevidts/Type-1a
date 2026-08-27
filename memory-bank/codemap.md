@@ -53,7 +53,9 @@ Puro, determinístico, con test. **Ningún `.tsx` calcula una métrica de salud.
 | `macros-source.ts` | `resolveMacrosSource()` — quién puso los macros de una comida. Se imprime en el reporte médico; ningún `.tsx` lo decide |
 | `vitals-summary.ts` | cómo se lee un registro de vitales, con la banda de cetonas de `assessKetones`. El componente elige el color; no decide qué es urgente |
 | `insulin-catalog.ts` | catálogo de insulinas y su duración. Devuelve `undefined` si no está configurada — nunca un default silencioso |
-| `food-catalog.ts` | `foodKey`, `blendCatalogEntry`; misma implementación en teléfono y servidor |
+| `food-catalog.ts` | `foodKey`, `blendCatalogEntry`; misma implementación en teléfono y servidor. `imageUri` es representación del alimento, nunca base de un macro |
+| `meal-cart.ts` | el carrito multi-alimento: suma líneas y declara qué macro falta. Su total es **estimación**; confirmarlo es un acto de la usuaria |
+| `insulin-catalog.ts` § naming | `insulinNameForType`, `resolveInsulinNameForEdit` — el nombre es configuración, no un campo por registro |
 | `report.ts`, `units.ts`, `ketones.ts`, `meal.ts`, `mysugr-import.ts` | reporte, conversión, cetonas, comida, importación |
 
 ## `packages/cgm`
@@ -88,18 +90,25 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
   sub-páginas son pestañas (`SummaryModal.tsx`). `BottomNav.tsx` +
   `useSwipeNavigation.ts` + `swipeOrder.ts`.
 - **Modal Maestro**: `UnifiedEntryModal.tsx` es el formulario único de
-  creación (`projectbrief.md`). `EntrySection.tsx` pliega sus secciones y
-  `masterModal.ts` tiene sus dos reglas, puras y con test.
-  `CatalogQuickAdd.tsx` es el agregado rápido desde el catálogo, y lo montan
-  **los dos** caminos de comida: si una facultad vive en uno solo, es una
-  asimetría. `MealModal` y
-  `MealEditModal` siguen siendo modales hospedados: son las herramientas de
-  catálogo e IA, pendientes de absorber.
-- **Formularios de comida**: `UnifiedEntryModal`, `MealModal`, `MealEditModal`,
-  `TimelineDetailModal`. Son cuatro flujos distintos a propósito, pero **lo que
-  comparten se comparte**: `MacroFields.tsx` (el trío proteína/grasa/fibra y el
-  campo numérico de la app) y los `parseBlankAs*` de `format.ts`. Un campo
-  nuevo va ahí primero, no suelto en un modal.
+  **creación y edición** (`projectbrief.md`); `mode` dice cuál de las dos.
+  `EntrySection.tsx` pliega sus secciones y `masterModal.ts` tiene sus reglas,
+  puras y con test: a dónde escribe cada tipo (`masterTargetOf`), qué carga
+  (`masterSeedFrom`) y qué se abre (`masterSectionsFor`, **por contenido**).
+  `TimelineDetailModal.tsx` **solo lee**: su botón Editar abre el maestro.
+- **Formularios de comida**: el maestro, `MealModal` (acceso rápido) y
+  `MealEditModal` (el editor con IA: foto nueva, instrucción libre, propuesta
+  antes → después), hospedado desde la sección de comida del maestro cuando la
+  comida ya existe. **Lo que comparten se comparte**: `MacroFields.tsx`,
+  `MealCart.tsx` (el carrito, en los tres) y los `parseBlankAs*` de `format.ts`.
+  Un campo nuevo va ahí primero, no suelto en un modal.
+- **Accesos rápidos**: `MealModal`, `CorrectionModal` y `QuickNumericModal.tsx`
+  —uno solo, parametrizado, para Basal y Cetonas—. Son breves a propósito; la
+  entrada completa es el maestro, y cada uno ofrece la salida hacia él.
+- `FoodCard.tsx` — la tarjeta de un alimento, **la misma** en catálogo y
+  carrito. Lo único que cambia es el control de la derecha: lápiz o X. Tocar el
+  contenedor no edita.
+- `StripCalendar.tsx` — la fila de días de Nutrición. Su aritmética vive en
+  `entryTime.ts`.
 - **Gráficos**: `GlucoseChart.tsx`, `SummaryCharts.tsx` (`react-native-svg`);
   `reportExport.ts` dibuja SVG inline para el PDF.
 - `notifications.ts` — un canal de Android por tipo de alarma. Android congela
@@ -110,6 +119,18 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
 - `mealFields.ts` — qué campos **son** una comida. Puro y con test porque
   decide si la fila se escribe y si se conserva: un `false` de más borra
   historial. Si agregas un campo de comida a `UnifiedEntryInput`, va acá.
+  `promotesLooseCarbToMeal` decide cuándo un carbohidrato suelto pasa a ser un
+  plato — o sea cuándo nace un episodio y suenan alarmas.
+- `mealCarbMirror.ts` — qué fila de carbohidratos **es** una comida ya visible
+  y cuál es un hecho propio. Puro y con test: esconder de más borra un dato de
+  la vista, esconder de menos lo cuenta dos veces en el reporte médico.
+- `entryTime.ts` — días, meses y la hora de un registro histórico. Puro porque
+  "cuándo pasó" es la columna que agrupa episodios y recorta ventanas, y sus
+  casos son de calendario (fin de mes, año, medianoche), no de pantalla.
+- En `db.ts`: `promoteEventToEntryGroup` (evento suelto → grupo, idempotente y
+  sin perder identidad), `moveEntryGroupRows` (mover la hora, sin tocar
+  `ingestedAt` ni una lectura externa) y `applyVitalsPatchRows` (parche, no
+  reemplazo: corregir una cetona no borra el peso).
 - `theme.ts` — todos los tokens. `branding.ts` — el logo, en una variable.
 - `sensorConnection.ts` — cada usuaria conecta su propia cuenta LibreLinkUp.
 
