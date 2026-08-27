@@ -72,6 +72,13 @@ ni sugiere cambiarla (`contracts/safety-acceptance.md`). Las marcas nuevas no
 pueden distinguirse solo por color. La estructura del Excel sigue sin tocarse a
 propósito: se rediseña junto con el reporte.
 
+### 1b. Los tres hallazgos declarados de la revisión del 2026-08-27
+
+Espejo compartido entre comidas sin grupo a la misma hora exacta, foto de
+catálogo que es del plato, y el `source` de un carbohidrato importado editado.
+Ver `progress.md` § Hallazgos no corregidos. El tercero necesita una decisión
+de producto.
+
 ### 2. Los cuatro hallazgos vivos de la revisión repuntada
 
 Siguen abiertos y son anteriores a esta corrida. Ver `progress.md` § Deuda.

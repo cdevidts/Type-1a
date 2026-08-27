@@ -6,7 +6,7 @@ import type { EpisodeContextEvent } from '@type1a/schemas';
 import { formatDayTime, trendArrow } from '../format';
 import { colors, radius, spacing } from '../theme';
 import type { TimelineItem } from '../types';
-import { isMasterEditable } from '../masterModal';
+import { isMasterEditable, masterSeedFrom } from '../masterModal';
 import { ModalShell } from './ModalShell';
 
 /**
@@ -198,6 +198,17 @@ function hasReadOnlyGlucoseAnchor(item: TimelineItem): boolean {
   return false;
 }
 
+/**
+ * `true` cuando el momento de este registro lo fija una fuente externa.
+ *
+ * Se deriva de `masterSeedFrom`, que es quien lo decide de verdad, en vez de
+ * repetir la condición: dos lugares que respondan lo mismo por su cuenta es
+ * cómo el detalle terminó prometiendo algo que el editor no hacía.
+ */
+function fixedTimestamp(item: TimelineItem): boolean {
+  return !masterSeedFrom(item).timestampEditable;
+}
+
 function deleteLabel(item: TimelineItem): string {
   if (item.kind === 'episode') return 'Eliminar seguimiento';
   if (item.kind === 'entry') return hasReadOnlyGlucoseAnchor(item) ? 'Quitar datos adjuntos' : 'Eliminar entrada completa';
@@ -319,8 +330,17 @@ export function TimelineDetailModal({
             </Text>
           ) : (
             <Text style={styles.hint}>
-              Editar abre el formulario completo: puedes corregir la fecha y la hora, y agregarle lo que falte —
-              una comida con foto, la insulina, las cetonas o una nota — aunque el registro no haya nacido así.
+              {/*
+                La promesa se ajusta al ítem. Decir "puedes corregir la fecha y
+                la hora" sobre una lectura de sensor o importada era falso: su
+                momento lo fija la fuente y el maestro lo muestra de solo
+                lectura. El comportamiento estaba bien; la frase no.
+              */}
+              {fixedTimestamp(item)
+                ? 'Editar abre el formulario completo: puedes agregarle lo que falte — una comida con foto, la '
+                  + 'insulina, las cetonas o una nota. La hora la fija la fuente del dato y no se edita.'
+                : 'Editar abre el formulario completo: puedes corregir la fecha y la hora, y agregarle lo que falte '
+                  + '— una comida con foto, la insulina, las cetonas o una nota — aunque el registro no haya nacido así.'}
             </Text>
           )}
 

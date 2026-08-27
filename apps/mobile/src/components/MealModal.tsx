@@ -294,17 +294,32 @@ export function MealModal({
    * la usuaria, igual que con una estimación por foto.
    */
   /**
-   * Qué hace esta pantalla con una porción del catálogo.
+   * Qué hace esta pantalla cuando la usuaria toca "Usar N g como confirmados".
    *
-   * La elección y el escalado los resuelve `MealCart`; acá solo se
-   * decide dónde aterriza. Los carbohidratos **no** se escriben en el campo de
-   * confirmación: se recuerda de dónde salió la sugerencia. Sin eso, si ella
-   * transcribe el número sin haber sacado foto, la comida queda sin
-   * `aiEstimatedCarbsG` y ese carbo —que viene de una media de estimaciones de
-   * IA— se vuelve indistinguible de uno pesado en balanza, tanto para ella
-   * como para el reporte al médico.
+   * La elección y el escalado los resuelve `MealCart`; acá solo se decide
+   * dónde aterriza.
+   *
+   * ## Los carbohidratos SÍ se escriben en el campo, y por qué
+   *
+   * El botón del carrito dice literalmente "como confirmados": es la acción
+   * explícita que exige `AGENTS.md` para que una estimación pase a dato
+   * confirmado. Antes esta función mostraba "se transcribieron 62 g" y **no
+   * tocaba el campo**, así que "Calcular por conteo" seguía leyendo los 20 g
+   * que hubiera escrito antes: una dosis para 20 g creyendo que cubría 62.
+   * Una pantalla que afirma un valor distinto del que usa la fórmula es peor
+   * que una que no afirma nada.
+   *
+   * El rastro de que ese número es una estimación no se pierde:
+   * `catalogSuggestedCarbsG` se guarda como `aiEstimatedCarbsG`.
    */
   function applyCart(totals: { carbsG: number; proteinG: number; fatG: number; fiberG: number; caloriesKcal: number }): void {
+    setConfirmedCarbs(String(totals.carbsG));
+    // Los gramos cambiaron, así que cualquier dosis ya calculada dejó de
+    // corresponder. Misma invalidación que al teclear el campo a mano.
+    if (calcBasisCarbsG !== null) {
+      setCalcBasisCarbsG(null);
+      setRapidInput('');
+    }
     setProteinInput(String(totals.proteinG));
     setFatInput(String(totals.fatG));
     setFiberInput(String(totals.fiberG));
@@ -604,7 +619,7 @@ export function MealModal({
         }}
         onUseCarbs={(totals) => {
           applyCart(totals);
-          setMessage(`Se transcribieron ${totals.carbsG} g del carrito. Revísalos: quedan como carbohidratos que confirmas tú.`);
+          setMessage(`Se escribieron ${totals.carbsG} g en "carbohidratos que confirmas". Revísalos antes de guardar; si calculaste una dosis antes, vuelve a calcularla.`);
         }}
         onMessage={setMessage}
       />
@@ -631,7 +646,10 @@ export function MealModal({
         />
         <Text style={styles.confirmUnit}>g</Text>
       </View>
-      <Text style={styles.confirmFoot}>No se completa automáticamente con la estimación.</Text>
+      <Text style={styles.confirmFoot}>
+        La estimación de una foto nunca lo completa sola. El carrito sí lo escribe, pero solo cuando tocas
+        "Usar N g como confirmados": revisa el número antes de guardar.
+      </Text>
 
       {/*
         Opcionales y colapsados por defecto: el registro frecuente es

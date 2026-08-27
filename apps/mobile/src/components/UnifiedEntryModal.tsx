@@ -14,6 +14,7 @@ import { colors, radius, spacing } from '../theme';
 import {
   HISTORIC_CALCULATOR_TITLE,
   historicCalculatorWarning,
+  isHistoricCalculation,
   masterSectionsFor,
   sectionStartsOpen,
   type MasterSection,
@@ -107,6 +108,16 @@ export interface UnifiedEntryDraft {
   fatG?: number;
   fiberG?: number;
   caloriesKcal?: number;
+  /**
+   * Procedencia de los macros, ya resuelta por `packages/domain`. `null` = sin
+   * macros que declarar.
+   *
+   * **Se decide acá y no en `App`** porque este componente es el único que
+   * sabe qué precargó una estimación: la foto, el texto **y el carrito**.
+   * Recalcularla afuera comparando solo contra `analysis` marcaba `'user'`
+   * unos macros que salieron del catálogo.
+   */
+  macrosSource?: MealEvent['macrosSource'] | null;
   ketonesMmolL?: number;
   weightKg?: number;
   systolicBP?: number;
@@ -896,6 +907,15 @@ export function UnifiedEntryModal({
           ...(typeof vitals.diastolicBP === 'number' ? { diastolicBP: vitals.diastolicBP } : {}),
           ...(saveToCatalog ? {} : { saveToCatalog: false }),
           ...(catalogSuggestedCarbsG === null ? {} : { catalogSuggestedCarbsG }),
+          // **La procedencia viaja también al crear.** Antes solo se mandaba
+          // en modo edición, y `App.saveEntry` la recalculaba comparando
+          // únicamente contra `draft.analysis`. Con el carrito no hay
+          // análisis, así que unos macros que salen de una media de
+          // estimaciones de IA del catálogo se guardaban marcados `'user'` —
+          // y el reporte del control médico los imprimía como "anotados por la
+          // usuaria". Acá se compara contra lo que precargó la estimación,
+          // venga de una foto, de un texto o del carrito.
+          macrosSource: macrosSource ?? null,
         });
       }
       onClose();
@@ -952,6 +972,23 @@ export function UnifiedEntryModal({
   const noteSummary = note.trim() === '' ? null : 'anotada';
 
   const title = editing !== null ? editing.title : (focus === 'all' ? 'Nueva entrada' : FOCUS_TITLE[focus]);
+  /**
+   * `true` cuando lo que se está anotando **no es de ahora**.
+   *
+   * Cubre los dos caminos, y esa es la corrección: la advertencia histórica de
+   * la calculadora estaba solo en modo edición, pero registrar en el pasado
+   * (el "+" contextual de Nutrición) llega a la misma superficie con una
+   * glucosa de hace cinco días. Ahí la sección decía "Calculadora de dosis",
+   * el botón "Calcular dosis sugerida" y el resultado "6 U" sin nada que
+   * dijera de cuándo era el número — que es exactamente cómo un cálculo
+   * reconstruido se lee como una indicación de pincharse ahora.
+   */
+  const historicEntry = isHistoricCalculation({
+    editing: editing !== null,
+    hasPresetDay: mode?.kind === 'create' && (mode.presetDay ?? null) !== null,
+  });
+  /** El momento sobre el que se está reconstruyendo, para nombrarlo. */
+  const historicMoment = seed?.timestamp ?? openedAt;
   const savedImage = seed?.imageUri;
   const showTimeWarning = timeRequired && timeText.trim() === '';
   const dayIsFuture = (() => {
@@ -1019,11 +1056,31 @@ export function UnifiedEntryModal({
       <EntrySection title="Glucosa" summary={glucoseSummary} initiallyOpen={sectionOpen('glucose')}>
         {seed !== null && seed.glucoseReadOnly ? (
           <>
-            <Text style={styles.fieldLabel}>Glucosa (del sensor)</Text>
-            <Text style={styles.readonlyValue}>{seed.glucose ?? '—'} mg/dL</Text>
-            <Text style={styles.hint}>
-              Este valor viene de {seed.glucoseOrigin === 'imported' ? 'una importación' : seed.glucoseOrigin === 'synthetic' ? 'datos sintéticos de demo' : 'tu sensor'} y no se edita.
-              Puedes adjuntarle la comida, la insulina, las cetonas o una nota de ese momento.
+            {/*
+              La etiqueta nombra el ORIGEN REAL. Decía "Glucosa (del sensor)"
+              para cualquier valor de solo lectura, así que un dato sintético de
+              demo o uno importado de un CSV se rotulaba como sensor y solo el
+              pie de abajo lo desmentía. `AGENTS.md` prohíbe presentar datos
+              sintéticos o importados como lectura de sensor: la etiqueta y el
+              pie no pueden decir cosas distintas del mismo número.
+            */}
+            <Text style={styles.fieldLabel}>
+              {seed.glucoseOrigin === 'imported'
+                ? 'Glucosa (importada)'
+                : seed.glucoseOrigin === 'synthetic'
+                  ? 'Glucosa SINTÉTICA (modo demo)'
+                  : 'Glucosa (del sensor)'}
+            </Text>
+            <Text style={[styles.readonlyValue, seed.glucoseOrigin === 'synthetic' && styles.readonlyValueSynthetic]}>
+              {seed.glucose ?? '—'} mg/dL
+            </Text>
+            <Text style={seed.glucoseOrigin === 'synthetic' ? styles.syntheticText : styles.hint}>
+              {seed.glucoseOrigin === 'imported'
+                ? 'Viene de un archivo que importaste y no se edita. No es una lectura de sensor.'
+                : seed.glucoseOrigin === 'synthetic'
+                  ? 'Es un valor de prueba generado por la app, NO una medición. No sirve para dosificar.'
+                  : 'Este valor viene de tu sensor y no se edita.'}
+              {' '}Puedes adjuntarle la comida, la insulina, las cetonas o una nota de ese momento.
             </Text>
           </>
         ) : (
@@ -1237,15 +1294,21 @@ export function UnifiedEntryModal({
       </EntrySection>
 
       <EntrySection
-        title={editing === null ? 'Calculadora de dosis' : HISTORIC_CALCULATOR_TITLE}
+        title={historicEntry ? HISTORIC_CALCULATOR_TITLE : 'Calculadora de dosis'}
         summary={null}
         initiallyOpen={sectionOpen('calculator')}
       >
-        {editing !== null ? (
+        {historicEntry ? (
           <View style={styles.historicBox}>
-            <Text style={styles.historicTitle}>Reconstrucción histórica · {formatDayTime(seed?.timestamp ?? openedAt)}</Text>
+            <Text style={styles.historicTitle}>
+              Reconstrucción histórica · {editing === null ? `${dayText} ${timeText}`.trim() : formatDayTime(historicMoment)}
+            </Text>
             <Text style={styles.historicText}>
-              {historicCalculatorWarning(formatDayTime(seed?.timestamp ?? openedAt))}
+              {historicCalculatorWarning(
+                editing === null
+                  ? (timeText.trim() === '' ? null : `${dayText} a las ${timeText}`)
+                  : formatDayTime(historicMoment),
+              )}
             </Text>
           </View>
         ) : null}
@@ -1258,7 +1321,7 @@ export function UnifiedEntryModal({
         </View>
         <Pressable style={[styles.calculateButton, busy && styles.disabled]} disabled={busy} onPress={calculate}>
           <Text style={styles.calculateText}>
-            {editing === null ? 'Calcular dosis sugerida' : 'Reconstruir el cálculo de ese momento'}
+            {historicEntry ? 'Reconstruir el cálculo de ese momento' : 'Calcular dosis sugerida'}
           </Text>
         </Pressable>
 
@@ -1289,9 +1352,17 @@ export function UnifiedEntryModal({
                     setDoseNeedsReconfirm(false);
                   }}
                 >
-                  <Text style={styles.useText}>Usar {suggestion.units} U como rápida</Text>
+                  <Text style={styles.useText}>
+                    {historicEntry
+                      ? `Anotar ${suggestion.units} U como la rápida de ese momento`
+                      : `Usar ${suggestion.units} U como rápida`}
+                  </Text>
                 </Pressable>
-                <Text style={styles.useFoot}>No se copia sola: revisa el número y edítalo si tu equipo clínico indica otra cosa.</Text>
+                <Text style={styles.useFoot}>
+                  {historicEntry
+                    ? 'No se copia sola, y no es una dosis para ahora: es lo que la fórmula habría dado entonces.'
+                    : 'No se copia sola: revisa el número y edítalo si tu equipo clínico indica otra cosa.'}
+                </Text>
               </>
             )}
           </View>
@@ -1435,6 +1506,7 @@ const styles = StyleSheet.create({
   fieldInput: { color: colors.ink, fontSize: 20, fontWeight: '700', flex: 1, paddingVertical: spacing.md, minHeight: 44 },
   fieldUnit: { color: colors.muted, fontSize: 11, marginLeft: 4 },
   readonlyValue: { color: colors.ink, fontSize: 22, fontWeight: '800', marginTop: 6 },
+  readonlyValueSynthetic: { color: colors.warning },
   row: { flexDirection: 'row', gap: spacing.md },
   hint: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: 6 },
   description: { backgroundColor: colors.surface, color: colors.ink, borderColor: colors.line, borderWidth: 1, borderRadius: radius.sm, minHeight: 64, padding: spacing.md, marginTop: spacing.sm, textAlignVertical: 'top' },

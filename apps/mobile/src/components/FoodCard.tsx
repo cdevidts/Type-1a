@@ -79,7 +79,15 @@ function MacroChip({
 /**
  * La miniatura. Cuadrada con esquinas redondeadas; si el alimento no tiene
  * foto —todo lo guardado antes de que el catálogo las soportara— va un icono
- * neutro. **Nunca se genera ni se sustituye por la foto de otro alimento.**
+ * neutro. **Nunca se genera.**
+ *
+ * ⚠️ **No es una foto DEL alimento: es la foto de la comida donde se
+ * identificó.** El análisis de una foto devuelve varios alimentos y todos
+ * heredan la misma imagen, así que la foto de un sándwich queda como
+ * miniatura de "Pan", "Queso" y "Jamón" por separado. Anunciarla como "Foto
+ * de Pan" al lado de "porción 20 g" invita a estimar la porción mirando un
+ * plato entero — y esa porción produce los gramos que pueden terminar en
+ * carbohidratos confirmados. La etiqueta lo dice.
  */
 function Thumbnail({ imageUri, name }: { imageUri: string | undefined; name: string }) {
   if (imageUri === undefined) {
@@ -95,7 +103,7 @@ function Thumbnail({ imageUri, name }: { imageUri: string | undefined; name: str
       style={styles.thumb}
       resizeMode="cover"
       accessible
-      accessibilityLabel={`Foto de ${name}`}
+      accessibilityLabel={`Foto de la comida donde se identificó ${name}. Puede incluir otros alimentos.`}
     />
   );
 }

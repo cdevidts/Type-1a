@@ -296,6 +296,32 @@ export function masterTitleFor(item: TimelineItem): string {
 }
 
 /**
+ * Si la calculadora está reconstruyendo un momento pasado en vez de calcular
+ * para ahora.
+ *
+ * ## Por qué es una función y no un `editing !== null` suelto
+ *
+ * Porque hay **dos** caminos hasta esa superficie y la primera versión solo
+ * cubrió uno. La advertencia histórica estaba condicionada a modo edición,
+ * pero registrar en el pasado —el "+" contextual de Nutrición— llega al mismo
+ * bloque en modo creación, con una glucosa de hace cinco días: la sección
+ * decía "Calculadora de dosis", el botón "Calcular dosis sugerida" y el
+ * resultado "6 U", sin nada que dijera de cuándo era el número.
+ *
+ * Un cálculo reconstruido que no se declara como tal se lee como una
+ * indicación de pincharse ahora. La condición vive acá, con test, para que
+ * agregar un tercer camino a la calculadora obligue a pasar por esta regla.
+ */
+export function isHistoricCalculation(input: {
+  /** Se está corrigiendo un registro que ya existe. */
+  editing: boolean;
+  /** Se está creando con una fecha heredada del calendario. */
+  hasPresetDay: boolean;
+}): boolean {
+  return input.editing || input.hasPresetDay;
+}
+
+/**
  * El título exacto de la calculadora cuando se abre sobre un registro
  * histórico.
  *

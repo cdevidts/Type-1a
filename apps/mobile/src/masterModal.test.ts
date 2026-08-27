@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   HISTORIC_CALCULATOR_TITLE,
   historicCalculatorWarning,
+  isHistoricCalculation,
   isMasterEditable,
   masterSectionsFor,
   masterSeedFrom,
@@ -348,5 +349,35 @@ describe('masterTitleFor — el título nombra el registro, no el componente', (
     [entryItem, 'Editar entrada'],
   ] as const)('%# → %s', (item, expected) => {
     expect(masterTitleFor(item)).toBe(expected);
+  });
+});
+
+/**
+ * Dos caminos llegan a la calculadora con una glucosa que no es de ahora, y la
+ * primera versión de este trabajo solo cubrió uno: la advertencia histórica
+ * estaba condicionada a modo edición, así que el "+" contextual de Nutrición
+ * —que crea con una fecha heredada— mostraba "Calculadora de dosis",
+ * "Calcular dosis sugerida" y un resultado en unidades sin decir de cuándo era.
+ */
+describe('isHistoricCalculation — la advertencia cubre TODOS los caminos', () => {
+  it('editar un registro es histórico', () => {
+    expect(isHistoricCalculation({ editing: true, hasPresetDay: false })).toBe(true);
+  });
+
+  it('crear con una fecha heredada del calendario TAMBIÉN es histórico', () => {
+    expect(isHistoricCalculation({ editing: false, hasPresetDay: true })).toBe(true);
+  });
+
+  it('crear ahora, sin fecha heredada, no lo es', () => {
+    expect(isHistoricCalculation({ editing: false, hasPresetDay: false })).toBe(false);
+  });
+
+  it('no hay combinación con fecha vieja que se escape', () => {
+    const combos = [
+      { editing: true, hasPresetDay: true },
+      { editing: true, hasPresetDay: false },
+      { editing: false, hasPresetDay: true },
+    ];
+    for (const combo of combos) expect(isHistoricCalculation(combo)).toBe(true);
   });
 });

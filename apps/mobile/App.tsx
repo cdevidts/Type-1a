@@ -31,7 +31,6 @@ import {
   MAX_INSULIN_DURATION_HOURS,
   MIN_INSULIN_DURATION_HOURS,
   rapidInsulinLookbackMinutes,
-  resolveMacrosSource,
   type CatalogFood,
 } from '@type1a/domain';
 import type {
@@ -741,21 +740,13 @@ function Type1AApp() {
   }
 
   async function saveEntry(draft: UnifiedEntryDraft): Promise<void> {
-    // La procedencia la decide `packages/domain`. Ojo con lo que se le pasa
-    // como `entered`: `EntryModal` **precarga** los macros con lo que estimó
-    // la IA, así que hay que comparar contra esos valores y no contra la
-    // ausencia de valor. La versión anterior comparaba con `undefined` y
-    // etiquetaba `'mixed'` una comida analizada que ella nunca tocó.
-    const macrosSource = resolveMacrosSource({
-      entered: { proteinG: draft.proteinG, fatG: draft.fatG, fiberG: draft.fiberG },
-      ...(draft.analysis === undefined ? {} : {
-        aiProposed: {
-          proteinG: draft.analysis.totals.proteinG,
-          fatG: draft.analysis.totals.fatG,
-          fiberG: draft.analysis.totals.fiberG,
-        },
-      }),
-    });
+    // La procedencia la decide `packages/domain`, y quien la calcula es el
+    // **maestro**: es el único que sabe qué precargó una estimación —la foto,
+    // el texto o el carrito—. Acá se recalculaba comparando solo contra
+    // `draft.analysis`, así que unos macros venidos del catálogo, que no
+    // traen análisis, se guardaban marcados `'user'` y el reporte del control
+    // médico los imprimía como anotados a mano.
+    const macrosSource = draft.macrosSource ?? undefined;
     const outcome = await saveUnifiedEntry(db, {
       timestamp: draft.timestamp,
       rapidIncludesCorrection: draft.rapidIncludesCorrection,
@@ -792,6 +783,14 @@ function Type1AApp() {
       // descartaba: los macros de la IA llegaban al reporte médico sin
       // procedencia. No agregues un campo acá sin verlo en esa interfaz.
       ...(macrosSource === undefined ? {} : { macrosSource }),
+      // **El carbo del catálogo conserva su procedencia de estimación.**
+      // `confirmMeal` ya lo hacía y este camino no: los gramos del carrito
+      // pasaban a "confirmados" sin `aiEstimatedCarbsG`, y quedaban
+      // indistinguibles de un valor pesado en balanza para ella y para el
+      // reporte. Un análisis propio manda sobre la sugerencia del catálogo.
+      ...(draft.catalogSuggestedCarbsG === undefined || draft.analysis !== undefined
+        ? {}
+        : { aiEstimatedCarbsG: draft.catalogSuggestedCarbsG }),
       // Cetonas, peso y presión en el mismo idioma de parche que usa la
       // edición: un número es un valor, la ausencia no borra nada.
       vitals: {

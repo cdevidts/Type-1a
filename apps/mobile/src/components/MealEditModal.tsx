@@ -561,6 +561,17 @@ export function MealEditModal({
           setFatInput(String(totals.fatG));
           setFiberInput(String(totals.fiberG));
           setCaloriesInput(String(totals.caloriesKcal));
+          // **Los macros del carrito son una estimación precargada.** Sin
+          // registrarlos acá, `resolveMacrosSource` no tenía contra qué
+          // comparar y los guardaba como `'user'`: el reporte del control
+          // médico imprimía "anotados por la usuaria" sobre una media de
+          // estimaciones de IA del catálogo.
+          setAiMacros({
+            proteinG: totals.proteinG,
+            fatG: totals.fatG,
+            fiberG: totals.fiberG,
+            caloriesKcal: totals.caloriesKcal,
+          });
           setMessage(`Se transcribieron ${totals.carbsG} g del carrito a los campos de abajo. Revísalos antes de guardar.`);
         }}
         onMessage={setMessage}

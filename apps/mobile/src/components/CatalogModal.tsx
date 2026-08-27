@@ -251,6 +251,10 @@ function FoodEditor({
       ) : (
         <>
           <Text style={styles.sectionTitle}>Foto</Text>
+          <Text style={styles.sectionHint}>
+            Es la foto de la comida donde se identificó este alimento, así que puede incluir otros. No sirve para
+            estimar la porción: para eso está el tamaño de porción de más abajo.
+          </Text>
           <Image source={{ uri: food.imageUri }} style={styles.editorPhoto} resizeMode="cover" />
           <Pressable
             style={[styles.removePhoto, removePhoto && styles.removePhotoActive]}

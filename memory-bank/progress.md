@@ -11,99 +11,99 @@ _Última actualización: 2026-08-27._
 | Bundle de Metro | **1.350 módulos** (línea base; un salto grande = barrel importado) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
-⚠️ La línea base del bundle que decía este archivo (**1.333**) llevaba tiempo
-desactualizada: medida el 2026-08-27 **antes** de tocar nada, la rama base
-exportaba **1.341**. Los 9 módulos que suma esta corrida son iconos de Lucide
-por subpath (`pencil`, `x`, `chevron-left`, `chevron-right`, `search`) y los
-cinco módulos nuevos; ningún barrel. Si el número vuelve a divergir, la medición
-manda sobre la tabla.
+⚠️ La cifra que decía este archivo (**1.333**) estaba desactualizada: medida
+antes de tocar nada, la rama base exportaba **1.341**. Los 9 que suma esta
+corrida son iconos de Lucide por subpath y los módulos nuevos, ningún barrel.
+Si vuelve a divergir, la medición manda sobre la tabla.
 
-`pnpm verify` corre, en orden: `verify:contracts` (guard de memoria agéntica,
-<1 s), `lint`, `typecheck`, `test`, `verify:bundle` (export real de Metro).
+`pnpm verify` corre, en orden: `verify:contracts`, `lint`, `typecheck`, `test`,
+`verify:bundle` (export real de Metro).
 
 ## Entregado y en el dispositivo
 
-Build `preview` (`.apk`) del 2026-08-26 instalado. Incluye:
+Build `preview` (`.apk`) del 2026-08-26 instalado: notificaciones por tipo con
+canal propio (Fase 19), "Comida" bajo un mismo timestamp con sus tres decisiones
+(Fase 21), el episodio capturando su ventana (Fase 23), catálogo de insulinas
+con duración, Patrones ajustando por covariables, cetonas en las tres
+superficies e iconos de Lucide. El detalle vive en los cuerpos de commit.
 
-- **Fase 19** — notificaciones distinguibles: emoji, color y título por tipo, y
-  un canal de Android por tipo (interruptor propio en los ajustes del sistema).
-  Más un botón "Probar cómo se ven" en Ajustes.
-- **Fase 21** — "Comida" reemplaza a "Carbos" y "Rápida"; comida e insulina bajo
-  un mismo timestamp; tres decisiones independientes (registrar / catálogo /
-  insulina); macros al editar.
-- **Fase 23** — el episodio captura todo lo de su ventana.
-- **Catálogo de insulinas** con duración configurable (rápidas y basales), en
-  Ajustes y en el flujo de primer uso.
-- **Patrones y Comidas** rehechos: se ajusta por covariables en vez de excluir.
-- **Cetonas** en "Nueva entrada", en el editor y en el timeline.
-- Accesos rápidos rediseñados con iconos de Lucide (se fueron los glifos
-  Unicode `ƒ(x)`, `mmol/L`, `◎`).
+Lo del 2026-08-27 (Modal Maestro único, edición retroactiva, calendario,
+carrito y fibra) **todavía no tiene build**.
 
 ## Deuda conocida
 
 ### 🔴 Bomba: imports `.js` en `@type1a/ai`
 
 `packages/ai/src/abacus.ts:23` y `packages/ai/src/index.ts:1-2` usan extensión
-`.js` en imports relativos — **la trampa de Metro que rompió dos builds**.
+`.js` en imports relativos — **la trampa de Metro que rompió dos builds**. Hoy
+no explota solo porque `apps/mobile/package.json` no depende de `@type1a/ai`;
+`domain`, `cgm` y `schemas`, que sí se bundlean, están limpios. El día que la
+app dependa de ese paquete —el chat de IA es el candidato— el bundle rompe.
+`verify:bundle` lo atraparía, pero la causa sigue ahí y cuesta tres líneas.
 
-Hoy **no explota solo porque `apps/mobile/package.json` no depende de
-`@type1a/ai`**. `domain`, `cgm` y `schemas` (los que sí se bundlean) están
-limpios.
+### 🔴 Cuatro hallazgos vivos de la revisión repuntada (2026-08-26)
 
-El día que la app móvil dependa de `@type1a/ai` —el chat de IA es el candidato
-obvio— el bundle rompe con `pnpm verify` en verde. Ahora `verify:bundle` lo
-atraparía, pero **la causa sigue ahí**: la regla se aplica de forma
-inconsistente entre paquetes. Arreglarlo cuesta tres líneas y elimina la mina.
+Del `domain-safety-reviewer` contra `d868ece` y `c4ca192`. Los dos que
+corrompían datos ya están cerrados; estos siguen abiertos:
 
-### 🔴 Cuatro hallazgos vivos que la revisión repuntada encontró (2026-08-26)
+1. **La basal es invisible al modelo y al aviso de ventana sucia**
+   (`macro-glucose.ts:281-287`, sin rama para `basal_insulin`): 20 U de Tresiba
+   no entran como covariable ni marcan `confoundedCount`, y la pantalla imprime
+   "sin eventos".
+2. **Cantidad ausente = "no pasó nada"** (`event.amount ?? 0` con `> 0`): una
+   comida real sin carbos confirmados desaparece del conteo.
+3. **Un fallo al registrar la insulina se pisa con "Comida guardada"**
+   (`App.tsx:620` y `:636`): cierra la app creyendo que la dosis quedó.
+4. **La insulina de la comida se escribe sin `entryGroupId`** (`App.tsx:608`):
+   el timeline agrupa solo por esa columna, así que después vuelve a preguntar
+   qué dosis fue con qué comida — lo que la Fase 21 dijo que eliminaba.
 
-Salieron de correr el `domain-safety-reviewer` contra `d868ece` y `c4ca192`.
-Los dos que corrompían datos en cada uso **están cerrados** (rama
-`fix/macros-data-corruption`); estos cuatro siguen abiertos.
+Menores del mismo lote: `MealModal` no recibe glucosa (su `isHypoglycemic`
+nunca dispara); las unidades se descartan sin avisar al apagar "Registrarla como
+comida de ahora"; la validación previa de `attachEntryToReading` no creció con
+cetonas ni macros.
 
-1. **La basal es invisible al modelo y al aviso de ventana sucia.**
-   `macro-glucose.ts:281-287` no tiene rama para `basal_insulin`, así que 20 U
-   de Tresiba en la ventana no entran como covariable **ni** marcan
-   `confoundedCount`. La pantalla imprime "sin eventos".
-2. **Cantidad ausente = "no pasó nada".** `event.amount ?? 0` con
-   `any = ... > 0`: una comida real sin carbos confirmados desaparece del conteo.
-3. **Un fallo al registrar la insulina se pisa con un mensaje de éxito.**
-   `App.tsx:620` pone el aviso de error y `App.tsx:636` lo sobrescribe
-   incondicionalmente con "Comida guardada". Ella cierra la app creyendo que la
-   dosis quedó registrada.
-4. **La insulina de la comida se escribe sin `entryGroupId`.**
-   `App.tsx:608` no pasa el tercer argumento que `saveInsulinEvent`
-   (`db.ts:266-270`) acepta, y el timeline agrupa solo por `entry_group_id`.
-   Tres horas después `getPendingInsulinAssociations` le vuelve a preguntar qué
-   insulina fue con qué comida — justo lo que la Fase 21 dijo que eliminaba.
+### 🟠 Hallazgos de la revisión de seguridad del 2026-08-27, no corregidos
 
-Menores del mismo lote: la calculadora de `MealModal` no recibe glucosa, así
-que `isHypoglycemic` nunca puede dispararse ahí (`EntryModal` sí lo avisa); las
-unidades tecleadas se descartan sin avisar si se apaga "Registrarla como comida
-de ahora" (`MealModal.tsx:454`); y la lista de validación previa de
-`attachEntryToReading` (`db.ts:1173-1176`) no creció con cetonas ni macros,
-aunque su comentario promete que sí.
+El `domain-safety-reviewer` corrió contra `f9c12d5..f2e9e93`: **cero
+críticos**, 5 altos, 3 medios, 3 bajos. Los cinco altos y cuatro de los seis
+restantes se corrigieron en el mismo commit. Quedan tres, todos declarados a
+propósito:
+
+1. **Dos comidas SIN grupo a la misma hora exacta comparten espejo.**
+   `syncConfirmedCarbRow`, `writeMirrorCarbRow` y `deleteMealEventRows` ahora
+   acotan por `entry_group_id` cuando la comida lo tiene —todo lo editado—; sin
+   grupo siguen emparejando por `timestamp + source`. El riesgo creció porque
+   `combineDayAndTime` deja segundos y milisegundos en cero, así que dos comidas
+   movidas a "13:00" colisionan. Cerrarlo pide una clave `meal_id` en
+   `carb_events`: migración con backfill, en su propia corrida.
+2. **La foto del catálogo es del plato, no del alimento.** Todos los alimentos
+   de un análisis heredan la misma imagen, así que la foto de un sándwich queda
+   como miniatura de "Pan", "Queso" y "Jamón". Se corrigió lo que **afirma** la
+   interfaz (etiqueta accesible y editor dicen "la comida donde se identificó,
+   puede incluir otros"), pero la imagen sigue siendo la misma: recortar por
+   alimento exige coordenadas que la IA hoy no devuelve.
+3. **Editar los gramos de un `carb_events` importado conserva
+   `source: 'imported'`.** Lo sigue rotulando importado aunque el número ya no
+   sea el del CSV. Es **anterior** a este cambio (`updateCarbEvent` hacía lo
+   mismo) y arreglarlo es decisión de producto: relabelar a `'manual'` pierde el
+   origen, dejarlo miente sobre el valor. Va a Verónica.
 
 ### 🟡 Menores
 
-- La UI del Modal Maestro no tiene tests de render: la infraestructura del repo
-  no monta React. Cada decisión suya se extrajo a un módulo puro con test
-  (`masterModal.ts`, `entryTime.ts`, `mealCarbMirror.ts`, `mealFields.ts`,
-  `meal-cart.ts`), que es la salida que pide `AGENTS.md`, pero el cableado
-  entre esas reglas y los campos en pantalla sigue verificándose a mano.
-- Las escrituras de `db.ts` tampoco tienen test: ese módulo importa nativos de
-  Expo. `promoteEventToEntryGroup`, `moveEntryGroupRows` y `applyVitalsPatchRows`
-  son transaccionales y están comentadas, pero su comportamiento se comprobó
-  leyendo el diff, no ejecutándolo.
+- **Ni la UI ni `db.ts` tienen test de ejecución**: el repo no monta React y
+  `db.ts` importa nativos de Expo. Cada decisión se extrajo a un módulo puro con
+  test (`masterModal.ts`, `entryTime.ts`, `mealCarbMirror.ts`, `mealFields.ts`,
+  `meal-cart.ts`) — la salida que pide `AGENTS.md` —, pero el cableado hasta la
+  pantalla y el comportamiento transaccional se comprobaron leyendo el diff.
 - `README.md` sigue en pie (63 líneas). La purga que lo iba a borrar se abortó;
   la decisión tomada es **reescribirlo a ~30 líneas** como puerta de entrada del
   repo en GitHub, no eliminarlo. Pendiente para la Fase 4.
 
 ## Historial de fallos que definieron las reglas
 
-Se conserva porque cada uno costó un build, una corrida o un número falso en un
-reporte médico. El detalle completo vive en el historial de git
-(`git log --format=full`), que quedó como la bitácora del proyecto.
+Cada uno costó un build, una corrida o un número falso en un reporte médico. El
+detalle vive en `git log --format=full`, la bitácora real.
 
 | Fallo | Regla que produjo |
 |---|---|
@@ -137,10 +137,14 @@ reporte médico. El detalle completo vive en el historial de git
 | Editar un carbohidrato suelto lo convertía en comida —con episodio y tres alarmas— solo por guardarlo | los gramos son comida al **crear**; al **editar**, se vuelve comida cuando se agrega algo que solo una comida tiene |
 | Promover un evento a grupo lo dibujaba como "Entrada registrada" aunque siguiera siendo una sola cosa | un grupo de una pieza se emite con su tipo nativo: agrupar es una decisión de datos, "entrada" es una de presentación |
 | Mover la hora de una comida sumaba tres alarmas nuevas a las tres viejas | cancelar va **antes** de programar, siempre; al revés la cancelación se lleva lo recién creado |
+| La advertencia de la calculadora histórica cubría solo el modo edición; registrar en el pasado llegaba a la misma superficie sin ella | una guarda que protege dos caminos se escribe una vez, pura y con test |
+| "Se transcribieron 62 g" mientras el campo de confirmados seguía en 20, y la fórmula leía los 20 | una pantalla que afirma un valor distinto del que usa la fórmula es peor que una que no afirma nada |
+| Los macros del carrito se guardaban `'user'`: la procedencia se comparaba solo contra `analysis` | la resuelve quien sabe qué precargó la estimación —foto, texto **o catálogo**—, no el orquestador |
+| Borrar los gramos de un carbo suelto y darle descripción los resucitaba y terminaba contándolos dos veces | al crear la comida, la fila suelta se **consume** siempre: se adopta como espejo o se borra |
+| `estimatedCarbsG` viajó en un spread hacia una interfaz que no lo declaraba | segunda vez que muerde: el campo se declara o se pierde |
 
 ## Redeploy del backend
 
-`apps/api` **no** se tocó desde el último despliegue salvo `packages/ai/src/prompts.ts`
-(prompt del insight a `glucose-insight.v5`). El backend desplegado sigue con el
-prompt anterior: es de bajo riesgo y **no urgente**. Cada redeploy consume
-créditos de Abacus, así que se agrupa y no se dispara salvo que sea crítico.
+`apps/api` no se tocó desde el último despliegue salvo `prompts.ts` (insight a
+`glucose-insight.v5`). El desplegado sigue con el prompt anterior: bajo riesgo y
+no urgente. Cada redeploy consume créditos de Abacus, así que se agrupa.

@@ -461,6 +461,17 @@ async function updateMealCarbsAndNoteRows(
     /** Parche: un análisis nuevo reemplaza al anterior; ausente lo conserva. */
     analysis?: { aiEstimatedCarbsG: number; aiAnalysisId: string } | undefined;
     /**
+     * Estimación sin análisis propio (catálogo o carrito). Ver
+     * `MealEditPatch.estimatedCarbsG`.
+     *
+     * **Declarado explícitamente, no heredado por el spread del llamador.** El
+     * chequeo de propiedades en exceso de TypeScript **no aplica a un
+     * spread**: un campo que no esté en esta interfaz se descarta en silencio
+     * con `pnpm verify` en verde. Ya pasó con `macrosSource`, y el precio fue
+     * que los macros de la IA llegaran al reporte médico sin procedencia.
+     */
+    estimatedCarbsG?: number | null | undefined;
+    /**
      * Procedencia ya resuelta por `packages/domain`. `null` la borra, que es
      * lo que corresponde cuando la comida se quedó sin macros: una etiqueta
      * de procedencia colgando sobre campos vacíos miente en el reporte.
@@ -477,6 +488,7 @@ async function updateMealCarbsAndNoteRows(
     caloriesKcal: updates.caloriesKcal ?? null,
     ...(updates.imageUri === undefined ? {} : { imageUri: updates.imageUri }),
     ...(updates.analysis === undefined ? {} : { analysis: updates.analysis }),
+    ...(updates.estimatedCarbsG === undefined ? {} : { estimatedCarbsG: updates.estimatedCarbsG }),
     ...(updates.macrosSource === undefined ? {} : { macrosSource: updates.macrosSource }),
   });
 }
@@ -498,20 +510,35 @@ async function syncConfirmedCarbRow(
   existing: MealEvent,
   confirmedCarbsG: number | undefined,
 ): Promise<void> {
-  const carbRow = await db.getFirstAsync<{ id: string }>(
-    "SELECT id FROM carb_events WHERE timestamp = ? AND source = 'meal_confirmed'",
-    existing.timestamp,
+  // El grupo de la comida acota la búsqueda **antes** que la hora.
+  //
+  // Emparejar solo por `timestamp` era tolerable mientras las horas venían de
+  // `new Date()` y traían milisegundos: dos comidas con el ISO exacto era casi
+  // imposible. Desde que se puede corregir la hora, `combineDayAndTime`
+  // construye el instante con segundos y milisegundos en cero, así que dos
+  // comidas movidas a "13:00" del mismo día tienen timestamps **idénticos** —
+  // y editar la segunda reescribía el espejo de la primera. Con grupo, la
+  // pregunta deja de ser ambigua; sin grupo se cae al emparejamiento de
+  // siempre, que es el que conocen las comidas de los accesos rápidos.
+  const mealRow = await db.getFirstAsync<{ entry_group_id: string | null }>(
+    'SELECT entry_group_id FROM meal_events WHERE id = ?',
+    existing.id,
   );
+  const carbRow = mealRow?.entry_group_id != null
+    ? await db.getFirstAsync<{ id: string }>(
+      "SELECT id FROM carb_events WHERE entry_group_id = ? AND source = 'meal_confirmed'",
+      mealRow.entry_group_id,
+    )
+    : await db.getFirstAsync<{ id: string }>(
+      "SELECT id FROM carb_events WHERE timestamp = ? AND source = 'meal_confirmed' AND entry_group_id IS NULL",
+      existing.timestamp,
+    );
   if (confirmedCarbsG === undefined) {
     if (carbRow !== null) await db.runAsync('DELETE FROM carb_events WHERE id = ?', carbRow.id);
   } else if (carbRow === null) {
     // La fila espejo hereda el grupo de la comida: sin eso, una comida
     // empaquetada a la que se le agregan carbohidratos por primera vez dejaba
     // su espejo suelto, y el timeline lo dibujaba como una tarjeta más.
-    const mealRow = await db.getFirstAsync<{ entry_group_id: string | null }>(
-      'SELECT entry_group_id FROM meal_events WHERE id = ?',
-      existing.id,
-    );
     await saveCarbEvent(db, {
       id: Crypto.randomUUID(),
       timestamp: existing.timestamp,
@@ -557,6 +584,18 @@ export interface MealEditPatch {
    * registro viejo ya no describe nada.
    */
   analysis?: { aiEstimatedCarbsG: number; aiAnalysisId: string };
+  /**
+   * Estimación **sin** análisis propio: los gramos que sugirió el catálogo o
+   * el carrito.
+   *
+   * Existe porque el catálogo es una media de estimaciones de IA y no tiene un
+   * `analysisId`. Sin este campo, un carbo del carrito llegaba a
+   * `confirmedCarbsG` sin ningún rastro de ser una estimación, y quedaba
+   * indistinguible de uno pesado en balanza — para ella y para el reporte.
+   * Al reemplazarlo se borra el `aiAnalysisId` anterior: apuntaba a un
+   * análisis que ya no describe estos gramos.
+   */
+  estimatedCarbsG?: number | null;
 }
 
 /** Non-transactional core — see `writeMealWithEpisode` for why this exists. */
@@ -590,6 +629,11 @@ async function updateMealFromEditRows(
           aiEstimatedCarbsG: patch.analysis.aiEstimatedCarbsG,
           aiAnalysisId: patch.analysis.aiAnalysisId,
         }),
+    // Sin análisis propio: se escribe el estimado y se suelta el `aiAnalysisId`
+    // viejo, que ya no describe estos gramos.
+    ...(patch.estimatedCarbsG === undefined || patch.analysis !== undefined
+      ? {}
+      : { aiEstimatedCarbsG: patch.estimatedCarbsG ?? undefined, aiAnalysisId: undefined }),
   });
   await db.runAsync('UPDATE meal_events SET payload = ? WHERE id = ?', JSON.stringify(next), id);
   await syncConfirmedCarbRow(db, existing, next.confirmedCarbsG);
@@ -645,19 +689,33 @@ export async function updateMealFromEdit(
 
 /** Non-transactional core — see `writeMealWithEpisode` for why this exists. */
 async function deleteMealEventRows(db: SQLiteDatabase, id: string): Promise<void> {
-  const row = await db.getFirstAsync<{ timestamp: string }>('SELECT timestamp FROM meal_events WHERE id = ?', id);
+  const row = await db.getFirstAsync<{ timestamp: string; entry_group_id: string | null }>(
+    'SELECT timestamp, entry_group_id FROM meal_events WHERE id = ?',
+    id,
+  );
   // ON DELETE CASCADE on meal_episodes.meal_id takes care of the episode.
   await db.runAsync('DELETE FROM meal_events WHERE id = ?', id);
   if (row !== null) {
     // The carb_events row created alongside this meal (writeMealWithEpisode)
-    // has no foreign key back to it — matched by timestamp + source
-    // instead, since they're always written with the same timestamp.
-    // Left behind, it would read as a standalone "Carbohidratos
-    // confirmados" entry for a meal that no longer exists.
-    await db.runAsync(
-      "DELETE FROM carb_events WHERE timestamp = ? AND source = 'meal_confirmed'",
-      row.timestamp,
-    );
+    // has no foreign key back to it — matched by group when it has one, and
+    // by timestamp + source otherwise. Left behind, it would read as a
+    // standalone "Carbohidratos confirmados" entry for a meal that no longer
+    // exists.
+    //
+    // El grupo va primero por la misma razón que en `syncConfirmedCarbRow`:
+    // con horas corregibles a "13:00" exactas, borrar por hora global podía
+    // llevarse el espejo de OTRA comida del mismo minuto.
+    if (row.entry_group_id !== null) {
+      await db.runAsync(
+        "DELETE FROM carb_events WHERE entry_group_id = ? AND source = 'meal_confirmed'",
+        row.entry_group_id,
+      );
+    } else {
+      await db.runAsync(
+        "DELETE FROM carb_events WHERE timestamp = ? AND source = 'meal_confirmed' AND entry_group_id IS NULL",
+        row.timestamp,
+      );
+    }
   }
 }
 
@@ -749,13 +807,15 @@ async function writeMealWithEpisode(db: SQLiteDatabase, meal: MealEvent, entryGr
  */
 async function writeMirrorCarbRow(db: SQLiteDatabase, meal: MealEvent, entryGroupId?: string): Promise<void> {
   if (meal.confirmedCarbsG === undefined) return;
-  const mirror = await db.getFirstAsync<{ id: string }>(
-    "SELECT id FROM carb_events WHERE timestamp = ? AND source = 'meal_confirmed'",
-    meal.timestamp,
-  );
-  const adopted = mirror ?? (entryGroupId === undefined
-    ? null
-    : await db.getFirstAsync<{ id: string }>('SELECT id FROM carb_events WHERE entry_group_id = ?', entryGroupId));
+  // Igual que en `syncConfirmedCarbRow`: dentro de un grupo la pregunta no es
+  // ambigua; sin grupo se empareja por hora, que es lo que conocen las comidas
+  // de los accesos rápidos.
+  const adopted = entryGroupId === undefined
+    ? await db.getFirstAsync<{ id: string }>(
+      "SELECT id FROM carb_events WHERE timestamp = ? AND source = 'meal_confirmed' AND entry_group_id IS NULL",
+      meal.timestamp,
+    )
+    : await db.getFirstAsync<{ id: string }>('SELECT id FROM carb_events WHERE entry_group_id = ?', entryGroupId);
   if (adopted !== null) {
     await db.runAsync(
       "UPDATE carb_events SET carbs_g = ?, timestamp = ?, source = 'meal_confirmed' WHERE id = ?",
@@ -1433,6 +1493,25 @@ export async function updateUnifiedEntryGroup(
           // `resolveMacrosSource` en quien llama.
           ...(input.macrosSource === undefined || input.macrosSource === null ? {} : { macrosSource: input.macrosSource }),
         }, entryGroupId);
+        // **La fila suelta se consume, siempre.**
+        //
+        // `writeMirrorCarbRow` la adopta como espejo —le cambia el `source`—
+        // solo cuando la comida trae carbohidratos confirmados. Si la usuaria
+        // borró los gramos y escribió "pan con queso", la comida nace sin
+        // ellos y la fila de 25 g se quedaba viva dentro del grupo: el
+        // timeline la volvía a mostrar (`entryGroupRaw` cae en `group.carb`),
+        // el maestro la sembraba de nuevo, y al segundo guardado
+        // `syncConfirmedCarbRow` creaba un espejo aparte — dos filas a la
+        // misma hora y **50 g en Nutrición para un plato de 25**. Un dato que
+        // ella borró no puede resucitar, y menos duplicado.
+        //
+        // Se re-consulta en vez de reusar `looseCarb`: si fue adoptada, ya no
+        // es suelta y esta consulta no la encuentra.
+        const orphanCarb = await db.getFirstAsync<{ id: string }>(
+          "SELECT id FROM carb_events WHERE entry_group_id = ? AND source != 'meal_confirmed'",
+          entryGroupId,
+        );
+        if (orphanCarb !== null) await db.runAsync('DELETE FROM carb_events WHERE id = ?', orphanCarb.id);
       } else {
         await updateMealCarbsAndNoteRows(db, existingMeal.id, {
           confirmedCarbsG: input.carbsG,
@@ -1442,9 +1521,16 @@ export async function updateUnifiedEntryGroup(
           fiberG: input.fiberG,
           caloriesKcal: input.caloriesKcal,
           ...(input.imageUri === undefined ? {} : { imageUri: input.imageUri }),
-          ...(input.aiEstimatedCarbsG === undefined || input.aiAnalysisId === undefined
+          // Un análisis nuevo trae los dos campos. El carrito trae **solo** el
+          // estimado: el catálogo es una media de estimaciones de IA y no
+          // tiene un `analysisId` propio. Exigir los dos juntos descartaba ese
+          // rastro y, peor, dejaba encima el `aiEstimatedCarbsG` de un
+          // análisis anterior que ya no describía nada.
+          ...(input.aiEstimatedCarbsG === undefined
             ? {}
-            : { analysis: { aiEstimatedCarbsG: input.aiEstimatedCarbsG, aiAnalysisId: input.aiAnalysisId } }),
+            : input.aiAnalysisId === undefined
+              ? { estimatedCarbsG: input.aiEstimatedCarbsG }
+              : { analysis: { aiEstimatedCarbsG: input.aiEstimatedCarbsG, aiAnalysisId: input.aiAnalysisId } }),
           ...(input.macrosSource === undefined ? {} : { macrosSource: input.macrosSource }),
         });
       }
@@ -1471,7 +1557,52 @@ export async function updateUnifiedEntryGroup(
       "SELECT id FROM insulin_events WHERE entry_group_id = ? AND type = 'rapid'",
       entryGroupId,
     );
-    if (input.rapidUnits !== undefined) {
+    const existingBasalRow = await db.getFirstAsync<{ id: string }>(
+      "SELECT id FROM insulin_events WHERE entry_group_id = ? AND type = 'basal'",
+      entryGroupId,
+    );
+
+    /**
+     * Reclasificar rápida ↔ basal es una **actualización**, no un borrado más
+     * un alta.
+     *
+     * Los dos tipos se buscan y se escriben por separado, así que mover las
+     * unidades del campo "Acción prolongada" al de "Rápida" ejecutaba
+     * `deleteInsulinEvent` + `saveInsulinEvent`: se perdían el `id`, el
+     * `created_at` y —si la dosis venía de una importación de MySugr— el
+     * `source: 'imported'` se convertía en `'manual'`, afirmando que la
+     * escribió ella. Como efecto colateral, la rama `previousType !==
+     * nextType` de `resolveInsulinNameForEdit` era inalcanzable desde acá,
+     * pese a ser el caso que sus tests describen.
+     *
+     * Solo aplica cuando hay **exactamente una** dosis antes y **exactamente
+     * una** después, del otro tipo: con dos dosis no hay reclasificación que
+     * deducir, hay dos hechos distintos.
+     */
+    const reclassify: { id: string; nextType: 'rapid' | 'basal'; units: number } | null = (() => {
+      const onlyRapidBefore = existingRapid !== null && existingBasalRow === null;
+      const onlyBasalBefore = existingBasalRow !== null && existingRapid === null;
+      const onlyBasalAfter = input.basalUnits !== undefined && input.rapidUnits === undefined;
+      const onlyRapidAfter = input.rapidUnits !== undefined && input.basalUnits === undefined;
+      if (onlyRapidBefore && onlyBasalAfter) {
+        return { id: existingRapid.id, nextType: 'basal', units: input.basalUnits! };
+      }
+      if (onlyBasalBefore && onlyRapidAfter) {
+        return { id: existingBasalRow.id, nextType: 'rapid', units: input.rapidUnits! };
+      }
+      return null;
+    })();
+
+    if (reclassify !== null) {
+      await updateInsulinEvent(db, reclassify.id, {
+        type: reclassify.nextType,
+        units: reclassify.units,
+        timestamp,
+        profileInsulinNames: profileNames,
+      });
+      if (reclassify.nextType === 'rapid') outcome.savedRapid = true;
+      else outcome.savedBasal = true;
+    } else if (input.rapidUnits !== undefined) {
       const includesCorrection = input.rapidIncludesCorrection === true;
       if (existingRapid === null) {
         const name = insulinNameForType(profileNames, 'rapid');
@@ -1498,11 +1629,10 @@ export async function updateUnifiedEntryGroup(
       await deleteInsulinEvent(db, existingRapid.id);
     }
 
-    const existingBasal = await db.getFirstAsync<{ id: string }>(
-      "SELECT id FROM insulin_events WHERE entry_group_id = ? AND type = 'basal'",
-      entryGroupId,
-    );
-    if (input.basalUnits !== undefined) {
+    const existingBasal = existingBasalRow;
+    if (reclassify !== null) {
+      // Ya resuelto arriba, en una sola fila.
+    } else if (input.basalUnits !== undefined) {
       if (existingBasal === null) {
         const name = insulinNameForType(profileNames, 'basal');
         await saveInsulinEvent(db, {
