@@ -1,6 +1,6 @@
 # Active Context
 
-_Última actualización: 2026-08-27 (edición retroactiva completa, calendario y nutrición)._
+_Última actualización: 2026-08-28 (transacciones SQLite serializadas)._
 
 ## Lo que cambió el foco
 
@@ -57,6 +57,37 @@ limita lo que se le suma después.
 - **Basal y Cetonas vuelven a tener modal dedicado** (`QuickNumericModal`), uno
   solo parametrizado y sin lógica clínica propia.
 
+## El bug de "no se puede guardar" (2026-08-28)
+
+Verónica reportó que con la app abierta un rato —y a veces al poco de abrirla—
+guardar falla con "no se puede guardar, inténtelo otra vez", y **solo cerrarla y
+reabrirla** la arregla. No era el trabajo del Modal Maestro: es anterior y tenía
+dos causas que se sumaban, ambas cerradas acá.
+
+1. **La tarea de fondo escribía sobre la conexión de la pantalla.** Android
+   cachea las conexiones nativas por `(ruta, opciones)`, así que
+   `openDatabaseAsync('type1a.db')` en `backgroundSync.ts` devolvía **la misma**
+   que el `SQLiteProvider` de `App.tsx`, y su `closeAsync` solo bajaba el
+   contador. Cada ~15 minutos y en cada "Actualizar" de la notificación corría
+   `initializeDatabase` y un `BEGIN…COMMIT` encima de lo que la usuaria estaba
+   escribiendo. Ahora abre con `useNewConnection`.
+2. **Dos escrituras de la app también se anidaban.** `refresh()` guarda lecturas
+   CGM en cada vuelta a primer plano —volver de la cámara al sacar la foto de una
+   comida, y tocar Guardar— y eso alcanza. Ahora **toda** transacción de `db.ts`
+   pasa por una sola cola FIFO (`dbWriteQueue.ts`).
+
+Por qué el error era pegajoso y no un fallo limpio: `expo-sqlite` pone el
+`BEGIN` **dentro** del `try` de `withTransactionAsync`, así que la transacción
+que llega segunda falla al abrir y su `catch` ejecuta un `ROLLBACK` **ajeno**,
+que cierra la de la primera. Esa primera sigue corriendo sus `runAsync` sueltos
+—sin atomicidad, aplicando filas— y su `COMMIT` termina fallando. El mensaje que
+veía Verónica llegaba **después** de haber escrito parte del registro.
+
+La cola que Codex había creado para el camino del grupo (`serializeEntryGroupTransaction`)
+se reemplazó por la compartida: dos colas contra una sola conexión se anidan igual.
+
+⚠️ Está en el código y **no** en el teléfono: falta un build `preview`.
+
 ## Reglas de proceso que sobreviven
 
 1. Antes de agregar un campo a un formulario de comida, se mira si va en
@@ -65,7 +96,7 @@ limita lo que se le suma después.
 2. **Una decisión de datos no se verifica a ojo.** Todo lo que decide qué se
    guarda, qué se ve o qué es un hecho vive en un módulo puro con test:
    `masterModal.ts`, `mealCarbMirror.ts`, `entryTime.ts`, `mealFields.ts`,
-   `meal-cart.ts`, `entryGroupClaim.ts`.
+   `meal-cart.ts`, `entryGroupClaim.ts`, `dbWriteQueue.ts`.
 3. Un dato que el formulario **no ve** es un dato que el guardado borra. Por
    eso `TimelineEntryGroupRaw` lee de vuelta el nombre de la insulina, las
    calorías, el peso y la presión aunque la fila del timeline no los muestre.

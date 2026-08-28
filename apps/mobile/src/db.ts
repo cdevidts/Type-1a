@@ -31,6 +31,7 @@ import {
   type VitalsEvent,
 } from '@type1a/schemas';
 
+import { serializeWrite } from './dbWriteQueue';
 import { withClaimedEntryGroup, type EntryGroupClaimStore, type EntryGroupClaimTarget } from './entryGroupClaim';
 import { hasMealContent, MEAL_FIELDS, promotesLooseCarbToMeal } from './mealFields';
 import { standaloneVitalsItems } from './timelineVitals';
@@ -46,6 +47,31 @@ const DEFAULT_PROFILE: TherapyProfile = {
   correctionFactor: 45,
   doseIncrement: 0.5,
 };
+
+/**
+ * **Toda** transacción de este módulo pasa por acá y por ninguna otra vía.
+ *
+ * `expo-sqlite` abre la transacción con un `BEGIN` que está dentro del `try`
+ * de `withTransactionAsync`, así que dos transacciones solapadas sobre la
+ * misma conexión no fallan limpio: el `BEGIN` de la segunda revienta y su
+ * `catch` ejecuta un `ROLLBACK` que cierra la transacción de la **primera**,
+ * dejándola escribiendo suelto y terminando en "no se pudo guardar" después
+ * de haber aplicado parte de sus filas. El porqué completo, y quiénes
+ * chocaban en esta app, están en `dbWriteQueue.ts`.
+ *
+ * No es defensa contra un doble toque solamente: `refresh()` escribe lecturas
+ * CGM en cada vuelta a primer plano, y eso se solapa con un guardado sin que
+ * la usuaria haga nada raro.
+ *
+ * ⚠️ Una función que ya corre dentro de este `work` **no puede** volver a
+ * llamar acá: la cola es FIFO y no reentrante, así que se trabaría a sí misma.
+ * Hoy ninguna lo hace —los doce llamadores son funciones exportadas de nivel
+ * superior— y `importMySugrCsv` llama a `upsertCGMReadings` **antes** de abrir
+ * la suya, no dentro.
+ */
+function serializedTransaction(db: SQLiteDatabase, work: () => Promise<void>): Promise<void> {
+  return serializeWrite(() => db.withTransactionAsync(work));
+}
 
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -68,6 +94,14 @@ async function getDatabaseKey(): Promise<string> {
 export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
   const key = await getDatabaseKey();
   await db.execAsync(`PRAGMA key = "x'${key}'";`);
+  // Antes de `journal_mode`, porque desde este commit hay dos conexiones
+  // reales contra el archivo —la de la pantalla (`SQLiteProvider`) y la de
+  // `backgroundSync.ts`— y sin esto la que llega segunda a una escritura
+  // recibe `database is locked` de inmediato en vez de esperar su turno. WAL
+  // deja leer mientras otro escribe, pero admite un solo escritor a la vez.
+  // Cinco segundos: más que cualquier transacción de esta app y menos que lo
+  // que la usuaria toleraría mirando una pantalla trabada.
+  await db.execAsync('PRAGMA busy_timeout = 5000;');
   await db.execAsync('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS therapy_profile (
@@ -258,7 +292,7 @@ export async function saveTherapyProfile(
 ): Promise<void> {
   const parsed = TherapyProfileSchema.parse(profile);
   const now = new Date().toISOString();
-  await db.withTransactionAsync(async () => {
+  await serializedTransaction(db, async () => {
     await db.runAsync(
       'INSERT OR REPLACE INTO therapy_profile (id, payload, updated_at) VALUES (1, ?, ?)',
       JSON.stringify(parsed),
@@ -401,7 +435,7 @@ export async function updateCarbEvent(db: SQLiteDatabase, id: string, carbsG: nu
     'SELECT timestamp, source FROM carb_events WHERE id = ?',
     id,
   );
-  await db.withTransactionAsync(async () => {
+  await serializedTransaction(db, async () => {
     await db.runAsync('UPDATE carb_events SET carbs_g = ? WHERE id = ?', carbsG, id);
     // A `meal_confirmed` row is a second copy of the same fact as
     // `meal_events.payload.confirmedCarbsG` (see writeMealWithEpisode) —
@@ -696,7 +730,7 @@ export async function updateMealFromEdit(
   id: string,
   patch: MealEditPatch,
 ): Promise<void> {
-  await db.withTransactionAsync(async () => {
+  await serializedTransaction(db, async () => {
     await updateMealFromEditRows(db, id, patch);
   });
 }
@@ -734,7 +768,7 @@ async function deleteMealEventRows(db: SQLiteDatabase, id: string): Promise<void
 }
 
 export async function deleteMealEvent(db: SQLiteDatabase, id: string): Promise<void> {
-  await db.withTransactionAsync(async () => {
+  await serializedTransaction(db, async () => {
     await deleteMealEventRows(db, id);
   });
 }
@@ -850,7 +884,7 @@ async function writeMirrorCarbRow(db: SQLiteDatabase, meal: MealEvent, entryGrou
 
 export async function saveMealWithEpisode(db: SQLiteDatabase, meal: MealEvent): Promise<string> {
   let episodeId = '';
-  await db.withTransactionAsync(async () => {
+  await serializedTransaction(db, async () => {
     episodeId = await writeMealWithEpisode(db, meal);
   });
   return episodeId;
@@ -1058,7 +1092,7 @@ export async function saveUnifiedEntry(
   // edit silently starting a second, disconnected group.
   const entryGroupId = Crypto.randomUUID();
 
-  await db.withTransactionAsync(async () => {
+  await serializedTransaction(db, async () => {
     if (input.manualGlucose !== undefined) {
       // A value the user measured and typed. `origin: 'manual'` keeps it
       // distinguishable from sensor data everywhere it is displayed, and
@@ -1322,26 +1356,17 @@ export async function promoteEventToEntryGroup(
 }
 
 /** Adaptador SQLite de la regla pura y testeable de reclamación de grupos. */
-let entryGroupTransactionTail: Promise<void> = Promise.resolve();
-
-function serializeEntryGroupTransaction(work: () => Promise<void>): Promise<void> {
-  // Dos guardados del mismo runtime no compiten por dos conexiones exclusivas
-  // (Expo documenta que el perdedor puede recibir `database is locked`). El
-  // error de uno tampoco envenena la cola: el siguiente siempre se ejecuta.
-  const run = entryGroupTransactionTail.then(work, work);
-  entryGroupTransactionTail = run.catch(() => undefined);
-  return run;
-}
-
 function entryGroupClaimStore(db: SQLiteDatabase): EntryGroupClaimStore<SQLiteDatabase> {
   return {
-    transaction: async (work) => serializeEntryGroupTransaction(async () => {
-      // Debe ser ESTA conexión: SQLCipher recibe su PRAGMA key por conexión
-      // en initializeDatabase. Expo abre otra conexión para la variante
-      // exclusiva y esa conexión nueva no queda autenticada. La cola de arriba
-      // serializa los guardados del maestro; la transacción aporta el rollback.
-      await db.withTransactionAsync(async () => work(db));
-    }),
+    // Debe ser ESTA conexión: SQLCipher recibe su PRAGMA key por conexión en
+    // initializeDatabase, y Expo abre una conexión **nueva** para la variante
+    // exclusiva — esa conexión no queda autenticada y no puede leer la base.
+    // Por eso el aislamiento no viene de `withExclusiveTransactionAsync` sino
+    // de la cola: `serializedTransaction` es la MISMA que usan las otras once
+    // transacciones del módulo. Tener una cola propia acá no servía de nada —
+    // dos colas contra una sola conexión anidan el `BEGIN` igual, y este
+    // camino compartía conexión con el `upsertCGMReadings` de `refresh()`.
+    transaction: async (work) => serializedTransaction(db, async () => work(db)),
     read: async (transaction, target) => {
       const row = await transaction.getFirstAsync<{ entry_group_id: string | null }>(
         `SELECT entry_group_id FROM ${target.table} WHERE id = ?`,
@@ -1863,7 +1888,7 @@ export async function attachEntryToReading(
  * a real sensor reading.
  */
 export async function deleteUnifiedEntryGroup(db: SQLiteDatabase, entryGroupId: string): Promise<void> {
-  await db.withTransactionAsync(async () => {
+  await serializedTransaction(db, async () => {
     const meal = await db.getFirstAsync<{ id: string }>('SELECT id FROM meal_events WHERE entry_group_id = ?', entryGroupId);
     if (meal !== null) await deleteMealEventRows(db, meal.id); // cascades the episode, cleans up the linked carb_events row
     const glucose = await db.getFirstAsync<{ id: string; payload: string }>(
@@ -1900,7 +1925,7 @@ async function writeCGMReading(db: SQLiteDatabase, reading: CGMReading, entryGro
 
 export async function upsertCGMReadings(db: SQLiteDatabase, readings: readonly CGMReading[]): Promise<void> {
   if (readings.length === 0) return;
-  await db.withTransactionAsync(async () => {
+  await serializedTransaction(db, async () => {
     for (const reading of readings) {
       await writeCGMReading(db, reading);
     }
@@ -2149,7 +2174,7 @@ export async function importMySugrCsv(db: SQLiteDatabase, csvText: string): Prom
     outcome.cgmReadings = cgmReadings.length;
   }
 
-  await db.withTransactionAsync(async () => {
+  await serializedTransaction(db, async () => {
     for (const event of plan.events) {
       for (const insulinEvent of event.insulinEvents) {
         await saveInsulinEvent(db, insulinEvent);
@@ -2919,7 +2944,7 @@ export async function recordCatalogFoods(
   entries: readonly Omit<CatalogFood, 'timesSeen'>[],
 ): Promise<void> {
   if (entries.length === 0) return;
-  await db.withTransactionAsync(async () => {
+  await serializedTransaction(db, async () => {
     for (const entry of entries) {
       const row = await db.getFirstAsync<FoodCatalogRow>('SELECT * FROM food_catalog WHERE key = ?', entry.key);
 
@@ -3161,7 +3186,7 @@ export async function saveCorrectionReminderSettings(
   settings: CorrectionReminderSettings,
 ): Promise<void> {
   const offsetMinutes = z.number().int().min(1).max(720).parse(settings.offsetMinutes);
-  await db.withTransactionAsync(async () => {
+  await serializedTransaction(db, async () => {
     await setSetting(db, CORRECTION_REMINDER_ENABLED_KEY, String(settings.enabled));
     await setSetting(db, CORRECTION_REMINDER_OFFSET_KEY, String(offsetMinutes));
   });

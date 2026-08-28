@@ -127,6 +127,12 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
 - `entryTime.ts` — días, meses y la hora de un registro histórico. Puro porque
   "cuándo pasó" es la columna que agrupa episodios y recorta ventanas, y sus
   casos son de calendario (fin de mes, año, medianoche), no de pantalla.
+- `dbWriteQueue.ts` — la **única** cola FIFO por la que pasa toda transacción
+  de `db.ts`. Puro y con test. `expo-sqlite` abre el `BEGIN` dentro del `try`,
+  así que dos transacciones solapadas no fallan limpio: la segunda hace un
+  `ROLLBACK` ajeno y la primera termina escribiendo suelta. Dos colas no
+  sirven; contra una conexión se anidan igual. La tarea de fondo no la usa
+  porque abre su propia conexión (`backgroundSync.ts`, `useNewConnection`).
 - `entryGroupClaim.ts` — promoción + edición como una sola transacción:
   relectura del grupo ganador, alineación del espejo y rollback conjunto. Puro
   y con tests de fallo, idempotencia y carrera; `db.ts` aporta el adaptador

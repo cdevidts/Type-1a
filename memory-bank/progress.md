@@ -1,33 +1,33 @@
 # Progress
 
-_Última actualización: 2026-08-27._
+_Última actualización: 2026-08-28._
 
 ## Estado de validación
 
 | | |
 |---|---|
 | `pnpm verify` | Etapas verdes; el wrapper local de Windows conserva su fallo de rutas preexistente. CI Linux es la verificación integral |
-| Tests | **612** — domain 334, mobile 230, ai 15, schemas 13, cgm 10, api 10 |
-| Bundle de Metro | **1.351 módulos** (solo +1: `entryGroupClaim.ts`) |
+| Tests | **619** — domain 334, mobile 237, ai 15, schemas 13, cgm 10, api 10 |
+| Bundle de Metro | **1.352 módulos** (+1: `dbWriteQueue.ts`) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
-⚠️ La cifra que decía este archivo (**1.333**) estaba desactualizada: medida
-antes de tocar nada, la rama base exportaba **1.341**. Los 9 que suma esta
-corrida son iconos de Lucide por subpath y los módulos nuevos, ningún barrel.
-Si vuelve a divergir, la medición manda sobre la tabla.
+⚠️ La base real medida es **1.341**, no los 1.333 que decía esta tabla. Los 11
+que suma el trabajo del 2026-08-27/28 son subpaths de Lucide y módulos nuevos,
+ningún barrel. Si vuelve a divergir, **la medición manda sobre la tabla**.
 
 `pnpm verify` corre, en orden: `verify:contracts`, `lint`, `typecheck`, `test`,
 `verify:bundle` (export real de Metro).
 
 ## Entregado y en el dispositivo
 
-Build `preview` (`.apk`) del 2026-08-26 instalado: notificaciones por tipo con
-canal propio (Fase 19), "Comida" bajo un mismo timestamp con sus tres decisiones
-(Fase 21), el episodio capturando su ventana (Fase 23), catálogo de insulinas
-con duración, Patrones ajustando por covariables, cetonas en las tres
-superficies e iconos de Lucide. El detalle vive en los cuerpos de commit.
+Build `preview` (`.apk`) del 2026-08-26 instalado: notificaciones por tipo (Fase
+19), "Comida" bajo un timestamp con sus tres decisiones (Fase 21), el episodio
+capturando su ventana (Fase 23), catálogo de insulinas con duración, Patrones
+por covariables, cetonas e iconos de Lucide. El detalle, en los commits.
 
-Lo del 2026-08-27 (Modal Maestro, calendario, carrito y fibra) **todavía no tiene build**.
+Lo del 2026-08-27/28 (Modal Maestro, calendario, carrito, fibra y el arreglo de
+las transacciones) **todavía no tiene build**: el teléfono de Verónica **sigue
+sin poder guardar** hasta que se instale uno nuevo.
 
 ## Deuda conocida
 
@@ -57,17 +57,15 @@ corrompían datos ya están cerrados; estos siguen abiertos:
    el timeline agrupa solo por esa columna, así que después vuelve a preguntar
    qué dosis fue con qué comida — lo que la Fase 21 dijo que eliminaba.
 
-Menores del mismo lote: `MealModal` no recibe glucosa (su `isHypoglycemic`
-nunca dispara); las unidades se descartan sin avisar al apagar "Registrarla como
-comida de ahora"; la validación previa de `attachEntryToReading` no creció con
-cetonas ni macros.
+Menores del mismo lote: `MealModal` no recibe glucosa (su `isHypoglycemic` nunca
+dispara); las unidades se descartan sin avisar al apagar "Registrarla como comida
+de ahora"; la validación de `attachEntryToReading` no creció con cetonas ni macros.
 
 ### 🟠 Hallazgos de la revisión de seguridad del 2026-08-27, no corregidos
 
-El `domain-safety-reviewer` corrió contra `f9c12d5..f2e9e93`: **cero
-críticos**, 5 altos, 3 medios, 3 bajos. Los cinco altos y cuatro de los seis
-restantes se corrigieron en el mismo commit. Quedan tres, todos declarados a
-propósito:
+El `domain-safety-reviewer` contra `f9c12d5..f2e9e93`: **cero críticos**, 5
+altos, 3 medios, 3 bajos. Los altos y cuatro de los seis restantes se cerraron
+en el mismo commit. Quedan tres, declarados a propósito:
 
 1. **Dos comidas SIN grupo a la misma hora exacta comparten espejo.**
    `syncConfirmedCarbRow`, `writeMirrorCarbRow` y `deleteMealEventRows` ahora
@@ -77,10 +75,9 @@ propósito:
    movidas a "13:00" colisionan. Cerrarlo pide una clave `meal_id` en
    `carb_events`: migración con backfill, en su propia corrida.
 2. **La foto del catálogo es del plato, no del alimento.** Todos los alimentos
-   de un análisis heredan la misma imagen, así que la foto de un sándwich queda
-   como miniatura de "Pan", "Queso" y "Jamón". Se corrigió lo que **afirma** la
-   interfaz (etiqueta accesible y editor dicen "la comida donde se identificó,
-   puede incluir otros"), pero la imagen sigue siendo la misma: recortar por
+   de un análisis heredan la misma imagen: la de un sándwich queda como
+   miniatura de "Pan", "Queso" y "Jamón". Se corrigió lo que **afirma** la
+   interfaz ("la comida donde se identificó, puede incluir otros"); recortar por
    alimento exige coordenadas que la IA hoy no devuelve.
 3. **Editar los gramos de un `carb_events` importado conserva
    `source: 'imported'`.** Lo sigue rotulando importado aunque el número ya no
@@ -95,14 +92,16 @@ propósito:
   test (`masterModal.ts`, `entryTime.ts`, `mealCarbMirror.ts`, `mealFields.ts`,
   `meal-cart.ts`) — la salida que pide `AGENTS.md` —, pero el cableado hasta la
   pantalla y el comportamiento transaccional se comprobaron leyendo el diff.
-- `README.md` sigue en pie (63 líneas). La purga que lo iba a borrar se abortó;
-  la decisión tomada es **reescribirlo a ~30 líneas** como puerta de entrada del
-  repo en GitHub, no eliminarlo. Pendiente para la Fase 4.
+- Una escritura **suelta** (`runAsync` fuera de transacción) sigue pudiendo caer
+  dentro de la transacción de otro y volver atrás con ella. Ventana angosta y de
+  bajo daño —ajustes, no historial—; cerrarla exige encolar también las sueltas.
+- `README.md` sigue en pie (63 líneas). La decisión tomada es **reescribirlo a
+  ~30 líneas** como puerta de entrada del repo, no eliminarlo. Fase 4.
 
 ## Historial de fallos que definieron las reglas
 
 Cada uno costó un build, una corrida o un número falso en un reporte médico. El
-detalle vive en `git log --format=full`, la bitácora real.
+detalle vive en `git log --format=full`.
 
 | Fallo | Regla que produjo |
 |---|---|
@@ -141,6 +140,8 @@ detalle vive en `git log --format=full`, la bitácora real.
 | Los macros del carrito se guardaban `'user'`: la procedencia se comparaba solo contra `analysis` | la resuelve quien sabe qué precargó la estimación —foto, texto **o catálogo**—, no el orquestador |
 | Borrar los gramos de un carbo suelto y darle descripción los resucitaba y terminaba contándolos dos veces | al crear la comida, la fila suelta se **consume** siempre: se adopta como espejo o se borra |
 | `estimatedCarbsG` viajó en un spread hacia una interfaz que no lo declaraba | segunda vez que muerde: el campo se declara o se pierde |
+| La tarea de fondo recibía **la misma conexión nativa** que la pantalla (Android cachea por ruta+opciones) y le corría `initializeDatabase` y un `BEGIN` encima cada ~15 min | una conexión por dueño: la tarea de fondo abre con `useNewConnection` y la concurrencia real la absorben WAL y `busy_timeout` |
+| `withTransactionAsync` de Expo tiene el `BEGIN` dentro del `try`: el `ROLLBACK` de la que fallaba cerraba la transacción de la otra, que seguía escribiendo suelta y terminaba en "no se pudo guardar" con filas ya aplicadas | **una sola** cola FIFO por conexión (`dbWriteQueue.ts`); dos colas contra una conexión anidan igual |
 
 ## Redeploy del backend
 
