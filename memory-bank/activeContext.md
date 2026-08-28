@@ -18,8 +18,8 @@ limita lo que se le suma después.
 
 - **Promoción y edición ahora son una sola transacción serializada.**
   `entryGroupClaim.ts` reclama o relee el grupo ganador y ejecuta la edición
-  sobre la conexión SQLite ya autenticada con SQLCipher. Un fallo revierte también la promoción; un
-  doble toque no puede separar la comida de su espejo.
+  sobre la conexión SQLite ya autenticada con SQLCipher. Un fallo revierte
+  también la promoción; un doble toque no separa la comida de su espejo.
 - **Reclasificación de insulina coherente.** Rápida → basal elimina el propósito
   de comida/corrección; basal → rápida lo deriva del contenido confirmado de la
   entrada. Es rotulado descriptivo y nunca alimenta una dosis.
@@ -64,8 +64,8 @@ limita lo que se le suma después.
    es cómo llegamos a tener el mismo bloque seis veces.
 2. **Una decisión de datos no se verifica a ojo.** Todo lo que decide qué se
    guarda, qué se ve o qué es un hecho vive en un módulo puro con test:
-  `masterModal.ts`, `mealCarbMirror.ts`, `entryTime.ts`, `mealFields.ts`,
-  `meal-cart.ts`, `entryGroupClaim.ts`.
+   `masterModal.ts`, `mealCarbMirror.ts`, `entryTime.ts`, `mealFields.ts`,
+   `meal-cart.ts`, `entryGroupClaim.ts`.
 3. Un dato que el formulario **no ve** es un dato que el guardado borra. Por
    eso `TimelineEntryGroupRaw` lee de vuelta el nombre de la insulina, las
    calorías, el peso y la presión aunque la fila del timeline no los muestre.

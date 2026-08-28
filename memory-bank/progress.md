@@ -27,27 +27,7 @@ canal propio (Fase 19), "Comida" bajo un mismo timestamp con sus tres decisiones
 con duración, Patrones ajustando por covariables, cetonas en las tres
 superficies e iconos de Lucide. El detalle vive en los cuerpos de commit.
 
-Lo del 2026-08-27 (Modal Maestro único, edición retroactiva, calendario,
-carrito y fibra) **todavía no tiene build**.
-
-## Cierre de auditoría posterior al PR (2026-08-27)
-
-- Promoción y edición comparten una transacción SQLite serializada sobre la
-  conexión SQLCipher ya autenticada; el fallo de
-  la edición revierte también el `entry_group_id` y el espejo.
-- La reclamación relee el grupo realmente escrito antes de usarlo. Doble toque
-  y carrera tienen regresiones puras en `entryGroupClaim.test.ts`.
-- Una rápida reclasificada como basal ya no conserva propósito de comida o
-  corrección; una basal reclasificada a rápida recibe la etiqueta descriptiva
-  que corresponde a la entrada.
-- `report.ts` omite la fila `meal_confirmed` cuando ya muestra su comida y
-  conserva un espejo huérfano. Nutrición y reporte aplican ahora la misma regla.
-- Revisión independiente final: **0 críticos, 0 altos, 0 medios y 0 bajos**;
-  lint, typecheck y los 612 tests confirmados también por el revisor.
-- La promoción por sí sola solo escribe `entry_group_id`: conserva id, hora,
-  `created_at`, source y payload. La conversión explícita de un carbohidrato a
-  comida sigue convirtiendo esa misma fila en su espejo `meal_confirmed`; no es
-  una inferencia de la promoción ni una recreación del evento.
+Lo del 2026-08-27 (Modal Maestro, calendario, carrito y fibra) **todavía no tiene build**.
 
 ## Deuda conocida
 
