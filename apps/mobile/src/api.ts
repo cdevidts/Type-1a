@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import { z } from 'zod';
 
+import { localizeEpisodeMetrics } from '@type1a/domain';
 import {
   CGMProviderStatusSchema,
   CGMReadingSchema,
@@ -174,10 +175,27 @@ export async function editCatalogFoodWithInstruction(input: {
   });
 }
 
+/**
+ * El desfase UTC que regía **en ese instante**, en la zona del teléfono.
+ *
+ * Por marca de tiempo y no una sola vez: Chile cambia de horario, así que un
+ * episodio de marzo y uno de julio no comparten desfase. `getTimezoneOffset`
+ * devuelve minutos *hacia* UTC (Chile en verano da 240), y lo que se escribe
+ * es el signo contrario.
+ */
+const deviceOffsetMinutesAt = (iso: string): number => -new Date(iso).getTimezoneOffset();
+
 export async function fetchGlucoseInsight(metrics: MealEpisodeMetrics): Promise<GlucoseInsight> {
+  // La traducción a hora local va acá, en la frontera de salida, y no en
+  // quien arma las métricas: lo que se guarda en SQLite sigue siendo UTC
+  // canónico y cualquier llamada futura queda cubierta sin acordarse.
+  //
+  // Sin esto el modelo recibía `2026-09-01T21:30:00.000Z` y escribía "el
+  // episodio empezó a las 21:30" para una comida de las 17:30 — el resumen
+  // contradiciendo al timeline sobre la misma comida.
   const payload = await requestJson('/v1/ai/glucose-insight', {
     method: 'POST',
-    body: JSON.stringify(metrics),
+    body: JSON.stringify(localizeEpisodeMetrics(metrics, deviceOffsetMinutesAt)),
   });
   return GlucoseInsightSchema.parse(payload);
 }

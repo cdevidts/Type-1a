@@ -3,6 +3,7 @@ export * from './ai-safety';
 export * from './bolus';
 export * from './correction';
 export * from './episode-context';
+export * from './episode-local-time';
 export * from './freshness';
 export * from './glucose-metrics';
 export * from './glucose-thresholds';

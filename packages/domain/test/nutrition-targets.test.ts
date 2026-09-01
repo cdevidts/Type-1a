@@ -4,7 +4,9 @@ import {
   ACTIVITY_LEVELS,
   CALORIE_FLOOR_FEMALE,
   CALORIE_FLOOR_MALE,
+  FIBER_G_PER_1000_KCAL,
   MAX_DAILY_DEFICIT_KCAL,
+  MAX_FIBER_TARGET_G,
   calculateBMR,
   calculateNutritionTargets,
   calculateTDEE,
@@ -196,5 +198,55 @@ describe('los carbohidratos no pueden colapsar', () => {
     const maintain = calculateNutritionTargets({ ...baseProfile });
     const lose = calculateNutritionTargets({ ...baseProfile, goal: 'lose' });
     expect(lose.proteinG).toBeGreaterThan(maintain.proteinG);
+  });
+});
+
+describe('meta de fibra', () => {
+  it('escala 14 g por cada 1000 kcal de la meta entregada', () => {
+    const t = calculateNutritionTargets(baseProfile);
+    expect(FIBER_G_PER_1000_KCAL).toBe(14);
+    expect(t.fiberG).toBe(Math.round((t.caloriesKcal / 1000) * 14));
+  });
+
+  it('se calcula sobre las calorías YA acotadas, no sobre el cálculo crudo', () => {
+    // Un perfil que choca con un piso recibe más calorías de las que salían
+    // del déficit; la fibra tiene que corresponder a la comida que la
+    // pantalla propone, no a una que no va a existir.
+    const clamped = calculateNutritionTargets({
+      sex: 'female', ageYears: 70, heightCm: 145, weightKg: 40,
+      activityLevel: 'sedentary', goal: 'lose',
+    });
+    expect(clamped.clampedBy).toBeDefined();
+    expect(clamped.fiberG).toBe(Math.round((clamped.caloriesKcal / 1000) * FIBER_G_PER_1000_KCAL));
+  });
+
+  it('no descuadra el reparto de energía: la fibra ya está dentro de los carbohidratos', () => {
+    // Si alguien sumara la fibra aparte en el 4/4/9, la energía repartida
+    // dejaría de coincidir con la meta. Este test fija esa frontera.
+    const t = calculateNutritionTargets(baseProfile);
+    const repartida = t.carbsG * 4 + t.proteinG * 4 + t.fatG * 9;
+    expect(Math.abs(repartida - t.caloriesKcal)).toBeLessThanOrEqual(6);
+  });
+
+  it('nunca pide más que el techo, ni siquiera con energías muy altas', () => {
+    const grande = calculateNutritionTargets({
+      sex: 'male', ageYears: 25, heightCm: 200, weightKg: 120,
+      activityLevel: 'veryActive', goal: 'gain',
+    });
+    expect(grande.caloriesKcal).toBeGreaterThan(3600);
+    expect(grande.fiberG).toBe(MAX_FIBER_TARGET_G);
+  });
+
+  it('siempre es un número positivo y usable', () => {
+    for (const sex of ['female', 'male'] as const)
+      for (const weightKg of [40, 70, 200])
+        for (const goal of ['lose', 'maintain', 'gain', 'trackOnly'] as const) {
+          const t = calculateNutritionTargets({
+            ...baseProfile, sex, weightKg, goal,
+          });
+          expect(t.fiberG).toBeGreaterThan(0);
+          expect(t.fiberG).toBeLessThanOrEqual(MAX_FIBER_TARGET_G);
+          expect(Number.isInteger(t.fiberG)).toBe(true);
+        }
   });
 });

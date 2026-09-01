@@ -50,10 +50,19 @@ describe('glucoseInsightSystemPrompt', () => {
     expect(glucoseInsightSystemPrompt).toMatch(/negative for before it/i);
   });
 
+  it('prohíbe convertir la hora a otra zona', () => {
+    // El resumen decía "el episodio empezó a las 21:30" para una comida de
+    // las 17:30: recibía UTC y lo citaba tal cual. Ahora las marcas viajan
+    // con desfase local explícito (`localizeEpisodeMetrics`), y esta regla es
+    // la mitad del arreglo que vive en el prompt.
+    expect(glucoseInsightSystemPrompt).toMatch(/explicit UTC offset/i);
+    expect(glucoseInsightSystemPrompt).toMatch(/Never convert a timestamp to UTC/i);
+  });
+
   it('la versión se movió al cambiar las reglas de seguridad', () => {
     // La versión viaja con cada respuesta guardada: si el texto cambia y la
     // versión no, no hay forma de saber después bajo qué reglas se generó un
     // insight ya almacenado.
-    expect(GLUCOSE_INSIGHT_PROMPT_VERSION).toBe('glucose-insight.v5');
+    expect(GLUCOSE_INSIGHT_PROMPT_VERSION).toBe('glucose-insight.v6');
   });
 });

@@ -7,37 +7,37 @@ _Última actualización: 2026-09-01._
 | | |
 |---|---|
 | `pnpm verify` | Etapas verdes; el wrapper local de Windows conserva su fallo de rutas preexistente. CI Linux es la verificación integral |
-| Tests | **692** — domain 396, mobile 248, ai 15, schemas 13, cgm 10, api 10 |
-| Bundle de Metro | **1.360 módulos** (+2 desde el último build; ningún barrel) |
+| Tests | **709** — domain 412, mobile 248, ai 16, schemas 13, cgm 10, api 10 |
+| Bundle de Metro | **1.361 módulos** medidos (+1: `episode-local-time.ts`) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
-⚠️ La base real medida es **1.341**. Los 13 que suma el trabajo desde entonces
-son subpaths de Lucide y módulos nuevos, ningún barrel. Si vuelve a divergir,
-**la medición manda sobre la tabla**.
-
-`pnpm verify` corre, en orden: `verify:contracts`, `lint`, `typecheck`, `test`,
-`verify:bundle` (export real de Metro).
+⚠️ La base del último build es **1.341**; los 20 que suma el trabajo desde
+entonces son subpaths de Lucide y módulos nuevos, ningún barrel. Si vuelve a
+divergir, **la medición manda sobre la tabla**. `pnpm verify` corre, en orden:
+`verify:contracts`, `lint`, `typecheck`, `test`, `verify:bundle` (Metro real).
 
 ## Entregado y en el dispositivo
 
-Build del 2026-08-26: notificaciones por tipo, "Comida" bajo un timestamp, el
-episodio con su ventana, catálogo de insulinas, Patrones e iconos de Lucide.
-Build del 2026-08-31 (`a706510`): Modal Maestro, calendario, carrito, fibra y
-el arreglo de las transacciones SQLite.
-Build `preview` del 2026-09-01 (`6f1c2cd`, build `9bdc3d95`): porción
-confirmada, nota del botón rápido, calorías, fotos desde el editor y recetas.
-Lo posterior (campos de IA separados, cobertura de días) **no tiene build**.
+- 2026-08-26: notificaciones por tipo, "Comida" bajo un timestamp, el episodio
+  con su ventana, catálogo de insulinas, Patrones e iconos de Lucide.
+- 2026-08-31 (`a706510`): Modal Maestro, calendario, carrito, fibra y el
+  arreglo de las transacciones SQLite.
+- 2026-09-01 (`6f1c2cd`, build `9bdc3d95`): porción confirmada, nota del botón
+  rápido, calorías, fotos desde el editor y recetas.
+
+**Sin build**: campos de IA separados, cobertura de días, macros por porción en
+el catálogo, meta de fibra y la hora local del resumen.
 
 ## Deuda conocida
 
 ### 🔴 Bomba: imports `.js` en `@type1a/ai`
 
 `packages/ai/src/abacus.ts:23` y `packages/ai/src/index.ts:1-2` usan extensión
-`.js` en imports relativos — **la trampa de Metro que rompió dos builds**. Hoy
-no explota solo porque `apps/mobile/package.json` no depende de `@type1a/ai`;
-`domain`, `cgm` y `schemas`, que sí se bundlean, están limpios. El día que la
-app dependa de ese paquete —el chat de IA es el candidato— el bundle rompe.
-`verify:bundle` lo atraparía, pero la causa sigue ahí y cuesta tres líneas.
+`.js` en imports relativos — **la trampa de Metro que rompió dos builds**. No
+explota solo porque `apps/mobile/package.json` no depende de `@type1a/ai`;
+`domain`, `cgm` y `schemas`, que sí se bundlean, están limpios. El día que la app
+dependa de ese paquete —el chat de IA— el bundle rompe. `verify:bundle` lo
+atraparía, pero la causa sigue ahí y cuesta tres líneas.
 
 ### 🔴 Cuatro hallazgos vivos de la revisión repuntada (2026-08-26)
 
@@ -54,48 +54,44 @@ corrompían datos ya están cerrados; estos siguen abiertos:
    el timeline agrupa solo por esa columna, así que después vuelve a preguntar
    qué dosis fue con qué comida — lo que la Fase 21 dijo que eliminaba.
 
-Menores: `MealModal` no recibe glucosa (su `isHypoglycemic` nunca dispara); las
-unidades se descartan al apagar "Registrarla como comida de ahora"; la
-validación de `attachEntryToReading` no creció con cetonas ni macros.
+Menores: `MealModal` no recibe glucosa (`isHypoglycemic` nunca dispara); las
+unidades se descartan al apagar "Registrarla como comida de ahora";
+`attachEntryToReading` no valida cetonas ni macros.
 
 ### 🟠 Hallazgos de la revisión de seguridad del 2026-08-27, no corregidos
 
 El `domain-safety-reviewer` contra `f9c12d5..f2e9e93`: **cero críticos**, 5
 altos, 3 medios, 3 bajos. Los altos y cuatro de los seis restantes se cerraron
-en el mismo commit. Quedan tres, declarados a propósito:
+en el mismo commit; quedan tres, declarados a propósito:
 
 1. **Dos comidas SIN grupo a la misma hora exacta comparten espejo.**
-   `syncConfirmedCarbRow`, `writeMirrorCarbRow` y `deleteMealEventRows` ahora
-   acotan por `entry_group_id` cuando la comida lo tiene —todo lo editado—; sin
-   grupo siguen emparejando por `timestamp + source`. El riesgo creció porque
-   `combineDayAndTime` deja segundos y milisegundos en cero, así que dos comidas
-   movidas a "13:00" colisionan. Cerrarlo pide una clave `meal_id` en
-   `carb_events`: migración con backfill, en su propia corrida.
-2. **La foto del catálogo es del plato, no del alimento.** Todos los alimentos
-   de un análisis heredan la misma imagen: la de un sándwich queda como
-   miniatura de "Pan", "Queso" y "Jamón". Se corrigió lo que **afirma** la
-   interfaz ("la comida donde se identificó, puede incluir otros"); recortar por
-   alimento exige coordenadas que la IA hoy no devuelve.
+   `syncConfirmedCarbRow`, `writeMirrorCarbRow` y `deleteMealEventRows` acotan
+   por `entry_group_id` cuando la comida lo tiene —todo lo editado—; sin grupo
+   siguen emparejando por `timestamp + source`, y `combineDayAndTime` deja
+   segundos en cero, así que dos comidas movidas a "13:00" colisionan. Cerrarlo
+   pide una clave `meal_id` en `carb_events`: migración con backfill.
+2. **La foto del catálogo es del plato, no del alimento.** Todos los alimentos de
+   un análisis heredan la misma imagen. Se corrigió lo que **afirma** la interfaz
+   ("la comida donde se identificó"); recortar exige coordenadas que la IA no da.
 3. **Editar los gramos de un `carb_events` importado conserva
-   `source: 'imported'`**, aunque el número ya no sea el del CSV. Es anterior a
-   este cambio y es decisión de producto: relabelar a `'manual'` pierde el
-   origen, dejarlo miente sobre el valor. Va a Verónica.
+   `source: 'imported'`**, aunque el número ya no sea el del CSV. Decisión de
+   producto: relabelar a `'manual'` pierde el origen, dejarlo miente sobre el
+   valor. Va a Verónica.
 
 ### 🟡 Menores
 
 - **Ni la UI ni `db.ts` tienen test de ejecución**: el repo no monta React y
   `db.ts` importa nativos de Expo. Cada decisión vive en un módulo puro con test
-  —la salida que pide `AGENTS.md`—, pero el cableado hasta la pantalla y el
-  comportamiento transaccional se comprobaron leyendo el diff.
-- Una escritura **suelta** (`runAsync` fuera de transacción) sigue pudiendo caer
-  dentro de la transacción de otro y volver atrás con ella. Ventana angosta y de
-  bajo daño —ajustes, no historial—; cerrarla exige encolar también las sueltas.
-- `README.md` sigue en pie (63 líneas). La decisión tomada es **reescribirlo a
-  ~30 líneas** como puerta de entrada del repo, no eliminarlo. Fase 4.
+  —la salida que pide `AGENTS.md`—; el cableado se comprobó leyendo el diff.
+- Una escritura **suelta** (`runAsync` fuera de transacción) puede caer dentro de
+  la transacción de otro y volver atrás con ella. Ventana angosta y de bajo daño
+  —ajustes, no historial—; cerrarla exige encolar también las sueltas.
+- `README.md` sigue en pie (63 líneas). La decisión es **reescribirlo a ~30
+  líneas** como puerta de entrada del repo, no eliminarlo. Fase 4.
 
 ## Historial de fallos que definieron las reglas
 
-Cada uno costó un build, una corrida o un número falso en un reporte médico. El
+Cada uno costó un build, una corrida o un número falso en un reporte médico; el
 detalle vive en `git log --format=full`.
 
 | Fallo | Regla que produjo |
@@ -142,9 +138,13 @@ detalle vive en `git log --format=full`.
 | El cuadro de texto del botón rápido alimentaba a la IA y se tiraba, así que la comida quedaba sin nota mientras el maestro sí la guardaba | una capacidad que solo tiene un camino es una asimetría: el texto que describe la comida se escribe venga de donde venga |
 | Una foto de arroz con pollo dejaba dos alimentos sueltos y **los dos con la foto del plato entero** | el contenedor que faltaba es la receta: guarda la foto del plato y cada componente queda libre de tener la suya |
 | La cobertura de días solo se mostraba bajo el umbral clínico de 14, así que a 30 y 90 días desaparecía y el promedio se leía como si cubriera el rango entero | "cuánto está cubierto" y "alcanza para la métrica" son dos afirmaciones distintas: la primera va siempre |
+| El catálogo se guarda por 100 g y la tarjeta lo mostraba así: una cucharada de aceite aparecía con 100 g de grasa, y son esos números los que después sugieren carbohidratos | cómo se **guarda** un número no es cómo se **lee**: la tarjeta muestra la porción y la leyenda dice el denominador |
+| El resumen post-comida citaba "empezó a las 21:30" para una comida de las 17:30: la app guarda UTC, el timeline formatea local y las métricas viajaban a la IA en UTC crudo | lo que sale a un tercero lleva su zona escrita; y el desfase se pide **por marca**, porque el horario de verano existe |
+| Una meta de fibra copiada del molde de las otras habría dicho "te pasaste" al superarla | una referencia es un piso o un techo, y el texto tiene que saber cuál: pasarse de fibra es lo que se buscaba |
 
 ## Redeploy del backend
 
-`apps/api` no se tocó desde el último despliegue salvo `prompts.ts` (insight a
-`glucose-insight.v5`). El desplegado sigue con el prompt anterior: bajo riesgo y
-no urgente. Cada redeploy consume créditos de Abacus, así que se agrupa.
+`apps/api` solo cambió en `prompts.ts` (insight a `glucose-insight.v6`), y
+**este redeploy sí importa**: la regla de zona horaria vive en el prompt, así
+que hasta que se despliegue el resumen puede seguir citando la hora en UTC
+aunque la app ya mande el desfase.

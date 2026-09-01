@@ -10,6 +10,7 @@ import WandSparkles from 'lucide-react-native/icons/wand-sparkles';
 
 import {
   recipeTotals,
+  scaleCatalogFood,
   type Recipe,
   DEFAULT_SERVING_GRAMS,
   MAX_SERVING_GRAMS,
@@ -635,6 +636,7 @@ export function CatalogModal({
                           fiberG: totals.fiberG,
                           caloriesKcal: totals.caloriesKcal,
                         }}
+                        macrosCaption={`Macros de la receta completa · ${numberText(totals.grams)} g`}
                         action={{
                           kind: 'remove',
                           label: `Borrar la receta ${recipe.name}`,
@@ -657,21 +659,41 @@ export function CatalogModal({
               </View>
             )}
 
-            {foods.map((food) => (
+            {/*
+              **Los chips van por porción, no por 100 g.**
+
+              El catálogo se guarda normalizado a 100 g —eso no cambia— pero
+              mostrarlo así inflaba la tarjeta de todo lo que se come en
+              cantidades chicas: una cucharada de aceite aparecía con 100 g de
+              grasa, y un alimento denso se leía como si una porción tuviera
+              varias veces los carbohidratos que tiene. Esos números son los
+              que después se reusan para sugerir carbohidratos, así que la
+              lectura equivocada no se quedaba en lo estético.
+
+              La porción es la de la usuaria (`servingGramsOf`, 100 g solo
+              cuando no hay otra), y la leyenda dice cuál es: los mismos cinco
+              chips sobre otro denominador son otros cinco números.
+            */}
+            {foods.map((food) => {
+              const serving = servingGramsOf(food);
+              const perServing = scaleCatalogFood(food, serving);
+              return (
               <View key={food.key}>
                 <FoodCard
                   name={food.name}
-                  subtitle={`${numberText(food.carbsPer100g)} g carbos/100 g · porción ${numberText(servingGramsOf(food))} g`
+                  subtitle={`Porción ${numberText(serving)} g`
                     + `${food.servingLabel === undefined ? '' : ` (${food.servingLabel})`}`
+                    + ` · ${numberText(food.carbsPer100g)} g carbos/100 g`
                     + ` · ${food.timesSeen} ${food.timesSeen === 1 ? 'vez' : 'veces'}`}
                   {...(food.imageUri === undefined ? {} : { imageUri: food.imageUri })}
                   macros={{
-                    carbsG: food.carbsPer100g,
-                    proteinG: food.proteinPer100g,
-                    fatG: food.fatPer100g,
-                    fiberG: food.fiberPer100g,
-                    caloriesKcal: food.kcalPer100g,
+                    carbsG: perServing.carbsG,
+                    proteinG: perServing.proteinG,
+                    fatG: perServing.fatG,
+                    fiberG: perServing.fiberG,
+                    caloriesKcal: perServing.caloriesKcal,
                   }}
+                  macrosCaption={`Macros por porción de ${numberText(serving)} g`}
                   action={{ kind: 'edit', label: `Editar ${food.name}`, onPress: () => { setEditing(food); } }}
                 />
                 {/*
@@ -690,7 +712,8 @@ export function CatalogModal({
                   <Text style={styles.deleteRowText}>Borrar del catálogo</Text>
                 </Pressable>
               </View>
-            ))}
+              );
+            })}
           </ScrollView>
         </>
       )}

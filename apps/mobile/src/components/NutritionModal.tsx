@@ -76,11 +76,32 @@ function MacroBar({
   eatenG,
   targetG,
   color,
+  outlined = false,
+  overNote = (excessG) => `Pasaste la referencia por ${excessG} g`,
 }: {
   label: string;
   eatenG: number;
   targetG: number;
   color: string;
+  /**
+   * Relleno en contorno en vez de sólido.
+   *
+   * Es el tratamiento que `theme.ts` ya fija para la fibra: comparte el hue de
+   * los carbohidratos —porque **es** un subconjunto de ellos— y lo que la
+   * distingue es el contorno, no un cuarto color categórico sin validar. Sin
+   * esto, "Carbohidratos" y "Fibra" quedarían a dos filas de distancia como
+   * dos barras naranjas idénticas.
+   */
+  outlined?: boolean;
+  /**
+   * Qué decir al superar la referencia.
+   *
+   * Es configurable porque **no todas las metas son un techo**. Pasarse de
+   * carbohidratos o de calorías es algo que la pantalla señala; pasarse de
+   * fibra es exactamente lo que se buscaba, y el texto por defecto lo estaría
+   * desaconsejando.
+   */
+  overNote?: (excessG: number) => string;
 }) {
   const pct = targetG <= 0 ? 0 : Math.min(100, (eatenG / targetG) * 100);
   const over = eatenG > targetG;
@@ -97,9 +118,21 @@ function MacroBar({
         </Text>
       </View>
       <View style={styles.macroTrack}>
-        <View style={[styles.macroFill, { width: `${pct}%`, backgroundColor: color }]} />
+        {/* A 0 % no se dibuja: un relleno en contorno de ancho cero seguiría
+            mostrando sus dos bordes y se leería como si algo hubiera. */}
+        {pct <= 0 ? null : (
+          <View
+            style={[
+              styles.macroFill,
+              { width: `${pct}%` },
+              outlined
+                ? { backgroundColor: `${color}33`, borderWidth: 1, borderColor: color }
+                : { backgroundColor: color },
+            ]}
+          />
+        )}
       </View>
-      {over ? <Text style={styles.macroOver}>Pasaste la referencia por {Math.round(eatenG - targetG)} g</Text> : null}
+      {over ? <Text style={styles.macroOver}>{overNote(Math.round(eatenG - targetG))}</Text> : null}
     </View>
   );
 }
@@ -404,23 +437,40 @@ function TodayTab({
 
         Antes era una nota al pie que **solo aparecía si era mayor que cero**,
         así que un día sin fibra anotada y un día sin fibra comida se veían
-        igual: no se veían. Ahora siempre está, con su total y su completitud.
+        igual: no se veían. Después pasó a mostrarse siempre, pero sin meta:
+        un número sin denominador que no se podía leer como "¿voy bien?".
 
-        **No lleva barra de progreso ni meta**, y eso es deliberado: el
-        producto no tiene una meta de fibra aprobada, y dibujar una barra
-        exige un denominador. Inventarlo convertiría un número descriptivo en
-        un objetivo clínico que nadie definió.
+        Ahora tiene meta (14 g por cada 1000 kcal, la Ingesta Adecuada del
+        IOM que la ADA recomienda también en diabetes). **Es un piso, no un
+        techo**: por eso la nota de "pasaste" está reescrita en positivo —
+        superar la referencia de fibra es justamente lo que se buscaba, y el
+        texto por defecto lo estaría desaconsejando.
+
+        La barra va en contorno porque la fibra comparte el hue de los
+        carbohidratos (`theme.ts`): dos barras rellenas del mismo color a dos
+        filas de distancia se distinguirían solo por su etiqueta.
+
+        La completitud sigue debajo y sigue importando: una meta calculada
+        sobre un total incompleto se lee peor de lo que fue, y "sin anotar"
+        nunca es 0 g.
       */}
+      <MacroBar
+        label="Fibra"
+        eatenG={totals.fiberG}
+        targetG={targets.fiberG}
+        color={macroColors.fiber}
+        outlined
+        overNote={(excessG) => `Por sobre la referencia de fibra, ${excessG} g de más`}
+      />
       <View style={styles.fiberCard}>
-        <Text style={styles.fiberLabel}>FIBRA REGISTRADA</Text>
-        <Text style={styles.fiberValue}>{Math.round(totals.fiberG)} g</Text>
         <Text style={styles.fiberFoot}>
           {totals.fiberMissingMeals === 0
             ? 'Todas las comidas de este día tienen la fibra anotada.'
             : `${totals.fiberMissingMeals} comida(s) de este día no tienen fibra anotada, así que este total es un mínimo. "Sin anotar" no es 0 g.`}
         </Text>
         <Text style={styles.fiberFoot}>
-          Type 1A no define una meta de fibra: muestra lo que registraste y qué tan completo está.
+          La meta de fibra es una referencia poblacional (14 g por cada 1000 kcal), igual que las demás. No se
+          descuenta de los carbohidratos ni cambia ninguna dosis.
         </Text>
       </View>
 
@@ -547,6 +597,7 @@ function GoalsTab({
             <TargetChip label="Carbohidratos" value={`${targets.carbsG} g`} color={macroColors.carbs} />
             <TargetChip label="Proteína" value={`${targets.proteinG} g`} color={macroColors.protein} />
             <TargetChip label="Grasa" value={`${targets.fatG} g`} color={macroColors.fat} />
+            <TargetChip label="Fibra" value={`al menos ${targets.fiberG} g`} color={macroColors.fiber} />
           </View>
           <Text style={styles.targetBreakdown}>
             Metabolismo basal estimado {targets.bmrKcal} kcal · gasto total estimado {targets.tdeeKcal} kcal
@@ -657,6 +708,11 @@ function GoalsTab({
           {Math.round(((targets?.carbsG ?? 0) * 4 / (targets?.caloriesKcal ?? 1)) * 100)} % carbohidratos,{' '}
           {Math.round(((targets?.proteinG ?? 0) * 4 / (targets?.caloriesKcal ?? 1)) * 100)} % proteína y{' '}
           {Math.round(((targets?.fatG ?? 0) * 9 / (targets?.caloriesKcal ?? 1)) * 100)} % grasa.
+        </Text>
+        <Text style={styles.noteText}>
+          La fibra va aparte del reparto porque ya está contada dentro de los carbohidratos: su meta son 14 g por
+          cada 1000 kcal, la Ingesta Adecuada del IOM que la ADA recomienda también en diabetes. Es un piso —
+          llegar o pasarse está bien— y no se descuenta de los carbohidratos para calcular nada.
         </Text>
         <Text style={styles.noteWarning}>
           Es una referencia poblacional, no una indicación médica. Tu objetivo real —sobre todo si vas a bajar de
@@ -899,8 +955,6 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     marginBottom: spacing.md,
   },
-  fiberLabel: { color: macroColors.fiber, fontSize: 10, fontWeight: '900', letterSpacing: 0.6 },
-  fiberValue: { color: colors.ink, fontSize: 26, fontWeight: '900', marginTop: 2 },
   fiberFoot: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: 4 },
   pastBanner: { backgroundColor: colors.warningSoft, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
   pastBannerText: { color: colors.warning, fontSize: 12, lineHeight: 17, fontWeight: '700' },

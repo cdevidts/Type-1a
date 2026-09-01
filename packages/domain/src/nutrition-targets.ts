@@ -3,7 +3,7 @@
  *
  * Puro y determinístico, como todo `packages/domain`. Traduce un perfil
  * antropométrico + una meta en un objetivo diario de calorías, carbohidratos,
- * proteína y grasa.
+ * proteína, grasa y fibra.
  *
  * ## Frontera de seguridad — leer antes de tocar nada acá
  *
@@ -104,6 +104,45 @@ const KCAL_PER_G_CARB = 4;
 const KCAL_PER_G_PROTEIN = 4;
 const KCAL_PER_G_FAT = 9;
 
+/**
+ * Fibra: 14 g por cada 1000 kcal.
+ *
+ * Es la Ingesta Adecuada del IOM (Dietary Reference Intakes, 2005), la misma
+ * que la ADA recomienda explícitamente para personas con diabetes — el
+ * estándar de referencia dice "al menos lo de la población general", no un
+ * objetivo aparte. Se escala con la energía y no es un número fijo porque
+ * quien come 1400 kcal y quien come 2800 no tienen la misma capacidad de
+ * llegar a los mismos gramos.
+ *
+ * ## Es un piso, no un techo — y la interfaz tiene que tratarlo así
+ *
+ * A diferencia de las calorías o los carbohidratos, pasarse de fibra no es
+ * un problema que haya que señalar: la referencia marca desde dónde está
+ * bien, no hasta dónde se puede. Una barra que grite "te pasaste" acá estaría
+ * desaconsejando algo deseable.
+ *
+ * ## Lo que este número NO es
+ *
+ * No es un parámetro de terapia y de acá no sale ninguna dosis. Que la fibra
+ * module la absorción de los carbohidratos es cierto y es justo por eso que
+ * hay que decirlo: descontar fibra de los carbohidratos para calcular un bolo
+ * ("carbohidratos netos") es una decisión clínica que define el equipo
+ * tratante, no una meta de nutrición, y `AGENTS.md` prohíbe que la app la
+ * infiera. Esta constante alimenta una barra de progreso; nada más.
+ */
+export const FIBER_G_PER_1000_KCAL = 14;
+
+/**
+ * Techo de la meta de fibra.
+ *
+ * Solo muerde en energías muy altas (a 3600 kcal la fórmula ya pide 50 g).
+ * Existe porque una meta muy por encima de lo habitual, perseguida rápido,
+ * produce molestias digestivas reales; y porque un número que nadie alcanza
+ * deja de funcionar como referencia. Que el tope casi nunca actúe es la
+ * intención: es un tope de seguridad, no un reparto.
+ */
+export const MAX_FIBER_TARGET_G = 50;
+
 /** Por qué la meta no es la que salía del cálculo puro. */
 export type TargetClamp = 'bmr' | 'absoluteFloor';
 
@@ -114,6 +153,11 @@ export interface NutritionTargets {
   carbsG: number;
   proteinG: number;
   fatG: number;
+  /**
+   * Meta de fibra, en gramos. **Es un piso**: llegar o pasarse está bien, y
+   * quedarse corto es lo único que la pantalla debería marcar.
+   */
+  fiberG: number;
   /**
    * Presente si un piso de seguridad modificó el resultado. La interfaz debe
    * decirlo: una meta corregida en silencio es una meta que la usuaria no
@@ -200,6 +244,15 @@ export function calculateNutritionTargets(input: NutritionProfileInput): Nutriti
     carbsG: Math.max(0, Math.round(carbKcal / KCAL_PER_G_CARB)),
     proteinG,
     fatG: Math.max(0, Math.round(fatKcal / KCAL_PER_G_FAT)),
+    // Se escala con la energía ya acotada por los pisos, no con el cálculo
+    // crudo: la meta de fibra tiene que corresponder a la comida que la
+    // pantalla efectivamente propone. Y no entra en el reparto 4/4/9 — la
+    // fibra ya está contada dentro de los carbohidratos, así que sumarla
+    // aparte descuadraría la energía.
+    fiberG: Math.min(
+      MAX_FIBER_TARGET_G,
+      Math.round((caloriesKcal / 1000) * FIBER_G_PER_1000_KCAL),
+    ),
     ...(clampedBy === undefined ? {} : { clampedBy }),
   };
 }

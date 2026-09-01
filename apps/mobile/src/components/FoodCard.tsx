@@ -29,6 +29,11 @@ import { colors, macroColors, radius, spacing } from '../theme';
  *    (`contracts/ux-checklist.md`), y la fibra comparte el hue de los
  *    carbohidratos a propósito — se distingue por ir en contorno y por su
  *    etiqueta, no por un cuarto color sin validar (ver `theme.ts`).
+ * 3. **Los chips dicen sobre cuánto hablan.** `macrosCaption` no es adorno:
+ *    los mismos cinco números significan cosas distintas según sean de una
+ *    porción, de 100 g o de una receta entera, y la diferencia es de dos a
+ *    diez veces. Sin la leyenda, un alimento denso se lee como si una porción
+ *    tuviera el triple de carbohidratos de los que tiene.
  */
 
 export interface FoodCardMacros {
@@ -125,6 +130,7 @@ export function FoodCard({
   subtitle,
   imageUri,
   macros,
+  macrosCaption,
   action,
 }: {
   name: string;
@@ -132,6 +138,12 @@ export function FoodCard({
   subtitle: string;
   imageUri?: string | undefined;
   macros: FoodCardMacros;
+  /**
+   * Sobre cuánto alimento hablan los chips: "por porción de 150 g", "receta
+   * completa". Opcional solo donde la cantidad ya está dicha justo encima
+   * (el carrito); donde no lo está, ponerla no es negociable.
+   */
+  macrosCaption?: string | undefined;
   /**
    * El único control tocable de la tarjeta.
    *
@@ -156,6 +168,9 @@ export function FoodCard({
           <MacroChip label="Fibra" value={macros.fiberG} unit="g" color={macroColors.fiber} outlined />
           <MacroChip label="Calorías" value={macros.caloriesKcal} unit="kcal" color={colors.muted} neutral />
         </View>
+        {macrosCaption === undefined ? null : (
+          <Text style={styles.macrosCaption} numberOfLines={2}>{macrosCaption}</Text>
+        )}
       </View>
       <Pressable
         style={styles.action}
@@ -191,6 +206,7 @@ const styles = StyleSheet.create({
   chip: { borderRadius: radius.sm, paddingHorizontal: spacing.sm, paddingVertical: 3 },
   chipLabel: { fontSize: 9, fontWeight: '900', letterSpacing: 0.3 },
   chipValue: { fontSize: 11, fontWeight: '700', color: colors.ink },
+  macrosCaption: { fontSize: 11, color: colors.muted, marginTop: 4, lineHeight: 15 },
   // 44×44 explícito: el mínimo táctil es del área, no del icono de 20.
   action: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
 });

@@ -51,6 +51,27 @@ Una meta poblacional (ej. ">70% en rango") se muestra como contexto de lectura,
 aclarando que el objetivo personal lo define el equipo clínico — nunca como si
 la app se lo hubiera fijado a la usuaria.
 
+## Meta de fibra — 14 g por cada 1000 kcal
+
+`FIBER_G_PER_1000_KCAL` en `nutrition-targets.ts`. Es la Ingesta Adecuada del
+IOM (Dietary Reference Intakes, 2005), que la ADA recomienda también para
+personas con diabetes: el estándar dice "al menos lo de la población general",
+no un objetivo aparte. Se escala con la energía porque quien come 1400 kcal y
+quien come 2800 no tienen la misma capacidad de llegar a los mismos gramos.
+
+- [Dietary Reference Intakes, cap. 7: Dietary, Functional and Total Fiber (IOM)](https://nap.nationalacademies.org/read/10490/chapter/9)
+- [ADA Standards of Care — Facilitating Positive Health Behaviors (nutrición)](https://diabetesjournals.org/care/article/48/Supplement_1/S86/157558)
+
+Tres cosas que la implementación fija a propósito:
+
+1. **Es un piso, no un techo.** Pasarse es lo que se buscaba, así que la barra
+   lo dice en positivo. El molde de las otras metas —"te pasaste"— habría
+   desaconsejado algo deseable.
+2. **No se descuenta de los carbohidratos.** Los "carbohidratos netos" son una
+   decisión clínica del equipo tratante y `AGENTS.md` prohíbe inferirla.
+3. **No entra en el reparto 4/4/9**: la fibra ya está contada dentro de los
+   carbohidratos, y sumarla aparte descuadraría la energía.
+
 ## Respuesta post-prandial con comidas solapadas
 
 Respaldan el rediseño de `macro-glucose.ts` y `nutrition-insights.ts`. Verónica
