@@ -193,6 +193,10 @@ export async function fetchGlucoseInsight(metrics: MealEpisodeMetrics): Promise<
   // Sin esto el modelo recibía `2026-09-01T21:30:00.000Z` y escribía "el
   // episodio empezó a las 21:30" para una comida de las 17:30 — el resumen
   // contradiciendo al timeline sobre la misma comida.
+  //
+  // Sale un dato que antes no salía: el desfase horario del teléfono. Es el
+  // mínimo posible para el arreglo y está razonado en `episode-local-time.ts`
+  // § Privacidad, junto con el filtro que crece al mismo tiempo.
   const payload = await requestJson('/v1/ai/glucose-insight', {
     method: 'POST',
     body: JSON.stringify(localizeEpisodeMetrics(metrics, deviceOffsetMinutesAt)),

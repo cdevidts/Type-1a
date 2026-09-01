@@ -59,6 +59,15 @@ describe('glucoseInsightSystemPrompt', () => {
     expect(glucoseInsightSystemPrompt).toMatch(/Never convert a timestamp to UTC/i);
   });
 
+  it('prohíbe juzgar o aconsejar sobre la hora de comer', () => {
+    // La hora local le da al modelo, por primera vez, material para juzgar un
+    // hábito: en UTC no significaba nada. La prohibición viaja en el mismo
+    // cambio que la hora local, y `containsTherapyRecommendation` la respalda
+    // en estructura — al crecer lo que el modelo puede decir, crece el filtro.
+    expect(glucoseInsightSystemPrompt).toMatch(/too late or too early/i);
+    expect(glucoseInsightSystemPrompt).toMatch(/not a habit to correct/i);
+  });
+
   it('la versión se movió al cambiar las reglas de seguridad', () => {
     // La versión viaja con cada respuesta guardada: si el texto cambia y la
     // versión no, no hay forma de saber después bajo qué reglas se generó un

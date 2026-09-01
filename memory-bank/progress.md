@@ -7,7 +7,7 @@ _Última actualización: 2026-09-01._
 | | |
 |---|---|
 | `pnpm verify` | Etapas verdes; el wrapper local de Windows conserva su fallo de rutas preexistente. CI Linux es la verificación integral |
-| Tests | **709** — domain 412, mobile 248, ai 16, schemas 13, cgm 10, api 10 |
+| Tests | **724** — domain 426, mobile 248, ai 17, schemas 13, cgm 10, api 10 |
 | Bundle de Metro | **1.361 módulos** medidos (+1: `episode-local-time.ts`) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
@@ -81,13 +81,13 @@ en el mismo commit; quedan tres, declarados a propósito:
 ### 🟡 Menores
 
 - **Ni la UI ni `db.ts` tienen test de ejecución**: el repo no monta React y
-  `db.ts` importa nativos de Expo. Cada decisión vive en un módulo puro con test
-  —la salida que pide `AGENTS.md`—; el cableado se comprobó leyendo el diff.
+  `db.ts` importa nativos de Expo. Cada decisión vive en un módulo puro con
+  test; el cableado se comprobó leyendo el diff.
 - Una escritura **suelta** (`runAsync` fuera de transacción) puede caer dentro de
   la transacción de otro y volver atrás con ella. Ventana angosta y de bajo daño
   —ajustes, no historial—; cerrarla exige encolar también las sueltas.
 - `README.md` sigue en pie (63 líneas). La decisión es **reescribirlo a ~30
-  líneas** como puerta de entrada del repo, no eliminarlo. Fase 4.
+  líneas** como puerta de entrada, no eliminarlo. Fase 4.
 
 ## Historial de fallos que definieron las reglas
 
@@ -141,10 +141,10 @@ detalle vive en `git log --format=full`.
 | El catálogo se guarda por 100 g y la tarjeta lo mostraba así: una cucharada de aceite aparecía con 100 g de grasa, y son esos números los que después sugieren carbohidratos | cómo se **guarda** un número no es cómo se **lee**: la tarjeta muestra la porción y la leyenda dice el denominador |
 | El resumen post-comida citaba "empezó a las 21:30" para una comida de las 17:30: la app guarda UTC, el timeline formatea local y las métricas viajaban a la IA en UTC crudo | lo que sale a un tercero lleva su zona escrita; y el desfase se pide **por marca**, porque el horario de verano existe |
 | Una meta de fibra copiada del molde de las otras habría dicho "te pasaste" al superarla | una referencia es un piso o un techo, y el texto tiene que saber cuál: pasarse de fibra es lo que se buscaba |
+| Mandar la hora **local** al modelo no agregó un campo, pero sí volvió citable un dato sobre su vida: con UTC no podía juzgar a qué hora cenaba, con hora de pared sí | el filtro crece cuando crece lo que el modelo **puede decir**, no solo cuando crece el payload |
 
 ## Redeploy del backend
 
-`apps/api` solo cambió en `prompts.ts` (insight a `glucose-insight.v6`), y
-**este redeploy sí importa**: la regla de zona horaria vive en el prompt, así
-que hasta que se despliegue el resumen puede seguir citando la hora en UTC
-aunque la app ya mande el desfase.
+`apps/api` solo cambió en `prompts.ts` (`glucose-insight.v6`), y **este redeploy
+sí importa**: la regla de zona horaria y la prohibición de aconsejar la hora de
+comer viven en el prompt; hasta desplegarlo, el resumen puede seguir en UTC.

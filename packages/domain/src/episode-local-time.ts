@@ -37,6 +37,22 @@ import type { MealEpisodeMetrics } from '@type1a/schemas';
  *
  * Lo que se guarda en SQLite **no cambia**: sigue siendo UTC canónico. Esto
  * es una traducción de salida, no un cambio de representación.
+ *
+ * ## Privacidad — un dato nuevo que sale del teléfono, aceptado a conciencia
+ *
+ * `AGENTS.md` pide mandar el mínimo necesario a un servicio de IA, así que
+ * conviene decirlo en vez de que aparezca solo: antes viajaban instantes UTC y
+ * ahora viaja, además, **el desfase horario del dispositivo** —una banda de
+ * longitud aproximada— y con él la hora de pared real de las comidas.
+ *
+ * Es el mínimo posible para este arreglo: `IsoTimestampSchema` exige `Z` o un
+ * desfase, y mandar el desfase en un campo aparte transmitiría exactamente lo
+ * mismo. No agrega glucosa, insulina ni identidad; nada que no viajara ya.
+ *
+ * Lo que **sí** cambia es lo que el modelo puede decir: una hora en UTC no
+ * significaba nada sobre la vida de quien registró la comida, y una hora local
+ * sí. Por eso el mismo cambio amplía la prohibición del prompt y agrega
+ * patrones de "juicio o consejo sobre la hora de comer" a `ai-safety.ts`.
  */
 
 /** ±14 h es el rango real de zonas horarias; fuera de eso es un dato corrupto. */

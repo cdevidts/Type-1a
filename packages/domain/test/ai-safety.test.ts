@@ -82,3 +82,44 @@ describe('insulina activa (IOB) en la salida — agregado tras la revisión de l
     });
   }
 });
+
+describe('juicio o consejo sobre la hora de comer (2026-09-01)', () => {
+  // Hasta ahora el modelo recibía la hora en UTC, un dato sin significado para
+  // la vida de quien registró la comida — ese era justo el bug que arregla
+  // `episode-local-time.ts`. Ahora recibe la hora de pared local y el prompt
+  // le dice que es la hora real de esa persona, así que por primera vez tiene
+  // material para juzgarla. Al crecer lo que el modelo puede decir, crece el
+  // filtro: es la misma regla que trajo los patrones de IOB de la Fase 23.
+  const timingAdvice = [
+    'La comida fue a las 21:30; cenar tan tarde suele dar picos más sostenidos. La próxima vez intenta cenar más temprano.',
+    'Las cenas después de las 21:00 muestran picos más altos que las de las 19:00: conviene adelantar la cena.',
+    'Sería mejor cenar antes de las 20:00.',
+    'La cena fue demasiado tarde.',
+    'Te recomiendo adelantar el almuerzo.',
+    'Deberías comer más temprano.',
+    'Procura no cenar tan tarde.',
+  ];
+
+  for (const claim of timingAdvice) {
+    it(`rechaza: "${claim}"`, () => {
+      expect(containsTherapyRecommendation(claim)).toBe(true);
+    });
+  }
+
+  // Contracara: describir CUÁNDO pasó algo es el trabajo de este resumen, y
+  // un falso positivo acá no cuesta un mensaje — cuesta el insight entero.
+  const descriptiveTiming = [
+    'La comida fue a las 17:30 y el pico llegó a los 75 minutos.',
+    'Las cenas más tardías mostraron picos más altos que las del mediodía.',
+    'El episodio empezó a las 13:05 con 118 mg/dL.',
+    'Deberías anotar la fibra de esta comida para que el total no sea un mínimo.',
+    'El pico llegó demasiado tarde para atribuirlo solo a los carbohidratos.',
+    'Faltan lecturas entre las 2 y las 3 horas de la comida.',
+  ];
+
+  for (const text of descriptiveTiming) {
+    it(`deja pasar: "${text}"`, () => {
+      expect(containsTherapyRecommendation(text)).toBe(false);
+    });
+  }
+});

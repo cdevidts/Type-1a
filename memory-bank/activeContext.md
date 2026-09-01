@@ -22,8 +22,7 @@ le suma después.
 - **`ingestedAt` y la hora de una lectura externa no se mueven nunca.**
 - **Un blanco no es un cero.** Vitales, foto y análisis son parches.
 - **El nombre de la insulina es configuración**, no un campo por registro.
-- Carrito multi-alimento, Strip Calendar, fecha y hora editables, fibra, y
-  `QuickNumericModal` para basal y cetonas.
+- Carrito, Strip Calendar, fecha y hora editables, fibra, y `QuickNumericModal`.
 
 ## Las transacciones SQLite, cerradas (2026-08-28)
 
@@ -55,18 +54,17 @@ trata como suya, porque lo es.
 
 Y tres huecos chicos: **la nota del botón rápido** (`mealNote.ts` respeta el
 techo de 300 del esquema, donde pasarse hace que Zod rechace la comida entera),
-**calorías en la tarjeta** en chip neutro —un quinto hue categórico habría
-exigido revalidar la paleta— y **fotos desde el editor del catálogo**, donde la
-imagen es representación y no se adopta junto a un análisis.
+**calorías en chip neutro** —un quinto hue categórico habría exigido revalidar
+la paleta— y **fotos desde el editor del catálogo**.
 
 ## Los dos cuadros de texto de la IA, y la cobertura (2026-09-01)
 
 `MealAiFields.tsx` separa lo que era un campo haciendo dos trabajos: la **pista
 para la foto** (el rótulo cambia según haya imagen — ese cambio *es* el arreglo,
 porque el campo mentía) y la **corrección sobre lo ya propuesto**, que
-`editMealWithInstruction` resolvía desde antes **sin reenviar la imagen**, pero
-solo se alcanzaba desde `MealEditModal`. Adoptar una propuesta invalida la
-dosis calculada: cambian los carbohidratos.
+`editMealWithInstruction` resolvía **sin reenviar la imagen** pero solo se
+alcanzaba desde `MealEditModal`. Adoptar una propuesta invalida la dosis: los
+carbohidratos cambian.
 
 **La cobertura de días volvió a verse en 30 y 90.** Solo se mencionaba bajo el
 umbral clínico de 14 días, así que con datos suficientes desaparecía y el
@@ -87,46 +85,48 @@ Borrar un alimento que una receta usa lanza `FoodInUseByRecipesError`, que **no
 es un error a reportar**: abre `RecipeFixModal`, donde se resuelve receta por
 receta. **Todo o nada**: si queda una sin resolver, el alimento no se borra. La
 IA propone el sustituto —con la razón escrita— y nunca lo aplica sola. Los
-duplicados se marcan en la confirmación (`similarTo`) y jamás se fusionan solos:
-emparejar mal mezcla macros de dos alimentos y eso sugiere carbohidratos sin
-delatarse. Un duplicado, en cambio, es feo y reversible.
+duplicados se marcan (`similarTo`) y jamás se fusionan solos: emparejar mal
+mezcla macros de dos alimentos y eso sugiere carbohidratos sin delatarse.
 
 ## Porción, fibra y la hora del resumen (2026-09-01)
 
 **Los macros del catálogo se muestran por porción.** Se siguen guardando por
 100 g —eso no cambia— pero mostrarlos así inflaba cada tarjeta: una cucharada de
 aceite aparecía con 100 g de grasa, y son esos números los que después sugieren
-carbohidratos. La leyenda dice el denominador: los mismos cinco chips sobre otra
-base son otros cinco números.
+carbohidratos. La leyenda dice el denominador.
 
-**La fibra tiene meta**, que era la decisión que faltaba: 14 g por cada
-1000 kcal, la Ingesta Adecuada del IOM que la ADA recomienda también en
-diabetes. Es un **piso, no un techo** —su barra dice "por sobre la referencia",
-no "te pasaste"— y **no se descuenta de los carbohidratos**: los "carbohidratos
-netos" son una decisión del equipo tratante, no una meta de nutrición.
+**La fibra tiene meta**, la decisión que faltaba: 14 g por cada 1000 kcal, la
+Ingesta Adecuada del IOM que la ADA recomienda también en diabetes. Es un
+**piso, no un techo** —su barra dice "por sobre la referencia", no "te
+pasaste"— y **no se descuenta de los carbohidratos**: los "carbohidratos netos"
+los define el equipo tratante, no una meta de nutrición.
 
 **El resumen post-comida citaba la hora en UTC.** El timeline siempre estuvo
-bien porque formatea en la zona del teléfono; las métricas, en cambio, viajaban
-al modelo en UTC crudo, así que una comida de las 17:30 se resumía como "empezó
-a las 21:30" — el resumen contradiciendo al timeline sobre el mismo hecho. Ahora
-cada marca sale con desfase local explícito (`localizeEpisodeMetrics`, pedido
-**por marca** porque el horario de verano existe) y el prompt prohíbe convertir.
-Lo guardado en SQLite sigue siendo UTC canónico: es traducción de salida.
+bien porque formatea en la zona del teléfono; las métricas viajaban al modelo en
+UTC crudo, así que una comida de las 17:30 se resumía como "empezó a las 21:30".
+Ahora cada marca sale con desfase local explícito (`localizeEpisodeMetrics`,
+pedido **por marca** porque el horario de verano existe), el prompt prohíbe
+convertir, y lo guardado en SQLite sigue siendo UTC canónico.
+
+Lo que crece con eso es **lo que el modelo puede decir**: una hora en UTC no
+significaba nada sobre su vida y una local sí, así que el mismo cambio le
+prohíbe juzgar o aconsejar la hora de comer y `ai-safety.ts` lo respalda en
+estructura. Describir cuándo pasó algo sigue pasando; "cena más temprano", no.
 
 ⚠️ Nada desde el build `9bdc3d95` está en el teléfono: falta un `preview`.
 
 ## Reglas de proceso que sobreviven
 
 1. Antes de agregar un campo a un formulario de comida, se mira si va en
-   `MacroFields` o en un componente compartido. Escribirlo suelto en un modal
-   es cómo llegamos a tener el mismo bloque seis veces.
-2. **Una decisión de datos no se verifica a ojo.** Todo lo que decide qué se
-   guarda, qué se ve o qué es un hecho vive en un módulo puro con test:
-   `masterModal.ts`, `mealCarbMirror.ts`, `entryTime.ts`, `mealFields.ts`,
-   `meal-cart.ts`, `entryGroupClaim.ts`, `dbWriteQueue.ts`, `mealNote.ts`.
+   `MacroFields` o en otro compartido: suelto en un modal es cómo llegamos a
+   tener el mismo bloque seis veces.
+2. **Una decisión de datos no se verifica a ojo.** Lo que decide qué se guarda,
+   qué se ve o qué es un hecho vive en un módulo puro con test: `masterModal`,
+   `mealCarbMirror`, `entryTime`, `mealFields`, `meal-cart`, `entryGroupClaim`,
+   `dbWriteQueue`, `mealNote`, `episode-local-time`.
 3. Un dato que el formulario **no ve** es un dato que el guardado borra: por eso
-   `TimelineEntryGroupRaw` relee el nombre de la insulina, las calorías, el peso
-   y la presión aunque la fila del timeline no los muestre.
+   `TimelineEntryGroupRaw` relee insulina, calorías, peso y presión aunque la
+   fila del timeline no los muestre.
 
 ## Backlog de producto priorizado
 
@@ -143,7 +143,7 @@ Lo guardado en SQLite sigue siendo UTC canónico: es traducción de salida.
 
 ## Fuera de foco pero pendiente
 
-- **Fase 22** — animación del swipe entre pantallas. JS puro, no necesita build.
+- **Fase 22** — swipe animado entre pantallas. JS puro, sin build.
 - **Fase 20** — widget de pantalla de inicio. **Sí** necesita build.
 - Decisión pendiente de Verónica: qué tan agresiva debe ser la exclusión de
   episodios confundidos. Hoy se eximen los bolos atribuibles a una comida para

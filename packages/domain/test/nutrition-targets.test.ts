@@ -202,9 +202,16 @@ describe('los carbohidratos no pueden colapsar', () => {
 });
 
 describe('meta de fibra', () => {
+  it('da el valor de referencia calculado a mano para el perfil base', () => {
+    // Verdad independiente, no la fórmula reconstruida sobre la salida:
+    // BMR 1420,25 × 1,55 (moderada) = 2201,3875 kcal de mantenimiento.
+    // 2201,3875 / 1000 × 14 = 30,819 → 31 g.
+    expect(calculateNutritionTargets(baseProfile).fiberG).toBe(31);
+    expect(FIBER_G_PER_1000_KCAL).toBe(14);
+  });
+
   it('escala 14 g por cada 1000 kcal de la meta entregada', () => {
     const t = calculateNutritionTargets(baseProfile);
-    expect(FIBER_G_PER_1000_KCAL).toBe(14);
     expect(t.fiberG).toBe(Math.round((t.caloriesKcal / 1000) * 14));
   });
 

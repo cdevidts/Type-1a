@@ -36,7 +36,49 @@ const THERAPY_PATTERNS = [
   // Solo cuando va pegada a vocabulario de dosis: "la próxima vez que haya
   // más lecturas" es una limitación legítima y no debe suprimir el insight.
   /\b(?:la pr[oó]xima vez|para la pr[oó]xima)\b.{0,60}\b(?:insulina|dosis|bolo|basal|correcci[oó]n|unidades?|pre-?bolo|bolear)\b/iu,
+
+  // ── Juicio o consejo sobre la HORA de comer ──────────────────────────────
+  // Agregados 2026-09-01, junto con `episode-local-time.ts`. Hasta ahora el
+  // modelo recibía la hora en UTC: un dato sin significado para la vida de
+  // quien registró la comida —ese era justo el bug—. Ahora recibe la hora de
+  // pared local y el prompt le dice explícitamente que es la hora real de esa
+  // persona, así que por primera vez tiene material para juzgarla: "cenar tan
+  // tarde no ayuda", "la próxima vez intenta cenar más temprano". Eso no toca
+  // ninguno de los patrones de dosis y sin embargo es exactamente lo que
+  // `AGENTS.md` y el prompt prohíben — evaluar si algo estuvo bien hecho y
+  // decir qué hacer distinto. Al crecer lo que el modelo puede decir, crece
+  // el filtro; es la misma regla que trajo los patrones de IOB de la Fase 23.
+  //
+  // Lo DESCRIPTIVO sigue pasando a propósito: "la comida fue a las 21:30" y
+  // "las cenas más tardías mostraron picos más altos" describen lo que pasó,
+  // que es justamente el trabajo de este resumen. Lo que se bloquea es el
+  // marcador de consejo o de juicio pegado a la hora de una comida.
+  ...timingAdvicePatterns(),
 ];
+
+/**
+ * Consejo o juicio sobre CUÁNDO comer, en sus dos órdenes de palabras.
+ *
+ * Se arma en una función porque son las mismas tres listas combinadas
+ * —marcador de consejo, palabra de comida, palabra de hora— y escribir las
+ * cuatro variantes a mano fue cómo se colaron huecos en los patrones de dosis.
+ *
+ * `TIMING` no incluye "antes"/"después" sueltos ni "hora" a secas: aparecen en
+ * limitaciones legítimas ("registra la comida antes de guardarla") y un falso
+ * positivo acá no cuesta un mensaje, cuesta el insight entero.
+ */
+function timingAdvicePatterns(): RegExp[] {
+  const ADVICE = 'la pr[oó]xima vez|para la pr[oó]xima|intenta|prueba|procura|convien(?:e|en)|convendr[ií]a|ser[ií]a (?:mejor|bueno|ideal)|lo ideal ser[ií]a|te recomiendo|recomendable|deber[ií]as?|evita|adelanta(?:r)?|atrasa(?:r)?|retrasa(?:r)?';
+  const MEAL = 'cen(?:a|ar|as)(?![a-záéíóúñ])|com(?:e|er|ida|idas)(?![a-záéíóúñ])|desayun(?:o|os|a|ar)(?![a-záéíóúñ])|almuerzos?(?![a-záéíóúñ])|almorzar|colaci[oó]n|merienda';
+  const TIMING = 'm[aá]s temprano|m[aá]s tarde|m[aá]s pronto|tan tarde|tan temprano|demasiado tarde|demasiado temprano|a otra hora|antes de (?:las|comer|dormir|acostarte)|adelantar|atrasar|retrasar';
+  return [
+    new RegExp(`\\b(?:${ADVICE})\\b.{0,40}\\b(?:${MEAL})\\b.{0,30}\\b(?:${TIMING})`, 'iu'),
+    new RegExp(`\\b(?:${ADVICE})\\b.{0,40}\\b(?:${TIMING})\\b.{0,30}\\b(?:${MEAL})`, 'iu'),
+    // Juicio sin verbo de consejo: "cenar tan tarde", "la cena fue demasiado
+    // tarde". El adjetivo de exceso es lo que lo vuelve una evaluación.
+    new RegExp(`\\b(?:${MEAL})\\b.{0,30}\\b(?:tan tarde|tan temprano|demasiado tarde|demasiado temprano)`, 'iu'),
+  ];
+}
 
 export function containsTherapyRecommendation(value: unknown): boolean {
   const text = typeof value === 'string' ? value : JSON.stringify(value);
