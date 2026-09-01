@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import * as ImageManipulator from 'expo-image-manipulator';
+import * as ImagePicker from 'expo-image-picker';
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type GestureResponderHandlers } from 'react-native';
 
 // Subpath, nunca el barrel: Metro no hace tree-shaking (ver `/iconography`).
@@ -91,6 +93,15 @@ function FoodEditor({
   const [instruction, setInstruction] = useState('');
   /** Quitar la foto es una acción explícita, no un efecto de guardar. */
   const [removePhoto, setRemovePhoto] = useState(false);
+  /**
+   * Foto nueva elegida en esta edición, todavía sin guardar.
+   *
+   * Acá la foto es **solo representación** y por eso —a diferencia de los tres
+   * modales de comida— no se adopta junto a un análisis: no se re-estima nada
+   * a partir de ella, así que no hay riesgo de que una imagen quede
+   * describiendo macros que no son suyos.
+   */
+  const [pickedPhoto, setPickedPhoto] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -167,6 +178,45 @@ function FoodEditor({
     }
   }
 
+  /**
+   * Adjunta una foto propia al alimento. Antes solo se podía **quitar** la que
+   * hubiera heredado de una comida, así que un alimento creado por texto se
+   * quedaba sin imagen para siempre.
+   */
+  async function pickPhoto(from: 'camera' | 'library'): Promise<void> {
+    setMessage(null);
+    if (from === 'camera') {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        setMessage('No hay permiso de cámara. Puedes elegir una imagen de la galería.');
+        return;
+      }
+    }
+    const picked = from === 'camera'
+      ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], allowsEditing: true, exif: false, quality: 1 })
+      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, exif: false, quality: 1 });
+    if (picked.canceled) return;
+    setBusy(true);
+    try {
+      const asset = picked.assets[0]!;
+      // Mismo tamaño y compresión que los modales de comida, para que el
+      // catálogo no acumule imágenes de varios megas. `exif: false` arriba y
+      // el re-render acá dejan la imagen sin metadatos.
+      const context = ImageManipulator.ImageManipulator.manipulate(asset.uri);
+      context.resize({ width: 1280, height: null });
+      const rendered = await context.renderAsync();
+      const compressed = await rendered.saveAsync({ compress: 0.72, format: ImageManipulator.SaveFormat.JPEG });
+      setPickedPhoto(compressed.uri);
+      setRemovePhoto(false);
+      setMessage('Foto lista. No se guarda hasta que toques Guardar.');
+    } catch (error) {
+      logSaveError('CatalogModal.pickPhoto', error);
+      setMessage('No se pudo preparar la imagen. El alimento sigue como estaba.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function save(): Promise<void> {
     setMessage(null);
     const parsed = {
@@ -208,7 +258,9 @@ function FoodEditor({
         servingLabel: servingLabel.trim() === '' ? null : servingLabel.trim(),
         // Ausente deja la foto como está; `null` la quita. Un campo que no
         // viaja nunca borra nada.
-        ...(removePhoto ? { imageUri: null } : {}),
+        // Una foto nueva manda sobre el quitar: elegir una imagen ya es
+        // decir "quiero esta". Ausente deja la que había.
+        ...(pickedPhoto !== null ? { imageUri: pickedPhoto } : removePhoto ? { imageUri: null } : {}),
       });
       onCancel();
     } catch (error) {
@@ -255,21 +307,36 @@ function FoodEditor({
       </View>
 
       {/*
-        La foto guardada del alimento. **Nunca se genera**: sale de la imagen
-        que la usuaria sacó al registrar una comida donde ese alimento se
-        identificó, y un alimento sin foto —todo lo anterior a este campo—
-        muestra su fallback en la tarjeta. Acá solo se puede quitar.
+        La foto del alimento. **Nunca se genera.** Puede venir heredada de la
+        comida donde se identificó —y entonces es del plato entero, no del
+        alimento— o elegirla ella acá, que es lo único que la vuelve una foto
+        del alimento de verdad. Es representación: nada se re-analiza a partir
+        de ella.
       */}
-      {food.imageUri === undefined ? (
+      <Text style={styles.sectionTitle}>Foto</Text>
+      {pickedPhoto !== null ? (
+        <>
+          <Text style={styles.sectionHint}>Foto nueva, elegida por ti. Se guarda al tocar Guardar.</Text>
+          <Image source={{ uri: pickedPhoto }} style={styles.editorPhoto} resizeMode="cover" />
+          <Pressable
+            style={styles.removePhoto}
+            onPress={() => { setPickedPhoto(null); }}
+            accessibilityRole="button"
+            accessibilityLabel="Descartar la foto nueva"
+          >
+            <Text style={styles.removePhotoText}>Descartar la foto nueva</Text>
+          </Pressable>
+        </>
+      ) : food.imageUri === undefined ? (
         <Text style={styles.sectionHint}>
-          Este alimento no tiene foto. Aparece sola la próxima vez que lo registres con una foto de la comida.
+          Este alimento no tiene foto. Puedes elegir una acá, o aparece sola la próxima vez que lo
+          registres con una foto de la comida.
         </Text>
       ) : (
         <>
-          <Text style={styles.sectionTitle}>Foto</Text>
           <Text style={styles.sectionHint}>
-            Es la foto de la comida donde se identificó este alimento, así que puede incluir otros. No sirve para
-            estimar la porción: para eso está el tamaño de porción de más abajo.
+            Esta la heredó de la comida donde se identificó, así que puede incluir otros alimentos. No sirve
+            para estimar la porción: para eso está el tamaño de porción de más abajo.
           </Text>
           <Image source={{ uri: food.imageUri }} style={styles.editorPhoto} resizeMode="cover" />
           <Pressable
@@ -285,6 +352,26 @@ function FoodEditor({
           </Pressable>
         </>
       )}
+      <View style={styles.photoActions}>
+        <Pressable
+          style={[styles.photoButton, busy && styles.disabled]}
+          disabled={busy}
+          onPress={() => { void pickPhoto('camera'); }}
+          accessibilityRole="button"
+          accessibilityLabel={`Tomar una foto de ${food.name}`}
+        >
+          <Text style={styles.photoButtonText}>Tomar foto</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.photoButton, busy && styles.disabled]}
+          disabled={busy}
+          onPress={() => { void pickPhoto('library'); }}
+          accessibilityRole="button"
+          accessibilityLabel={`Elegir una foto de ${food.name} desde la galería`}
+        >
+          <Text style={styles.photoButtonText}>Elegir de la galería</Text>
+        </Pressable>
+      </View>
 
       <Text style={styles.sectionTitle}>Nombre</Text>
       <TextInput
@@ -505,6 +592,7 @@ export function CatalogModal({
                     proteinG: food.proteinPer100g,
                     fatG: food.fatPer100g,
                     fiberG: food.fiberPer100g,
+                    caloriesKcal: food.kcalPer100g,
                   }}
                   action={{ kind: 'edit', label: `Editar ${food.name}`, onPress: () => { setEditing(food); } }}
                 />
@@ -635,6 +723,12 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   editorPhoto: { width: '100%', height: 160, borderRadius: radius.md, marginBottom: spacing.sm },
+  photoActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  photoButton: {
+    flex: 1, minHeight: 44, justifyContent: 'center', alignItems: 'center',
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.teal, paddingHorizontal: spacing.md,
+  },
+  photoButtonText: { color: colors.teal, fontSize: 13, fontWeight: '800' },
   removePhoto: {
     minHeight: 44, justifyContent: 'center', alignItems: 'center',
     borderRadius: radius.sm, borderWidth: 1, borderColor: colors.red,

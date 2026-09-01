@@ -17,6 +17,7 @@ import type { MealAnalysisResult } from '@type1a/schemas';
 import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api';
 import { parseBlankAsUnset, parseNonNegativeNumber, parsePositiveNumber } from '../format';
 import { logSaveError } from '../log';
+import { mealNoteFrom } from '../mealNote';
 import { colors, radius, spacing } from '../theme';
 import { MealCart } from './MealCart';
 import { MacroFields } from './MacroFields';
@@ -53,6 +54,12 @@ export interface ConfirmedMealDraft {
   rapidUnits?: number;
   imageUri?: string;
   analysis?: MealAnalysisResult;
+  /**
+   * Qué se comió, en palabras, para que el registro del timeline diga algo
+   * más que gramos. Lo resuelve `mealNoteFrom`; antes este modal usaba su
+   * cuadro de texto solo para la llamada a la IA y lo tiraba.
+   */
+  note?: string;
   confirmedCarbsG: number;
   /**
    * Macros opcionales (Fase 13, ítem 7). Se omiten si la usuaria los deja en
@@ -401,6 +408,14 @@ export function MealModal({
         return;
       }
 
+      // Lo que ella escribió manda; si no escribió, los alimentos que la IA
+      // identificó o el del catálogo que reusó. Ver `mealNote.ts`.
+      const note = mealNoteFrom({
+        description,
+        ...(analysis === null ? {} : { analysis }),
+        ...(appliedCatalog === null ? {} : { catalogFoodName: appliedCatalog.food.name }),
+      });
+
       const draft: ConfirmedMealDraft = {
         confirmedCarbsG: parsed,
         registerToTimeline,
@@ -411,6 +426,7 @@ export function MealModal({
         ...(catalogSuggestedCarbsG === null ? {} : { catalogSuggestedCarbsG }),
         ...(imageUri === null ? {} : { imageUri }),
         ...(analysis === null ? {} : { analysis }),
+        ...(note === undefined ? {} : { note }),
         ...(protein === undefined ? {} : { proteinG: protein }),
         ...(fat === undefined ? {} : { fatG: fat }),
         ...(fiber === undefined ? {} : { fiberG: fiber }),

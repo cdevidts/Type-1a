@@ -36,6 +36,13 @@ export interface FoodCardMacros {
   proteinG?: number | undefined;
   fatG?: number | undefined;
   fiberG?: number | undefined;
+  /**
+   * Energía. **No es un macro y por eso no lleva hue propio**: va en un chip
+   * neutro, detrás de los cuatro. Un quinto color categórico no se puede
+   * elegir a ojo (ver `theme.ts`), y aquí ni siquiera haría falta: las
+   * calorías no compiten con los macros, los resumen.
+   */
+  caloriesKcal?: number | undefined;
 }
 
 /**
@@ -51,21 +58,26 @@ function MacroChip({
   unit,
   color,
   outlined = false,
+  neutral = false,
 }: {
   label: string;
   value: number | undefined;
   unit: string;
   color: string;
   outlined?: boolean;
+  /** Sin hue de macro: para la energía, que no es uno de los cuatro. */
+  neutral?: boolean;
 }) {
   const text = value === undefined ? 'sin anotar' : `${Math.round(value * 10) / 10} ${unit}`;
   return (
     <View
       style={[
         styles.chip,
-        outlined
-          ? { borderColor: color, borderWidth: 1, backgroundColor: 'transparent' }
-          : { backgroundColor: `${color}1A`, borderColor: `${color}66`, borderWidth: 1 },
+        neutral
+          ? { backgroundColor: colors.background, borderColor: colors.line, borderWidth: 1 }
+          : outlined
+            ? { borderColor: color, borderWidth: 1, backgroundColor: 'transparent' }
+            : { backgroundColor: `${color}1A`, borderColor: `${color}66`, borderWidth: 1 },
       ]}
       accessible
       accessibilityLabel={`${label}: ${text}`}
@@ -142,6 +154,7 @@ export function FoodCard({
           <MacroChip label="Proteína" value={macros.proteinG} unit="g" color={macroColors.protein} />
           <MacroChip label="Grasa" value={macros.fatG} unit="g" color={macroColors.fat} />
           <MacroChip label="Fibra" value={macros.fiberG} unit="g" color={macroColors.fiber} outlined />
+          <MacroChip label="Calorías" value={macros.caloriesKcal} unit="kcal" color={colors.muted} neutral />
         </View>
       </View>
       <Pressable

@@ -61,7 +61,7 @@ devolvió más de un alimento.
 Están listados por costo creciente. Los tres primeros son independientes de las
 recetas y se pueden hacer antes.
 
-### 1. La nota no se guarda desde el botón rápido _(el más fácil)_
+### 1. La nota no se guarda desde el botón rápido — ✅ **resuelto el 2026-09-01**
 
 **Causa confirmada.** `confirmMeal` en `App.tsx` arma el `MealEvent` con su
 `description` y llama a `saveMealWithEpisode`, pero **nunca escribe una fila en
@@ -69,27 +69,25 @@ recetas y se pueden hacer antes.
 `saveUnifiedEntry` la persiste. Por eso una comida registrada desde el maestro
 muestra al tocarla lo que se comió, y la misma comida por el botón rápido no.
 
-Arreglo: que el camino rápido escriba la nota con el texto que se le dio a la
-IA (o el nombre de la comida), bajo el mismo `entry_group_id`. Cuidado con no
-duplicarla cuando la comida ya trae `description`.
+Resuelto: `mealNote.ts` (puro, con test) decide el texto —lo que ella escribió,
+si no los alimentos que identificó la IA, si no el del catálogo que reusó— y
+`confirmMeal` lo escribe en `MealEvent.note`, que `TimelineDetailModal` ya
+dibujaba. No se inventa una nota cuando no hay nada que decir.
 
-### 2. Las calorías no se ven en el catálogo
+### 2. Las calorías no se ven en el catálogo — ✅ **resuelto el 2026-09-01**
 
-`FoodCard` dibuja cuatro chips —carbos, proteína, grasa, fibra— y **no
-calorías**, aunque `CatalogFood.kcalPer100g` existe y se guarda. Es un chip
-más en `FoodCard.tsx`. Ojo con la regla del contrato: el color no comunica
-solo, cada chip lleva etiqueta y unidad, y ya se decidió no agregar un cuarto
-hue categórico sin validar (ver `theme.ts`, la fibra comparte el de carbos).
+Resuelto: `FoodCard` dibuja un quinto chip con las calorías, **neutro y sin hue
+propio**. No es un macro y no compite con los cuatro: agregarle un color
+categórico habría exigido revalidar la paleta entera (ver `theme.ts`).
 
-### 3. Fotos a un alimento desde el editor del catálogo
+### 3. Fotos a un alimento desde el editor del catálogo — ✅ **resuelto el 2026-09-01**
 
-Hoy `CatalogModal` deja editar nombre, macros y porción, pero no adjuntar una
-foto: un alimento creado por texto se queda sin imagen para siempre.
-`CatalogFoodEdit.imageUri` **ya existe** y `applyCatalogEdit` ya lo respeta
-(incluido borrarla con `null`), así que falta solo el botón de cámara/galería
-en el modal, con el mismo `ImagePicker` que ya usan los tres modales de comida.
+Resuelto: cámara y galería en `CatalogModal`, con el mismo redimensionado y
+compresión que los modales de comida. Acá la foto es **solo representación**, así
+que —a diferencia de una comida— no se adopta junto a un análisis: nada se
+re-estima a partir de ella. Una foto elegida gana sobre "quitar foto".
 
-### 4. Que la IA no proponga duplicados
+### 4. Que la IA no proponga duplicados _(pendiente)_
 
 Si ya existe la receta `arroz con pollo` y se fotografía lo mismo, la app
 debería ofrecer **usar la del catálogo** en vez de crear otra. Y si existen

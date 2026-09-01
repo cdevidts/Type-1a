@@ -89,39 +89,39 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
 - **Navegación**: no hay librería. Una pantalla es un `Modal` vía `ModalShell`;
   sub-páginas son pestañas (`SummaryModal.tsx`). `BottomNav.tsx` +
   `useSwipeNavigation.ts` + `swipeOrder.ts`.
-- **Modal Maestro**: `UnifiedEntryModal.tsx` es el formulario único de
-  creación **y** edición; `mode` dice cuál. `EntrySection.tsx` pliega, y
-  `masterModal.ts` tiene sus reglas puras y con test: a dónde escribe cada tipo
-  (`masterTargetOf`), qué carga (`masterSeedFrom`) y qué se abre
-  (`masterSectionsFor`, **por contenido**). `TimelineDetailModal.tsx` solo lee.
+- **Modal Maestro**: `UnifiedEntryModal.tsx` es el formulario único de creación
+  **y** edición (`mode` dice cuál); `EntrySection.tsx` pliega. Sus reglas puras
+  están en `masterModal.ts`: dónde escribe cada tipo (`masterTargetOf`), qué
+  carga (`masterSeedFrom`), qué se abre (`masterSectionsFor`, **por
+  contenido**). `TimelineDetailModal.tsx` solo lee.
 - **Formularios de comida**: el maestro, `MealModal` (rápido) y `MealEditModal`
-  (el editor con IA), que el maestro hospeda cuando la comida ya existe. **Lo
-  que comparten se comparte**: `MacroFields.tsx`, `MealCart.tsx` y los
-  `parseBlankAs*` de `format.ts`. Un campo nuevo va ahí, no suelto en un modal.
+  (el editor con IA, hospedado por el maestro). **Lo que comparten se comparte**
+  —`MacroFields.tsx`, `MealCart.tsx`, los `parseBlankAs*`—: un campo nuevo va
+  ahí, no suelto en un modal.
 - **Accesos rápidos**: `MealModal`, `CorrectionModal` y `QuickNumericModal.tsx`
-  (uno solo, parametrizado, para Basal y Cetonas). Breves a propósito; cada uno
-  ofrece la salida hacia el maestro.
+  (uno solo, para Basal y Cetonas). Breves a propósito, con salida al maestro.
 - `FoodCard.tsx` — la tarjeta de un alimento, **la misma** en catálogo y
-  carrito. Lo único que cambia es el control de la derecha: lápiz o X. Tocar el
-  contenedor no edita.
-- `StripCalendar.tsx` — la fila de días de Nutrición. Su aritmética vive en
-  `entryTime.ts`.
+  carrito; solo cambia el control de la derecha (lápiz o X) y tocar el
+  contenedor no edita. Las calorías van en chip neutro: no son un macro.
+- `StripCalendar.tsx` — la fila de días de Nutrición; su aritmética está en `entryTime.ts`.
 - **Gráficos**: `GlucoseChart.tsx`, `SummaryCharts.tsx` (`react-native-svg`);
   `reportExport.ts` dibuja SVG inline para el PDF.
-- `notifications.ts` — un canal de Android por tipo de alarma. Android congela
-  sonido y vibración al crear el canal.
-- `timelineVitals.ts` — las cetonas y vitales **sueltos** del timeline. Puro y
-  con test: un `WHERE` de más los escondió, y son el dato de triage de CAD.
+- `notifications.ts` — un canal de Android por tipo de alarma; Android congela
+  sonido y vibración al crearlo.
+- `timelineVitals.ts` — cetonas y vitales **sueltos** del timeline. Un `WHERE`
+  de más los escondió, y son el dato de triage de CAD.
 - `mealFields.ts` — qué campos **son** una comida. Puro y con test: un `false`
   de más borra historial. Un campo de comida nuevo en `UnifiedEntryInput` va
   acá. `promotesLooseCarbToMeal` decide cuándo un carbohidrato suelto pasa a
   ser un plato — o sea cuándo nace un episodio y suenan alarmas.
-- `mealCarbMirror.ts` — qué fila de carbohidratos **es** una comida ya visible
-  y cuál es un hecho propio. Puro y con test: esconder de más borra un dato de
-  la vista, esconder de menos lo cuenta dos veces en el reporte médico.
-- `entryTime.ts` — días, meses y la hora de un registro histórico. Puro porque
-  "cuándo pasó" es la columna que agrupa episodios y recorta ventanas, y sus
-  casos son de calendario (fin de mes, año, medianoche), no de pantalla.
+- `mealNote.ts` — qué texto queda como nota de una comida, para que tocar el
+  registro diga qué se comió. Puro y con test por su techo duro: `note` es
+  `max(300)` en el esquema, y pasarse hace que Zod rechace la comida entera.
+- `mealCarbMirror.ts` — qué carbohidrato **es** una comida ya visible y cuál es
+  un hecho propio. Esconder de más borra un dato; de menos, lo cuenta dos veces
+  en el reporte médico.
+- `entryTime.ts` — días, meses y la hora de un registro histórico. "Cuándo pasó"
+  agrupa episodios y recorta ventanas; sus casos son de calendario, no de vista.
 - `dbWriteQueue.ts` — la **única** cola FIFO por la que pasa toda transacción
   de `db.ts`. Puro y con test. `expo-sqlite` abre el `BEGIN` dentro del `try`,
   así que dos transacciones solapadas no fallan limpio: la segunda hace un

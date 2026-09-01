@@ -7,8 +7,8 @@ _Última actualización: 2026-09-01._
 | | |
 |---|---|
 | `pnpm verify` | Etapas verdes; el wrapper local de Windows conserva su fallo de rutas preexistente. CI Linux es la verificación integral |
-| Tests | **637** — domain 352, mobile 237, ai 15, schemas 13, cgm 10, api 10 |
-| Bundle de Metro | **1.354 módulos** (+2: `dbWriteQueue.ts`, `CatalogServingModal.tsx`) |
+| Tests | **648** — domain 352, mobile 248, ai 15, schemas 13, cgm 10, api 10 |
+| Bundle de Metro | **1.355 módulos** (+3 desde el build: cola, confirmación de porción, nota) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
 ⚠️ La base real medida es **1.341**. Los 13 que suma el trabajo desde entonces
@@ -26,7 +26,8 @@ Patrones por covariables, cetonas e iconos de Lucide.
 
 Build `preview` del 2026-08-31 (`a706510`, build `980faeee`) instalado: Modal
 Maestro, calendario, carrito, fibra y el arreglo de las transacciones SQLite.
-Lo del 2026-09-01 (porción propuesta y confirmada) **todavía no tiene build**.
+Lo del 2026-09-01 (porción confirmada, nota del botón rápido, calorías en la
+tarjeta y fotos desde el editor) **todavía no tiene build**.
 
 ## Deuda conocida
 
@@ -46,8 +47,7 @@ corrompían datos ya están cerrados; estos siguen abiertos:
 
 1. **La basal es invisible al modelo y al aviso de ventana sucia**
    (`macro-glucose.ts:281-287`, sin rama para `basal_insulin`): 20 U de Tresiba
-   no entran como covariable ni marcan `confoundedCount`, y la pantalla imprime
-   "sin eventos".
+   no entran como covariable ni marcan `confoundedCount`.
 2. **Cantidad ausente = "no pasó nada"** (`event.amount ?? 0` con `> 0`): una
    comida real sin carbos confirmados desaparece del conteo.
 3. **Un fallo al registrar la insulina se pisa con "Comida guardada"**
@@ -56,9 +56,9 @@ corrompían datos ya están cerrados; estos siguen abiertos:
    el timeline agrupa solo por esa columna, así que después vuelve a preguntar
    qué dosis fue con qué comida — lo que la Fase 21 dijo que eliminaba.
 
-Menores del mismo lote: `MealModal` no recibe glucosa (su `isHypoglycemic` nunca
-dispara); las unidades se descartan sin avisar al apagar "Registrarla como comida
-de ahora"; la validación de `attachEntryToReading` no creció con cetonas ni macros.
+Menores: `MealModal` no recibe glucosa (su `isHypoglycemic` nunca dispara); las
+unidades se descartan al apagar "Registrarla como comida de ahora"; la
+validación de `attachEntryToReading` no creció con cetonas ni macros.
 
 ### 🟠 Hallazgos de la revisión de seguridad del 2026-08-27, no corregidos
 
@@ -79,9 +79,8 @@ en el mismo commit. Quedan tres, declarados a propósito:
    interfaz ("la comida donde se identificó, puede incluir otros"); recortar por
    alimento exige coordenadas que la IA hoy no devuelve.
 3. **Editar los gramos de un `carb_events` importado conserva
-   `source: 'imported'`.** Lo sigue rotulando importado aunque el número ya no
-   sea el del CSV. Es **anterior** a este cambio (`updateCarbEvent` hacía lo
-   mismo) y arreglarlo es decisión de producto: relabelar a `'manual'` pierde el
+   `source: 'imported'`**, aunque el número ya no sea el del CSV. Es anterior a
+   este cambio y es decisión de producto: relabelar a `'manual'` pierde el
    origen, dejarlo miente sobre el valor. Va a Verónica.
 
 ### 🟡 Menores
@@ -142,6 +141,7 @@ detalle vive en `git log --format=full`.
 | `withTransactionAsync` de Expo tiene el `BEGIN` dentro del `try`: el `ROLLBACK` de la que fallaba cerraba la transacción de la otra, que seguía escribiendo suelta y terminaba en "no se pudo guardar" con filas ya aplicadas | **una sola** cola FIFO por conexión (`dbWriteQueue.ts`); dos colas contra una conexión anidan igual |
 | Un alimento sin `estimatedGrams` —lo que el prompt pide devolver cuando no puede estimar la porción— se descartaba del catálogo **sin un solo aviso**, y la pantalla decía "guardado" | lo que no se puede guardar se muestra **con su razón**; un filtro silencioso es un dato perdido que nadie va a buscar |
 | El catálogo caía siempre a 100 g porque la IA no podía proponer porción, y el `INSERT` del alta ni siquiera escribía las columnas de porción | la porción la propone la IA y la **confirma** la usuaria: multiplica los cuatro macros, así que un número que nadie miró no entra por esa puerta |
+| El cuadro de texto del botón rápido alimentaba a la IA y se tiraba, así que la comida quedaba sin nota mientras el maestro sí la guardaba | una capacidad que solo tiene un camino es una asimetría: el texto que describe la comida se escribe venga de donde venga |
 
 ## Redeploy del backend
 

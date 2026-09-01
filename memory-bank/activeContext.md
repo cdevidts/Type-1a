@@ -1,6 +1,6 @@
 # Active Context
 
-_Última actualización: 2026-09-01 (porción propuesta por la IA y confirmada)._
+_Última actualización: 2026-09-01 (porción confirmada, nota, calorías y fotos)._
 
 ## Lo que cambió el foco
 
@@ -38,58 +38,64 @@ El detalle vive en los cuerpos de commit; acá solo las reglas que sobreviven.
 
 ## Las transacciones SQLite, cerradas (2026-08-28)
 
-El "no se puede guardar, inténtelo otra vez" tenía dos causas sumadas: la tarea
-de fondo recibía **la misma conexión nativa** que la pantalla (Android cachea
-por ruta+opciones) y le corría `initializeDatabase` y un `BEGIN` encima cada
-~15 min; y `refresh()` escribe lecturas CGM en cada vuelta a primer plano, así
-que dos escrituras de la app también se anidaban.
+El "no se puede guardar" tenía dos causas sumadas: la tarea de fondo recibía la
+**misma conexión nativa** que la pantalla (Android cachea por ruta+opciones) y
+le corría `initializeDatabase` y un `BEGIN` encima cada ~15 min; y `refresh()`
+escribe lecturas CGM en cada vuelta a primer plano, así que dos escrituras de la
+app también se anidaban. No fallaba limpio porque `expo-sqlite` pone el `BEGIN`
+**dentro** del `try`: la segunda falla al abrir y su `catch` ejecuta un
+`ROLLBACK` **ajeno**, y la primera sigue escribiendo suelta. Hoy el fondo abre
+con `useNewConnection` y **toda** transacción de `db.ts` pasa por una sola cola
+FIFO (`dbWriteQueue.ts`) — dos colas contra una conexión se anidan igual.
 
-No fallaba limpio porque `expo-sqlite` pone el `BEGIN` **dentro** del `try`: la
-segunda transacción falla al abrir y su `catch` ejecuta un `ROLLBACK` **ajeno**
-que cierra la de la primera, que sigue escribiendo suelta y termina en error
-con filas ya aplicadas. Hoy la tarea de fondo abre con `useNewConnection` y
-**toda** transacción de `db.ts` pasa por una sola cola FIFO (`dbWriteQueue.ts`).
-Dos colas contra una conexión se anidan igual: por eso hay una y no una por
-camino.
+## El catálogo, cerrado en cuatro frentes (2026-09-01)
 
-## El catálogo perdía alimentos y no sabía qué es una porción (2026-09-01)
+**El grande: faltaba saber cuánto pesa una porción**, y eso producía dos
+síntomas opuestos. Una Monster Zero no llegaba nunca al catálogo —no por la
+confianza ni por los ceros, sino porque `toCatalogEntry` exigía
+`estimatedGrams` y el prompt le pide al modelo devolverlo `null` cuando no
+puede estimar la porción—; y todo lo demás quedaba con porción de 100 g.
 
-Dos síntomas opuestos, un solo hueco: **faltaba saber cuánto pesa una porción.**
-
-1. **Una Monster Zero no llegaba nunca al catálogo.** No era la confianza ni
-   los ceros —un alimento con 0 en todo pasa el filtro de plausibilidad—: era
-   que `toCatalogEntry` exigía `estimatedGrams`, y el prompt le pide al modelo
-   devolverlo `null` cuando no puede estimar la porción, que es justo el caso
-   de una bebida descrita por texto. `catalogEntriesFrom` la filtraba,
-   `recordCatalogFoods` recibía `[]` y **la pantalla decía "guardado"**.
-2. **Todo quedaba con porción de 100 g**, así que reusar un alimento obligaba a
-   averiguar por fuera qué fracción de 100 g es una porción de verdad.
-
-Ahora la IA propone `servingGrams` y `servingLabel` ("2 rebanadas", "1 lata de
-473 ml"), eso sirve de denominador cuando no hay gramos del plato, y
-`CatalogServingModal` lo muestra para confirmar **antes** de guardar. Lo
-rechazado se muestra con su razón: ningún alimento vuelve a desaparecer callado.
+Ahora la IA propone `servingGrams` y `servingLabel`, eso sirve de denominador
+cuando no hay gramos del plato, y `CatalogServingModal` lo muestra para
+confirmar antes de guardar. Lo rechazado se muestra **con su razón**: un
+descarte silencioso es un dato perdido que nadie va a buscar.
 
 Se confirma en vez de aplicarse solo porque la porción multiplica los cuatro
 macros y termina alimentando los carbohidratos que se sugieren al reusar el
 alimento. Confirmar lo vuelve dato de la usuaria (`servingSource: 'user'`), y
 `blendCatalogEntry` protege eso: **solo otro `'user'` lo reemplaza.** Esa regla
 antes no existía y no hacía falta —la IA no podía mandar el campo—; sin
-escribirla, cada foto nueva le habría borrado en silencio su "una taza son
-150 g". Una fila sin `servingSource` se trata como suya, porque lo es.
+escribirla, cada foto nueva le habría borrado su "una taza son 150 g". Una fila
+sin `servingSource` se trata como suya, porque lo es. De paso: el `INSERT` de
+`recordCatalogFoods` omitía las columnas de porción, así que un alimento nuevo
+la perdía en su primer guardado.
 
-También se arregló que el `INSERT` de `recordCatalogFoods` omitía las columnas
-de porción: un alimento nuevo la perdía en su primer guardado.
+Y tres huecos chicos:
 
-⚠️ Está en el código y **no** en el teléfono: falta un build `preview`.
+- **La nota del botón rápido.** `TimelineDetailModal` ya dibujaba `Nota` para
+  una comida; faltaba que el acceso rápido la escribiera —usaba su cuadro de
+  texto solo para llamar a la IA y lo tiraba—. `mealNote.ts` (puro, con test)
+  decide el texto y respeta el techo de 300 del esquema: pasarse no trunca,
+  hace que Zod rechace **la comida entera**.
+- **Calorías en la tarjeta de alimento**, en un chip **neutro y sin hue
+  propio**: la energía no es un macro. Un quinto color categórico habría
+  exigido revalidar la paleta completa.
+- **Fotos desde el editor del catálogo** (cámara y galería). Acá la foto es solo
+  representación: a diferencia de una comida, no se adopta junto a un análisis.
 
-## Recetas y lo demás del catálogo
+⚠️ Nada de esto está en el teléfono todavía: falta un build `preview`.
 
-Diseño escrito, sin construir: `memory-bank/reference/catalog-recipes.md`.
-Guardar "arroz con pollo" como receta con sus componentes adentro y fotos
-independientes, calorías en la tarjeta, fotos por alimento desde el editor,
-que la IA no proponga duplicados, y la nota que el botón rápido no guarda
-(causa confirmada: `confirmMeal` nunca escribe en `note_events`).
+## Diseñado y sin construir
+
+- `reference/catalog-recipes.md` — guardar "arroz con pollo" como **receta**
+  con sus componentes y fotos independientes, y que la IA no proponga
+  duplicados de lo que ya está en el catálogo.
+- `reference/meal-ai-text-fields.md` — separar el cuadro de texto en dos: la
+  **pista para la foto** y la **corrección sobre lo ya propuesto**. Hallazgo
+  que ordena esa corrida: `editMealWithInstruction` ya resuelve lo segundo y
+  **no manda la imagen** —trabaja sobre la composición en pantalla—, pero solo
+  se alcanza desde `MealEditModal`. Tiene que llegar a los tres modales.
 
 ## Reglas de proceso que sobreviven
 
@@ -99,7 +105,7 @@ que la IA no proponga duplicados, y la nota que el botón rápido no guarda
 2. **Una decisión de datos no se verifica a ojo.** Todo lo que decide qué se
    guarda, qué se ve o qué es un hecho vive en un módulo puro con test:
    `masterModal.ts`, `mealCarbMirror.ts`, `entryTime.ts`, `mealFields.ts`,
-   `meal-cart.ts`, `entryGroupClaim.ts`, `dbWriteQueue.ts`.
+   `meal-cart.ts`, `entryGroupClaim.ts`, `dbWriteQueue.ts`, `mealNote.ts`.
 3. Un dato que el formulario **no ve** es un dato que el guardado borra. Por
    eso `TimelineEntryGroupRaw` lee de vuelta el nombre de la insulina, las
    calorías, el peso y la presión aunque la fila del timeline no los muestre.
@@ -115,12 +121,11 @@ ni sugiere cambiarla (`contracts/safety-acceptance.md`). Las marcas nuevas no
 pueden distinguirse solo por color. La estructura del Excel sigue sin tocarse a
 propósito: se rediseña junto con el reporte.
 
-### 1b. Los tres hallazgos declarados de la revisión del 2026-08-27
+### 1b. Los tres hallazgos declarados del 2026-08-27
 
-Espejo compartido entre comidas sin grupo a la misma hora exacta, foto de
-catálogo que es del plato, y el `source` de un carbohidrato importado editado.
-Ver `progress.md` § Hallazgos no corregidos. El tercero necesita una decisión
-de producto.
+Espejo compartido entre comidas sin grupo a la misma hora, foto de catálogo que
+es del plato, y el `source` de un carbohidrato importado editado. Ver
+`progress.md`; el tercero necesita decisión de producto.
 
 ### 2. Los cuatro hallazgos vivos de la revisión repuntada
 

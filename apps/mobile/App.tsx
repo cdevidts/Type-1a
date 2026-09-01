@@ -622,6 +622,11 @@ function Type1AApp() {
       confirmedCarbsG: draft.confirmedCarbsG,
       createdAt: timestamp,
       ...(draft.imageUri === undefined ? {} : { imageUri: draft.imageUri }),
+      // La nota es lo que hace legible el registro al tocarlo en el timeline.
+      // `TimelineDetailModal` ya dibujaba este campo para una comida; lo que
+      // faltaba era que el acceso rápido lo escribiera, así que la misma
+      // comida decía qué era desde el maestro y quedaba anónima desde acá.
+      ...(draft.note === undefined ? {} : { note: draft.note }),
       // El análisis va PRIMERO y los valores de la usuaria después, para que
       // los suyos ganen. Estaba al revés: el spread del análisis pisaba en
       // silencio la proteína o la grasa que ella hubiera corregido a mano,

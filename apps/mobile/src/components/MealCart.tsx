@@ -229,6 +229,7 @@ export function MealCart({
                     proteinG: lineTotals.proteinG,
                     fatG: lineTotals.fatG,
                     fiberG: lineTotals.fiberG,
+                    caloriesKcal: lineTotals.caloriesKcal,
                   }}
                   action={{
                     kind: 'remove',
