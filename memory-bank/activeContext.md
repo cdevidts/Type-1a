@@ -1,6 +1,6 @@
 # Active Context
 
-_Última actualización: 2026-09-01 (porción confirmada, nota, calorías y fotos)._
+_Última actualización: 2026-09-01 (catálogo cerrado; dominio de recetas)._
 
 ## Lo que cambió el foco
 
@@ -50,11 +50,11 @@ FIFO (`dbWriteQueue.ts`) — dos colas contra una conexión se anidan igual.
 
 ## El catálogo, cerrado en cuatro frentes (2026-09-01)
 
-**El grande: faltaba saber cuánto pesa una porción**, y eso producía dos
-síntomas opuestos. Una Monster Zero no llegaba nunca al catálogo —no por la
-confianza ni por los ceros, sino porque `toCatalogEntry` exigía
-`estimatedGrams` y el prompt le pide al modelo devolverlo `null` cuando no
-puede estimar la porción—; y todo lo demás quedaba con porción de 100 g.
+**El grande: faltaba saber cuánto pesa una porción**, con dos síntomas
+opuestos. Una Monster Zero no llegaba al catálogo —no por la confianza ni por
+los ceros, sino porque `toCatalogEntry` exigía `estimatedGrams` y el prompt le
+pide al modelo devolverlo `null` cuando no puede estimar la porción—; y todo lo
+demás quedaba con porción de 100 g.
 
 Ahora la IA propone `servingGrams` y `servingLabel`, eso sirve de denominador
 cuando no hay gramos del plato, y `CatalogServingModal` lo muestra para
@@ -62,35 +62,35 @@ confirmar antes de guardar. Lo rechazado se muestra **con su razón**: un
 descarte silencioso es un dato perdido que nadie va a buscar.
 
 Se confirma en vez de aplicarse solo porque la porción multiplica los cuatro
-macros y termina alimentando los carbohidratos que se sugieren al reusar el
-alimento. Confirmar lo vuelve dato de la usuaria (`servingSource: 'user'`), y
+macros y alimenta los carbohidratos que se sugieren al reusar el alimento.
+Confirmar lo vuelve dato de la usuaria (`servingSource: 'user'`), y
 `blendCatalogEntry` protege eso: **solo otro `'user'` lo reemplaza.** Esa regla
-antes no existía y no hacía falta —la IA no podía mandar el campo—; sin
-escribirla, cada foto nueva le habría borrado su "una taza son 150 g". Una fila
-sin `servingSource` se trata como suya, porque lo es. De paso: el `INSERT` de
-`recordCatalogFoods` omitía las columnas de porción, así que un alimento nuevo
-la perdía en su primer guardado.
+antes no hacía falta —la IA no podía mandar el campo—; sin escribirla, cada
+foto nueva le habría borrado su "una taza son 150 g". Una fila sin
+`servingSource` se trata como suya, porque lo es. De paso: el `INSERT` de
+`recordCatalogFoods` omitía las columnas de porción.
 
 Y tres huecos chicos:
 
-- **La nota del botón rápido.** `TimelineDetailModal` ya dibujaba `Nota` para
-  una comida; faltaba que el acceso rápido la escribiera —usaba su cuadro de
-  texto solo para llamar a la IA y lo tiraba—. `mealNote.ts` (puro, con test)
-  decide el texto y respeta el techo de 300 del esquema: pasarse no trunca,
-  hace que Zod rechace **la comida entera**.
+- **La nota del botón rápido.** `TimelineDetailModal` ya la dibujaba; faltaba
+  que el acceso rápido la escribiera —usaba su cuadro de texto solo para llamar
+  a la IA y lo tiraba—. `mealNote.ts` decide el texto y respeta el techo de 300
+  del esquema: pasarse no trunca, hace que Zod rechace **la comida entera**.
 - **Calorías en la tarjeta de alimento**, en un chip **neutro y sin hue
-  propio**: la energía no es un macro. Un quinto color categórico habría
-  exigido revalidar la paleta completa.
-- **Fotos desde el editor del catálogo** (cámara y galería). Acá la foto es solo
-  representación: a diferencia de una comida, no se adopta junto a un análisis.
+  propio**: un quinto color categórico habría exigido revalidar la paleta.
+- **Fotos desde el editor del catálogo** (cámara y galería): acá la foto es solo
+  representación y no se adopta junto a un análisis.
 
 ⚠️ Nada de esto está en el teléfono todavía: falta un build `preview`.
 
 ## Diseñado y sin construir
 
-- `reference/catalog-recipes.md` — guardar "arroz con pollo" como **receta**
-  con sus componentes y fotos independientes, y que la IA no proponga
-  duplicados de lo que ya está en el catálogo.
+- `reference/catalog-recipes.md` — **recetas: el dominio ya está construido**
+  (`recipe.ts`, `catalog-similarity.ts`, 32 tests); faltan las tablas, la
+  migración y toda la UI. Verónica decidió: totales **derivados** (corregir un
+  alimento corrige sus recetas), borrar un alimento usado **se bloquea** con
+  una pantalla de ayuda para resolver receta por receta —todo o nada—, y los
+  duplicados **solo se proponen**, nunca se fusionan solos.
 - `reference/meal-ai-text-fields.md` — separar el cuadro de texto en dos: la
   **pista para la foto** y la **corrección sobre lo ya propuesto**. Hallazgo
   que ordena esa corrida: `editMealWithInstruction` ya resuelve lo segundo y

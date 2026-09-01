@@ -51,12 +51,14 @@ Puro, determinístico, con test. **Ningún `.tsx` calcula una métrica de salud.
 | `regression.ts` | OLS por ecuaciones normales. Centra al ajustar; sus β **no salen** de aquí |
 | `nutrition-insights.ts`, `nutrition-targets.ts` | patrones de comida y metas |
 | `macros-source.ts` | `resolveMacrosSource()` — quién puso los macros de una comida. Se imprime en el reporte médico; ningún `.tsx` lo decide |
-| `vitals-summary.ts` | cómo se lee un registro de vitales, con la banda de cetonas de `assessKetones`. El componente elige el color; no decide qué es urgente |
+| `vitals-summary.ts` | cómo se lee un registro de vitales, con la banda de `assessKetones`. El componente elige el color; no decide qué es urgente |
 | `insulin-catalog.ts` | catálogo de insulinas y su duración. Devuelve `undefined` si no está configurada — nunca un default silencioso |
 | `food-catalog.ts` | `foodKey`, `blendCatalogEntry`; misma implementación en teléfono y servidor. `imageUri` es representación del alimento, nunca base de un macro |
 | `meal-cart.ts` | el carrito multi-alimento: suma líneas y declara qué macro falta. Su total es **estimación**; confirmarlo es un acto de la usuaria |
+| `recipe.ts` | una receta y sus componentes. **Los totales se derivan, nunca se guardan**: corregir un alimento corrige todas las recetas que lo usan. Redondea igual que el carrito a propósito |
+| `catalog-similarity.ts` | qué alimento del catálogo ya cubre uno recién identificado. **Solo propone**: emparejar mal mezcla macros de dos alimentos y eso sugiere carbohidratos sin delatarse |
 | `insulin-catalog.ts` § naming/purpose | nombre por configuración y propósito descriptivo coherente al reclasificar. Nunca calcula dosis |
-| `report.ts`, `units.ts`, `ketones.ts`, `meal.ts`, `mysugr-import.ts` | reporte (deduplica el espejo de una comida), conversión, cetonas, comida, importación |
+| `report.ts`, `units.ts`, `ketones.ts`, `meal.ts`, `mysugr-import.ts` | reporte, conversión, cetonas, comida, importación |
 
 ## `packages/cgm`
 
@@ -104,22 +106,20 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
   carrito; solo cambia el control de la derecha (lápiz o X) y tocar el
   contenedor no edita. Las calorías van en chip neutro: no son un macro.
 - `StripCalendar.tsx` — la fila de días de Nutrición; su aritmética está en `entryTime.ts`.
-- **Gráficos**: `GlucoseChart.tsx`, `SummaryCharts.tsx` (`react-native-svg`);
-  `reportExport.ts` dibuja SVG inline para el PDF.
+- **Gráficos**: `GlucoseChart.tsx`, `SummaryCharts.tsx`; `reportExport.ts` dibuja SVG inline para el PDF.
 - `notifications.ts` — un canal de Android por tipo de alarma; Android congela
   sonido y vibración al crearlo.
 - `timelineVitals.ts` — cetonas y vitales **sueltos** del timeline. Un `WHERE`
   de más los escondió, y son el dato de triage de CAD.
-- `mealFields.ts` — qué campos **son** una comida. Puro y con test: un `false`
-  de más borra historial. Un campo de comida nuevo en `UnifiedEntryInput` va
-  acá. `promotesLooseCarbToMeal` decide cuándo un carbohidrato suelto pasa a
-  ser un plato — o sea cuándo nace un episodio y suenan alarmas.
+- `mealFields.ts` — qué campos **son** una comida; un `false` de más borra
+  historial. Un campo de comida nuevo en `UnifiedEntryInput` va acá.
+  `promotesLooseCarbToMeal` decide cuándo un carbohidrato suelto pasa a ser un
+  plato — o sea cuándo nace un episodio y suenan alarmas.
 - `mealNote.ts` — qué texto queda como nota de una comida, para que tocar el
   registro diga qué se comió. Puro y con test por su techo duro: `note` es
   `max(300)` en el esquema, y pasarse hace que Zod rechace la comida entera.
-- `mealCarbMirror.ts` — qué carbohidrato **es** una comida ya visible y cuál es
-  un hecho propio. Esconder de más borra un dato; de menos, lo cuenta dos veces
-  en el reporte médico.
+- `mealCarbMirror.ts` — qué carbohidrato **es** una comida ya visible. Esconder
+  de más borra un dato; de menos, lo cuenta dos veces en el reporte médico.
 - `entryTime.ts` — días, meses y la hora de un registro histórico. "Cuándo pasó"
   agrupa episodios y recorta ventanas; sus casos son de calendario, no de vista.
 - `dbWriteQueue.ts` — la **única** cola FIFO por la que pasa toda transacción

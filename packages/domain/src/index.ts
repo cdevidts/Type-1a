@@ -9,6 +9,8 @@ export * from './glucose-thresholds';
 export * from './insulin-catalog';
 export * from './ketones';
 export * from './catalog-proposal';
+export * from './catalog-similarity';
+export * from './recipe';
 export * from './food-catalog';
 export * from './macro-glucose';
 export * from './macros-source';

@@ -7,8 +7,8 @@ _Última actualización: 2026-09-01._
 | | |
 |---|---|
 | `pnpm verify` | Etapas verdes; el wrapper local de Windows conserva su fallo de rutas preexistente. CI Linux es la verificación integral |
-| Tests | **648** — domain 352, mobile 248, ai 15, schemas 13, cgm 10, api 10 |
-| Bundle de Metro | **1.355 módulos** (+3 desde el build: cola, confirmación de porción, nota) |
+| Tests | **680** — domain 384, mobile 248, ai 15, schemas 13, cgm 10, api 10 |
+| Bundle de Metro | **1.357 módulos** (+5 desde el build; ningún barrel) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
 ⚠️ La base real medida es **1.341**. Los 13 que suma el trabajo desde entonces

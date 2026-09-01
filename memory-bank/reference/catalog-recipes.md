@@ -36,25 +36,58 @@ salidas, como la pregunta de la Fase 18**—:
 No todo tiene que ser una receta: la pregunta aparece solo cuando el análisis
 devolvió más de un alimento.
 
-## Lo que hay que decidir antes de escribir código
+## Decisiones tomadas (Verónica, 2026-09-01)
 
-- **Qué es una receta en la base.** Una fila propia (`recipes` +
-  `recipe_items`) que referencia `food_catalog.key`, o un `food_catalog` con
-  una columna de "hijos". La primera conserva la identidad de cada alimento y
-  permite que un mismo `arroz` pertenezca a varias recetas; es la que
-  recomiendo, y es una migración con backfill, en su propia corrida.
-- **Qué pasa al editar un componente.** Si se corrigen los macros de `arroz`,
-  ¿cambian los totales de todas las recetas que lo contienen? Si los totales se
-  guardan copiados, divergen; si se derivan, cambia el historial. **Recomiendo
-  derivarlos siempre y no guardar totales**: el número que se muestra es una
-  suma, no un dato aparte.
-- **Cómo se reusa una receta.** El carrito hoy es de alimentos
-  (`meal-cart.ts`). Una receta debería entrar al carrito como una línea que se
-  expande a sus componentes, para que la porción siga siendo por alimento.
-- **Porciones.** Una receta necesita su propia porción ("un plato"), y sus
-  componentes ya tienen la suya desde el 2026-09-01. Ojo con la regla de
-  procedencia (`servingSource`): lo que la usuaria confirma no lo pisa un
-  análisis.
+1. **Los totales se DERIVAN, nunca se guardan.** Una receta no tiene macros
+   propios: son la suma de sus componentes, calculada al leer. Corregir el
+   `arroz` corrige todas las recetas que lo usan. Se acepta la consecuencia —el
+   número de una receta puede cambiar con el tiempo— porque cambia cuando
+   mejora la estimación de un componente, y no toca ninguna comida ya
+   registrada: una comida guarda sus propios gramos, no una referencia.
+2. **Borrar un alimento usado por una receta se BLOQUEA**, con la lista de
+   cuáles. Ni cascada (cambia recetas a espaldas de la usuaria) ni congelar
+   totales (deja una suma que no se puede verificar). Y no es un callejón: hay
+   una pantalla de ayuda para resolverlo receta por receta — ver abajo.
+3. **Los duplicados solo se proponen, nunca se fusionan solos.** Emparejar mal
+   mezcla macros de dos alimentos distintos y eso después sugiere
+   carbohidratos sin que nada lo delate; un duplicado es feo y reversible.
+
+**Ya construido** (`packages/domain`, 32 tests): `recipe.ts` —totales
+derivados, `recipesUsingFood`, `replaceRecipeItem`, `applyRecipeFixPlan`— y
+`catalog-similarity.ts` —`findSimilarFood`, `matchAnalysedFoods`—.
+
+Invariante fijado con test: **el mismo plato da el mismo número como receta que
+como carrito**. Los dos suman valores ya redondeados por `scaleCatalogFood`;
+redondear distinto habría dado dos verdades para el mismo arroz con pollo.
+
+## La pantalla de ayuda al borrar
+
+Aparece al intentar borrar un alimento que alguna receta usa. Una tarjeta por
+receta afectada, y en cada una tres salidas:
+
+- **Cambiarlo por otro** del catálogo, **conservando los gramos** — los gramos
+  son del plato, no del alimento, así que sustituir arroz blanco por integral
+  no cambia cuánto hay. Si la receta ya contenía al reemplazo, las dos líneas
+  se funden. Acá entra la IA: proponer el sustituto más razonable con el
+  catálogo existente, siempre como propuesta.
+- **Sacarlo del plato.** Si era el último componente, la receta se borra con la
+  misma acción — una receta vacía se leería como "este plato no tiene nada".
+- **Dejar esta receta como está.**
+
+Regla dura, ya implementada en `applyRecipeFixPlan`: **es todo o nada**. Si
+queda una sola receta en "dejar como está", el alimento no se borra. Dejar una
+receta usándolo y borrarlo igual es cómo se llega a un total que nadie puede
+reproducir. Una receta sin decisión explícita se conserva.
+
+## Lo que queda por construir
+
+- Tablas `recipes` y `recipe_items` + migración aditiva, y su CRUD en `db.ts`.
+- Tarjeta de receta en el catálogo, vista de detalle con sus componentes, y la
+  pregunta de tres salidas al guardar una comida de varios alimentos.
+- La pantalla de ayuda al borrar descrita arriba.
+- Reuso: una receta entra al carrito como una línea que se expande a sus
+  componentes, para que la porción siga siendo por alimento.
+- Porción propia de la receta ("un plato"), respetando `servingSource`.
 
 ## Temas relacionados, de la misma conversación
 
@@ -87,21 +120,23 @@ compresión que los modales de comida. Acá la foto es **solo representación**,
 que —a diferencia de una comida— no se adopta junto a un análisis: nada se
 re-estima a partir de ella. Una foto elegida gana sobre "quitar foto".
 
-### 4. Que la IA no proponga duplicados _(pendiente)_
+### 4. Que la IA no proponga duplicados — dominio listo, falta la UI
 
 Si ya existe la receta `arroz con pollo` y se fotografía lo mismo, la app
 debería ofrecer **usar la del catálogo** en vez de crear otra. Y si existen
 `arroz` y `pollo` sueltos, ofrecer **armar la receta con esos**, no con copias
 nuevas.
 
-La base está: `foodKey` normaliza el nombre y `buildCatalogProposals` ya recibe
-el catálogo actual (`existingByKey`) y marca cada propuesta como alta o fusión.
-Lo que falta es el emparejamiento **por similitud**, no por igualdad exacta —
-`foodKey` a propósito no lematiza ni quita plurales, así que "manzana" y
-"manzanas" son dos claves distintas. Cualquier heurística que se agregue tiene
-que ser pura, vivir en `packages/domain` y tener test: emparejar mal mezcla los
-macros de dos alimentos distintos, que es peor que tener dos entradas
-parecidas.
+`catalog-similarity.ts` ya resuelve el emparejamiento, con dos heurísticas y
+ninguna más: singular/plural conservador, y mismas palabras significativas en
+cualquier orden ("arroz con pollo" = "pollo y arroz"). **No** empareja por
+subconjunto —"arroz integral" no es "arroz", y sus macros no lo son— ni por
+distancia de edición, que no distingue "pera" de "pena". Cada heurística nueva
+amplía la superficie de un error silencioso.
+
+Falta mostrarlo: marcar el candidato en `CatalogServingModal` y, cuando el
+análisis trae varios alimentos que ya existen, ofrecer armar la receta **con
+esos** (`matchAnalysedFoods`) en vez de con copias nuevas.
 
 ## Fronteras que no cambian
 
