@@ -15,6 +15,7 @@ import type { MealAnalysisResult, MealEvent, MealSnapshot } from '@type1a/schema
 import { analyzeMealDescription, analyzeMealImage, editMealWithInstruction, MobileApiError } from '../api';
 import { parseBlankAsClear, parseBlankAsUnset } from '../format';
 import { logSaveError } from '../log';
+import { MealAiFields } from './MealAiFields';
 import { colors, radius, spacing } from '../theme';
 import { MacroFields } from './MacroFields';
 import { MealCart } from './MealCart';
@@ -403,25 +404,17 @@ export function MealEditModal({
       </Pressable>
 
       {textOpen ? (
-        <View style={styles.aiPanel}>
-          <TextInput
-            style={styles.textArea}
-            value={description}
-            onChangeText={setDescription}
-            placeholder="Ej.: pollo al horno con arroz y ensalada"
-            placeholderTextColor={colors.muted}
-            maxLength={500}
-            multiline
-          />
-          <Pressable
-            style={[styles.panelAction, busy && styles.disabled]}
-            disabled={busy}
-            onPress={() => { void reanalyzeFromText(); }}
-            accessibilityRole="button"
-          >
-            <Text style={styles.panelActionText}>Estimar desde el texto</Text>
-          </Pressable>
-        </View>
+        <MealAiFields
+          description={description}
+          onChangeDescription={setDescription}
+          hasPhoto={appliedImageUri !== null || (meal?.imageUri !== undefined && !imageRemoved)}
+          hasAnalysis={false}
+          instruction=""
+          onChangeInstruction={() => { /* la corrección vive en su propio panel, abajo */ }}
+          busy={busy}
+          onEstimateFromText={() => { void reanalyzeFromText(); }}
+          onRefine={() => { /* no aplica acá */ }}
+        />
       ) : null}
 
       <View style={styles.aiPanel}>

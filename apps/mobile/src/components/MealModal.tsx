@@ -14,10 +14,11 @@ import {
 } from '@type1a/domain';
 import type { MealAnalysisResult } from '@type1a/schemas';
 
-import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api';
+import { analyzeMealDescription, analyzeMealImage, editMealWithInstruction, MobileApiError } from '../api';
 import { parseBlankAsUnset, parseNonNegativeNumber, parsePositiveNumber } from '../format';
 import { logSaveError } from '../log';
 import { mealNoteFrom } from '../mealNote';
+import { MealAiFields } from './MealAiFields';
 import { colors, radius, spacing } from '../theme';
 import { MealCart } from './MealCart';
 import { MacroFields } from './MacroFields';
@@ -146,6 +147,8 @@ export function MealModal({
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<MealAnalysisResult | null>(null);
   const [description, setDescription] = useState('');
+  /** Corrección sobre la propuesta ya hecha. Ver `MealAiFields`. */
+  const [instruction, setInstruction] = useState('');
   const [confirmedCarbs, setConfirmedCarbs] = useState('');
   const [busy, setBusy] = useState(false);
   const [macrosOpen, setMacrosOpen] = useState(false);
@@ -193,6 +196,7 @@ export function MealModal({
     setImageUri(null);
     setAnalysis(null);
     setDescription('');
+    setInstruction('');
     setConfirmedCarbs('');
     setMessage(null);
     // Todo lo de macros y catálogo también, o la comida siguiente hereda los
@@ -360,6 +364,47 @@ export function MealModal({
       setMessage(error instanceof MobileApiError
         ? `${error.message} Continúa con el ingreso manual.`
         : 'No se pudo estimar desde el texto. Continúa con el ingreso manual.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Corrige la propuesta que ya está en pantalla, **sin volver a mandar la
+   * foto**: `editMealWithInstruction` trabaja sobre la composición actual.
+   *
+   * Los macros se vuelven a precargar con `prefillMacrosFrom`, que es el mismo
+   * camino de un análisis nuevo — y por lo tanto el que invalida la dosis
+   * calculada. Una corrección cambia los carbohidratos, así que una dosis
+   * anterior deja de corresponder.
+   */
+  async function refineAnalysis(): Promise<void> {
+    setMessage(null);
+    if (analysis === null) return;
+    if (instruction.trim() === '') {
+      setMessage('Escribe qué hay que corregir, por ejemplo "es menos arroz del que pensaste".');
+      return;
+    }
+    setBusy(true);
+    try {
+      const next = await editMealWithInstruction({
+        instruction: instruction.trim(),
+        current: {
+          confirmedCarbsG: analysis.totals.carbsG,
+          foods: analysis.estimate.foods,
+          ...(description.trim() === '' ? {} : { note: description.trim() }),
+        },
+      });
+      setAnalysis(next);
+      prefillMacrosFrom(next);
+      setInstruction('');
+      setMessage('Propuesta corregida. Revísala: los carbohidratos los confirmas tú, y una dosis calculada antes ya no corresponde.');
+    } catch (error) {
+      // La propuesta anterior **queda como estaba**: degradar a lo que ya
+      // había es siempre una salida válida.
+      setMessage(error instanceof MobileApiError
+        ? `${error.message} La propuesta anterior sigue como estaba.`
+        : 'No se pudo aplicar la corrección. La propuesta anterior sigue como estaba.');
     } finally {
       setBusy(false);
     }
@@ -569,23 +614,21 @@ export function MealModal({
         <Text style={styles.aiText}>No calcula insulina. Los carbohidratos de IA quedan separados hasta que tú escribes y confirmas un valor.</Text>
       </View>
 
-      <Text style={styles.label}>Contexto opcional de la porción</Text>
-      <TextInput
-        style={styles.description}
-        value={description}
-        onChangeText={setDescription}
-        placeholder="Ej.: plato de 24 cm, comí la mitad"
-        placeholderTextColor={colors.muted}
-        maxLength={500}
-        multiline
+      <MealAiFields
+        description={description}
+        onChangeDescription={setDescription}
+        hasPhoto={imageUri !== null}
+        hasAnalysis={analysis !== null}
+        instruction={instruction}
+        onChangeInstruction={setInstruction}
+        busy={busy}
+        onEstimateFromText={() => { void analyzeFromDescription(); }}
+        onRefine={() => { void refineAnalysis(); }}
       />
 
       <Pressable style={[styles.cameraButton, busy && styles.disabled]} disabled={busy} onPress={() => { void captureAndAnalyze(); }}>
         <Text style={styles.cameraIcon}>◎</Text>
-        <Text style={styles.cameraText}>{busy ? 'Procesando imagen…' : 'Tomar foto y estimar'}</Text>
-      </Pressable>
-      <Pressable style={[styles.textEstimateButton, busy && styles.disabled]} disabled={busy} onPress={() => { void analyzeFromDescription(); }}>
-        <Text style={styles.textEstimateText}>Estimar por texto, sin foto</Text>
+        <Text style={styles.cameraText}>{busy ? 'Procesando imagen…' : imageUri === null ? 'Tomar foto y estimar' : 'Tomar otra foto'}</Text>
       </Pressable>
 
       {imageUri === null ? null : <Image source={{ uri: imageUri }} style={styles.preview} resizeMode="cover" />}

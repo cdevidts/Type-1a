@@ -1,6 +1,6 @@
 # Active Context
 
-_Última actualización: 2026-09-01 (catálogo cerrado; dominio de recetas)._
+_Última actualización: 2026-09-01 (recetas, campos de IA y cobertura)._
 
 ## Lo que cambió el foco
 
@@ -62,27 +62,30 @@ Confirmar lo vuelve dato de la usuaria (`servingSource: 'user'`) y
 regla, cada foto nueva le habría borrado su "una taza son 150 g"; una fila sin
 `servingSource` se trata como suya, porque lo es.
 
-Y tres huecos chicos:
-
-- **La nota del botón rápido.** `TimelineDetailModal` ya la dibujaba; faltaba
-  que el acceso rápido la escribiera —usaba su cuadro de texto solo para llamar
-  a la IA y lo tiraba—. `mealNote.ts` decide el texto y respeta el techo de 300
-  del esquema: pasarse no trunca, hace que Zod rechace **la comida entera**.
-- **Calorías en la tarjeta de alimento**, en un chip **neutro y sin hue
-  propio**: un quinto color categórico habría exigido revalidar la paleta.
-- **Fotos desde el editor del catálogo** (cámara y galería): acá la foto es solo
-  representación y no se adopta junto a un análisis.
+Y tres huecos chicos: **la nota del botón rápido** —`TimelineDetailModal` ya la
+dibujaba, faltaba escribirla; `mealNote.ts` respeta el techo de 300 del esquema,
+donde pasarse hace que Zod rechace la comida entera—, **calorías en la tarjeta**
+en chip neutro (un quinto hue categórico habría exigido revalidar la paleta), y
+**fotos desde el editor del catálogo**, donde la imagen es solo representación y
+no se adopta junto a un análisis.
 
 ⚠️ Nada de esto está en el teléfono todavía: falta un build `preview`.
 
-## Diseñado y sin construir
+## Los dos cuadros de texto de la IA, y la cobertura (2026-09-01)
 
-- `reference/meal-ai-text-fields.md` — lo único grande que queda sin construir.
-  Separar el cuadro de texto en dos: la **pista para la foto** y la
-  **corrección sobre lo ya propuesto**. `editMealWithInstruction` ya resuelve
-  lo segundo y **no manda la imagen** —trabaja sobre la composición en
-  pantalla—, pero solo se alcanza desde `MealEditModal`. Tiene que llegar a los
-  tres modales.
+`MealAiFields.tsx` separa lo que antes era un campo haciendo dos trabajos: la
+**pista para la foto** (el rótulo cambia según haya imagen — ese cambio *es* el
+arreglo, porque el campo mentía sobre lo que hacía) y la **corrección sobre lo
+ya propuesto**, que `editMealWithInstruction` resolvía desde antes y **sin
+reenviar la imagen**, pero solo se alcanzaba desde `MealEditModal`. Ahora está
+en los tres. Quien adopta una propuesta invalida la dosis calculada: los
+carbohidratos cambian, así que una dosis anterior deja de corresponder.
+
+**La cobertura de días volvió a verse en 30 y 90.** Solo se mencionaba por
+debajo del umbral clínico de 14 días, así que con datos suficientes para
+pasarlo desaparecía y la pantalla se leía como si el promedio resumiera el
+rango completo. `coverage.ts` separa las dos afirmaciones: cuánto está cubierto
+(siempre, descriptivo) y si alcanza para la HbA1c estimada (clínico).
 
 ## Recetas, completas (2026-09-01)
 

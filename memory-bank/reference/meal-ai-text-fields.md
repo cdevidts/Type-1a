@@ -1,6 +1,7 @@
-# Los dos cuadros de texto de la IA de comida — diseño pendiente
+# Los dos cuadros de texto de la IA de comida
 
-_Escrito el 2026-09-01 a pedido de Verónica. **No está construido.**_
+_Escrito el 2026-09-01. **Construido el mismo día**: `MealAiFields.tsx`, montado en
+los tres modales de comida._
 
 ## El problema
 

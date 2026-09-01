@@ -7,8 +7,8 @@ _Última actualización: 2026-09-01._
 | | |
 |---|---|
 | `pnpm verify` | Etapas verdes; el wrapper local de Windows conserva su fallo de rutas preexistente. CI Linux es la verificación integral |
-| Tests | **684** — domain 388, mobile 248, ai 15, schemas 13, cgm 10, api 10 |
-| Bundle de Metro | **1.358 módulos** (+6 desde el build; ningún barrel) |
+| Tests | **692** — domain 396, mobile 248, ai 15, schemas 13, cgm 10, api 10 |
+| Bundle de Metro | **1.360 módulos** (+2 desde el último build; ningún barrel) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
 ⚠️ La base real medida es **1.341**. Los 13 que suma el trabajo desde entonces
@@ -20,14 +20,13 @@ son subpaths de Lucide y módulos nuevos, ningún barrel. Si vuelve a divergir,
 
 ## Entregado y en el dispositivo
 
-Build del 2026-08-26: notificaciones por tipo (Fase 19), "Comida" bajo un
-timestamp (Fase 21), el episodio con su ventana (Fase 23), catálogo de insulinas,
-Patrones por covariables, cetonas e iconos de Lucide.
-
-Build `preview` del 2026-08-31 (`a706510`, build `980faeee`) instalado: Modal
-Maestro, calendario, carrito, fibra y el arreglo de las transacciones SQLite.
-Lo del 2026-09-01 (porción confirmada, nota del botón rápido, calorías, fotos
-desde el editor y **recetas completas**) va en el build siguiente.
+Build del 2026-08-26: notificaciones por tipo, "Comida" bajo un timestamp, el
+episodio con su ventana, catálogo de insulinas, Patrones e iconos de Lucide.
+Build del 2026-08-31 (`a706510`): Modal Maestro, calendario, carrito, fibra y
+el arreglo de las transacciones SQLite.
+Build `preview` del 2026-09-01 (`6f1c2cd`, build `9bdc3d95`): porción
+confirmada, nota del botón rápido, calorías, fotos desde el editor y recetas.
+Lo posterior (campos de IA separados, cobertura de días) **no tiene build**.
 
 ## Deuda conocida
 
@@ -142,6 +141,7 @@ detalle vive en `git log --format=full`.
 | El catálogo caía siempre a 100 g porque la IA no podía proponer porción, y el `INSERT` del alta ni siquiera escribía las columnas de porción | la porción la propone la IA y la **confirma** la usuaria: multiplica los cuatro macros, así que un número que nadie miró no entra por esa puerta |
 | El cuadro de texto del botón rápido alimentaba a la IA y se tiraba, así que la comida quedaba sin nota mientras el maestro sí la guardaba | una capacidad que solo tiene un camino es una asimetría: el texto que describe la comida se escribe venga de donde venga |
 | Una foto de arroz con pollo dejaba dos alimentos sueltos y **los dos con la foto del plato entero** | el contenedor que faltaba es la receta: guarda la foto del plato y cada componente queda libre de tener la suya |
+| La cobertura de días solo se mostraba bajo el umbral clínico de 14, así que a 30 y 90 días desaparecía y el promedio se leía como si cubriera el rango entero | "cuánto está cubierto" y "alcanza para la métrica" son dos afirmaciones distintas: la primera va siempre |
 
 ## Redeploy del backend
 

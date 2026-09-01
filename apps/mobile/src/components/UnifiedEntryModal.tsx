@@ -6,7 +6,8 @@ import { AppState, Image, Pressable, StyleSheet, Switch, Text, TextInput, View }
 import { assessFreshness, calculateCorrection, calculateMealBolus, convertGlucose, isSensorReading, resolveMacrosSource, type CartLine, type CatalogFood } from '@type1a/domain';
 import type { CGMReading, MealAnalysisResult, MealEvent, TherapyProfile } from '@type1a/schemas';
 
-import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api';
+import { analyzeMealDescription, analyzeMealImage, editMealWithInstruction, MobileApiError } from '../api';
+import { MealAiFields } from './MealAiFields';
 import { combineDayAndTime, dayOfMonthISO, isFutureDay, parseDayISO, timeOfDay } from '../entryTime';
 import { formatDayTime, parseBlankAsUnset, parseBlankAsUnsetPositive, parseNonNegativeNumber } from '../format';
 import { logSaveError } from '../log';
@@ -228,6 +229,7 @@ export function UnifiedEntryModal({
   const [originalPrefill, setOriginalPrefill] = useState<PrefilledReading | null>(null);
   const [glucoseSource, setGlucoseSource] = useState<'sensor' | 'capillary'>('capillary');
   const [description, setDescription] = useState('');
+  const [instruction, setInstruction] = useState('');
   const [carbs, setCarbs] = useState('');
   const [rapid, setRapid] = useState('');
   const [basal, setBasal] = useState('');
@@ -297,6 +299,7 @@ export function UnifiedEntryModal({
         setOriginalPrefill(null);
         setGlucoseSource('capillary');
         setDescription(editSeed.description ?? '');
+        setInstruction('');
         setCarbs(numberOrBlank(editSeed.carbsG));
         setRapid(numberOrBlank(editSeed.rapidUnits));
         setBasal(numberOrBlank(editSeed.basalUnits));
@@ -346,6 +349,7 @@ export function UnifiedEntryModal({
         setOriginalPrefill(canUseAsSensor ? snapshot : null);
         setGlucoseSource(canUseAsSensor ? 'sensor' : 'capillary');
         setDescription('');
+        setInstruction('');
         setCarbs('');
         setRapid('');
         setBasal('');
@@ -485,21 +489,71 @@ export function UnifiedEntryModal({
       // "estimada por IA y corregida por la usuaria" para una grasa y una
       // fibra que nunca vio. Ahora lo que se guarda es lo que está en
       // pantalla.
-      setProtein(String(Math.round(nextAnalysis.totals.proteinG)));
-      setFat(String(Math.round(nextAnalysis.totals.fatG)));
-      setFiber(String(Math.round(nextAnalysis.totals.fiberG)));
-      setCalories(String(Math.round(nextAnalysis.totals.caloriesKcal)));
-      setProposedMacros({
-        proteinG: Math.round(nextAnalysis.totals.proteinG),
-        fatG: Math.round(nextAnalysis.totals.fatG),
-        fiberG: Math.round(nextAnalysis.totals.fiberG),
-        caloriesKcal: Math.round(nextAnalysis.totals.caloriesKcal),
-      });
+      adoptAnalysis(nextAnalysis);
       setMessage('Estimación lista. Escribe tú los carbohidratos que confirmas.');
     } catch (error) {
       setMessage(error instanceof MobileApiError
         ? `${error.message} Continúa con el ingreso manual.`
         : 'No se pudo analizar la foto. Continúa con el ingreso manual.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Adopta una propuesta de la IA: la deja en pantalla y precarga los macros,
+   * visibles y editables.
+   *
+   * Un solo camino para los tres orígenes —foto, texto y corrección— porque
+   * estaba escrito dos veces y la tercera copia habría divergido igual que
+   * divergieron los dos booleanos `hasMeal`. **Invalida la dosis calculada**:
+   * los carbohidratos cambian, así que una dosis anterior deja de
+   * corresponder.
+   */
+  function adoptAnalysis(next: MealAnalysisResult): void {
+    setAnalysis(next);
+    setProtein(String(Math.round(next.totals.proteinG)));
+    setFat(String(Math.round(next.totals.fatG)));
+    setFiber(String(Math.round(next.totals.fiberG)));
+    setCalories(String(Math.round(next.totals.caloriesKcal)));
+    setProposedMacros({
+      proteinG: Math.round(next.totals.proteinG),
+      fatG: Math.round(next.totals.fatG),
+      fiberG: Math.round(next.totals.fiberG),
+      caloriesKcal: Math.round(next.totals.caloriesKcal),
+    });
+    invalidateSuggestion();
+  }
+
+  /**
+   * Corrige la propuesta que ya está en pantalla, **sin volver a mandar la
+   * foto**: `editMealWithInstruction` trabaja sobre la composición actual.
+   */
+  async function refineAnalysis(): Promise<void> {
+    setMessage(null);
+    if (analysis === null) return;
+    if (instruction.trim() === '') {
+      setMessage('Escribe qué hay que corregir, por ejemplo "es menos arroz del que pensaste".');
+      return;
+    }
+    setBusy(true);
+    try {
+      const next = await editMealWithInstruction({
+        instruction: instruction.trim(),
+        current: {
+          confirmedCarbsG: analysis.totals.carbsG,
+          foods: analysis.estimate.foods,
+          ...(description.trim() === '' ? {} : { note: description.trim() }),
+        },
+      });
+      adoptAnalysis(next);
+      setInstruction('');
+      setMessage('Propuesta corregida. Escribe tú los carbohidratos que confirmas; una dosis calculada antes ya no corresponde.');
+    } catch (error) {
+      // La propuesta anterior queda como estaba.
+      setMessage(error instanceof MobileApiError
+        ? `${error.message} La propuesta anterior sigue como estaba.`
+        : 'No se pudo aplicar la corrección. La propuesta anterior sigue como estaba.');
     } finally {
       setBusy(false);
     }
@@ -515,17 +569,7 @@ export function UnifiedEntryModal({
     setAnalysis(null);
     try {
       const nextAnalysis = await analyzeMealDescription(description.trim());
-      setAnalysis(nextAnalysis);
-      setProtein(String(Math.round(nextAnalysis.totals.proteinG)));
-      setFat(String(Math.round(nextAnalysis.totals.fatG)));
-      setFiber(String(Math.round(nextAnalysis.totals.fiberG)));
-      setCalories(String(Math.round(nextAnalysis.totals.caloriesKcal)));
-      setProposedMacros({
-        proteinG: Math.round(nextAnalysis.totals.proteinG),
-        fatG: Math.round(nextAnalysis.totals.fatG),
-        fiberG: Math.round(nextAnalysis.totals.fiberG),
-        caloriesKcal: Math.round(nextAnalysis.totals.caloriesKcal),
-      });
+      adoptAnalysis(nextAnalysis);
       setMessage('Estimación lista a partir del texto (sin foto, así que la incertidumbre es mayor). Escribe tú los carbohidratos que confirmas.');
     } catch (error) {
       setMessage(error instanceof MobileApiError
@@ -1195,20 +1239,19 @@ export function UnifiedEntryModal({
           onMessage={setMessage}
         />
 
-        <TextInput
-          style={styles.description}
-          value={description}
-          onChangeText={setDescription}
-          placeholder="¿Qué comiste? Ej.: pollo con arroz y ensalada"
-          placeholderTextColor={colors.muted}
-          maxLength={300}
-          multiline
+        <MealAiFields
+          description={description}
+          onChangeDescription={setDescription}
+          hasPhoto={imageUri !== null}
+          hasAnalysis={analysis !== null}
+          instruction={instruction}
+          onChangeInstruction={setInstruction}
+          busy={busy}
+          onEstimateFromText={() => { void analyzeFromDescription(); }}
+          onRefine={() => { void refineAnalysis(); }}
         />
         <Pressable style={[styles.cameraButton, busy && styles.disabled]} disabled={busy} onPress={() => { void captureAndAnalyze(); }}>
-          <Text style={styles.cameraText}>{busy ? 'Procesando…' : 'Foto para estimar carbohidratos'}</Text>
-        </Pressable>
-        <Pressable style={[styles.textEstimateButton, busy && styles.disabled]} disabled={busy} onPress={() => { void analyzeFromDescription(); }}>
-          <Text style={styles.textEstimateText}>Estimar por texto, sin foto</Text>
+          <Text style={styles.cameraText}>{busy ? 'Procesando…' : imageUri === null ? 'Foto para estimar carbohidratos' : 'Tomar otra foto'}</Text>
         </Pressable>
 
         {/*

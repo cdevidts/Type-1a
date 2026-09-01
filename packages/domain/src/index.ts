@@ -9,6 +9,7 @@ export * from './glucose-thresholds';
 export * from './insulin-catalog';
 export * from './ketones';
 export * from './catalog-proposal';
+export * from './coverage';
 export * from './catalog-similarity';
 export * from './recipe';
 export * from './food-catalog';

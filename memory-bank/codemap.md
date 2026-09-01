@@ -58,6 +58,7 @@ Puro, determinístico, con test. **Ningún `.tsx` calcula una métrica de salud.
 | `recipe.ts` | una receta y sus componentes. **Los totales se derivan, nunca se guardan**: corregir un alimento corrige todas las recetas que lo usan. Redondea igual que el carrito a propósito |
 | `catalog-similarity.ts` | qué alimento del catálogo ya cubre uno recién identificado. **Solo propone**: emparejar mal mezcla macros de dos alimentos y eso sugiere carbohidratos sin delatarse |
 | `insulin-catalog.ts` § naming/purpose | nombre por configuración y propósito descriptivo coherente al reclasificar. Nunca calcula dosis |
+| `coverage.ts` | cuánto del rango elegido tiene datos. Separa "faltan días" (descriptivo) de "no alcanza para la HbA1c estimada" (clínico, 14 días de consenso) |
 | `report.ts`, `units.ts`, `ketones.ts`, `meal.ts`, `mysugr-import.ts` | reporte, conversión, cetonas, comida, importación |
 
 ## `packages/cgm`
@@ -91,15 +92,13 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
 - **Navegación**: no hay librería. Una pantalla es un `Modal` vía `ModalShell`;
   sub-páginas son pestañas (`SummaryModal.tsx`). `BottomNav.tsx` +
   `useSwipeNavigation.ts` + `swipeOrder.ts`.
-- **Modal Maestro**: `UnifiedEntryModal.tsx` es el formulario único de creación
-  **y** edición (`mode` dice cuál); `EntrySection.tsx` pliega. Sus reglas puras
-  están en `masterModal.ts`: dónde escribe cada tipo (`masterTargetOf`), qué
-  carga (`masterSeedFrom`), qué se abre (`masterSectionsFor`, **por
-  contenido**). `TimelineDetailModal.tsx` solo lee.
+- **Modal Maestro**: `UnifiedEntryModal.tsx` crea **y** edita (`mode` dice
+  cuál). Sus reglas puras están en `masterModal.ts`: dónde escribe cada tipo
+  (`masterTargetOf`), qué carga (`masterSeedFrom`), qué se abre
+  (`masterSectionsFor`, **por contenido**). `TimelineDetailModal.tsx` solo lee.
 - **Formularios de comida**: el maestro, `MealModal` (rápido) y `MealEditModal`
-  (el editor con IA, hospedado por el maestro). **Lo que comparten se comparte**
-  —`MacroFields.tsx`, `MealCart.tsx`, los `parseBlankAs*`—: un campo nuevo va
-  ahí, no suelto en un modal.
+  (editor con IA). **Lo que comparten se comparte** —`MacroFields.tsx`,
+  `MealCart.tsx`, `MealAiFields.tsx`—: un campo nuevo va ahí, no en un modal.
 - **Accesos rápidos**: `MealModal`, `CorrectionModal` y `QuickNumericModal.tsx`
   (uno solo, para Basal y Cetonas). Breves a propósito, con salida al maestro.
 - `FoodCard.tsx` — la tarjeta de un alimento, **la misma** en catálogo y
@@ -108,18 +107,19 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
 - `StripCalendar.tsx` — la fila de días de Nutrición; su aritmética está en `entryTime.ts`.
 - `RecipeFixModal.tsx` — la salida al "no se puede borrar": resuelve receta por
   receta. **Todo o nada**; la IA propone el sustituto, nunca lo aplica.
+- `MealAiFields.tsx` — los **dos** cuadros de texto de la IA, en los tres
+  modales: la pista para la foto y la corrección sobre lo ya propuesto, que
+  **no reenvía la foto**. Adoptar una propuesta invalida la dosis calculada.
 - **Gráficos**: `GlucoseChart.tsx`, `SummaryCharts.tsx`; `reportExport.ts` dibuja SVG inline para el PDF.
-- `notifications.ts` — un canal de Android por tipo de alarma; Android congela
-  sonido y vibración al crearlo.
+- `notifications.ts` — un canal por tipo de alarma; Android congela sonido y vibración al crearlo.
 - `timelineVitals.ts` — cetonas y vitales **sueltos**; un `WHERE` de más los escondió.
 - `mealFields.ts` — qué campos **son** una comida; un `false` de más borra
-  historial. Un campo de comida nuevo en `UnifiedEntryInput` va acá.
-  `promotesLooseCarbToMeal` decide cuándo un carbohidrato suelto pasa a ser un
-  plato — o sea cuándo nace un episodio y suenan alarmas.
-- `mealNote.ts` — qué texto queda como nota de una comida. Techo duro: `note`
-  es `max(300)`, y pasarse hace que Zod rechace la comida entera.
-- `mealCarbMirror.ts` — qué carbohidrato **es** una comida ya visible. Esconder
-  de más borra un dato; de menos, lo cuenta dos veces en el reporte médico.
+  historial. `promotesLooseCarbToMeal` decide cuándo un carbohidrato suelto pasa
+  a ser un plato — o sea cuándo nace un episodio y suenan alarmas.
+- `mealNote.ts` — el texto que queda como nota de una comida. `note` es
+  `max(300)`: pasarse hace que Zod rechace la comida entera.
+- `mealCarbMirror.ts` — qué carbohidrato **es** una comida ya visible; de menos
+  se cuenta dos veces en el reporte médico.
 - `entryTime.ts` — días, meses y la hora de un registro histórico. "Cuándo pasó"
   agrupa episodios y recorta ventanas; sus casos son de calendario, no de vista.
 - `dbWriteQueue.ts` — la **única** cola FIFO por la que pasa toda transacción

@@ -7,6 +7,8 @@ import {
   MIN_SAMPLE_FOR_RATE,
   summarizeGlucose,
   type MealWindowInsight,
+  describeCoverage,
+  RELIABLE_COVERAGE_DAYS,
 } from '@type1a/domain';
 import type { CGMReading } from '@type1a/schemas';
 
@@ -321,6 +323,7 @@ function MetricsTab({
       />
     );
   }
+  const coverage = describeCoverage({ daysCovered: summary.daysCovered, rangeDays });
   return (
     <View>
       <View style={styles.statRow}>
@@ -354,16 +357,29 @@ function MetricsTab({
 
       <View style={styles.noteBox}>
         <Text style={styles.noteTitle}>Cómo leer estos números</Text>
+        {/*
+          La cobertura va **siempre**, y arriba. Antes solo aparecía por debajo
+          del umbral clínico de 14 días, así que en 30 o 90 días con datos
+          suficientes para pasarlo se esfumaba y la pantalla se leía como si el
+          promedio resumiera el rango completo. Son dos afirmaciones distintas:
+          cuánto está cubierto (descriptivo) y si alcanza para que la HbA1c
+          estimada sea confiable (clínico). Ver `coverage.ts`.
+        */}
+        <Text style={[styles.noteText, coverage.isPartial && styles.notePartial]}>
+          {coverage.isPartial
+            ? `Estos números cubren ${coverage.text}, no los ${coverage.rangeDays} completos.`
+            : `Estos números cubren ${coverage.text}.`}
+        </Text>
         <Text style={styles.noteText}>
           La HbA1c estimada (GMI) la calcula esta app desde tu promedio de glucosa sobre {summary.readingCount} lecturas
-          en {summary.daysCovered} día(s). No reemplaza una HbA1c de laboratorio, que mide algo distinto y puede
+          en {coverage.daysCovered} día(s). No reemplaza una HbA1c de laboratorio, que mide algo distinto y puede
           diferir. Las metas indicadas son las de consenso internacional para diabetes tipo 1, no un objetivo
           personal: ese lo define tu equipo clínico.
         </Text>
-        {summary.daysCovered < 14 ? (
+        {coverage.isBelowReliableThreshold ? (
           <Text style={styles.noteWarning}>
-            Cobertura de {summary.daysCovered} día(s): con menos de 14 días la HbA1c estimada y el día promedio
-            son poco representativos.
+            Con menos de {RELIABLE_COVERAGE_DAYS} días de datos la HbA1c estimada y el día promedio son poco
+            representativos.
           </Text>
         ) : null}
         {summary.excludedSyntheticCount > 0 ? (
@@ -603,6 +619,7 @@ const styles = StyleSheet.create({
   noteBox: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.sm, gap: spacing.sm },
   noteTitle: { color: colors.ink, fontSize: 13, fontWeight: '800' },
   noteText: { color: colors.muted, fontSize: 12, lineHeight: 18 },
+  notePartial: { fontWeight: '800', color: colors.navy },
   noteWarning: { color: colors.warning, fontSize: 12, lineHeight: 18, fontWeight: '600' },
   foodStatsRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
   foodStat: { flex: 1 },
