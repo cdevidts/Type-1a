@@ -90,20 +90,17 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
   sub-páginas son pestañas (`SummaryModal.tsx`). `BottomNav.tsx` +
   `useSwipeNavigation.ts` + `swipeOrder.ts`.
 - **Modal Maestro**: `UnifiedEntryModal.tsx` es el formulario único de
-  **creación y edición** (`projectbrief.md`); `mode` dice cuál de las dos.
-  `EntrySection.tsx` pliega sus secciones y `masterModal.ts` tiene sus reglas,
-  puras y con test: a dónde escribe cada tipo (`masterTargetOf`), qué carga
-  (`masterSeedFrom`) y qué se abre (`masterSectionsFor`, **por contenido**).
-  `TimelineDetailModal.tsx` **solo lee**: su botón Editar abre el maestro.
-- **Formularios de comida**: el maestro, `MealModal` (acceso rápido) y
-  `MealEditModal` (el editor con IA: foto nueva, instrucción libre, propuesta
-  antes → después), hospedado desde la sección de comida del maestro cuando la
-  comida ya existe. **Lo que comparten se comparte**: `MacroFields.tsx`,
-  `MealCart.tsx` (el carrito, en los tres) y los `parseBlankAs*` de `format.ts`.
-  Un campo nuevo va ahí primero, no suelto en un modal.
+  creación **y** edición; `mode` dice cuál. `EntrySection.tsx` pliega, y
+  `masterModal.ts` tiene sus reglas puras y con test: a dónde escribe cada tipo
+  (`masterTargetOf`), qué carga (`masterSeedFrom`) y qué se abre
+  (`masterSectionsFor`, **por contenido**). `TimelineDetailModal.tsx` solo lee.
+- **Formularios de comida**: el maestro, `MealModal` (rápido) y `MealEditModal`
+  (el editor con IA), que el maestro hospeda cuando la comida ya existe. **Lo
+  que comparten se comparte**: `MacroFields.tsx`, `MealCart.tsx` y los
+  `parseBlankAs*` de `format.ts`. Un campo nuevo va ahí, no suelto en un modal.
 - **Accesos rápidos**: `MealModal`, `CorrectionModal` y `QuickNumericModal.tsx`
-  —uno solo, parametrizado, para Basal y Cetonas—. Son breves a propósito; la
-  entrada completa es el maestro, y cada uno ofrece la salida hacia él.
+  (uno solo, parametrizado, para Basal y Cetonas). Breves a propósito; cada uno
+  ofrece la salida hacia el maestro.
 - `FoodCard.tsx` — la tarjeta de un alimento, **la misma** en catálogo y
   carrito. Lo único que cambia es el control de la derecha: lápiz o X. Tocar el
   contenedor no edita.
@@ -113,14 +110,12 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
   `reportExport.ts` dibuja SVG inline para el PDF.
 - `notifications.ts` — un canal de Android por tipo de alarma. Android congela
   sonido y vibración al crear el canal.
-- `timelineVitals.ts` — las cetonas y demás vitales **sueltos** del timeline.
-  Puro y con test: un `WHERE` de más los escondió una vez, y son el dato de
-  triage de cetoacidosis.
-- `mealFields.ts` — qué campos **son** una comida. Puro y con test porque
-  decide si la fila se escribe y si se conserva: un `false` de más borra
-  historial. Si agregas un campo de comida a `UnifiedEntryInput`, va acá.
-  `promotesLooseCarbToMeal` decide cuándo un carbohidrato suelto pasa a ser un
-  plato — o sea cuándo nace un episodio y suenan alarmas.
+- `timelineVitals.ts` — las cetonas y vitales **sueltos** del timeline. Puro y
+  con test: un `WHERE` de más los escondió, y son el dato de triage de CAD.
+- `mealFields.ts` — qué campos **son** una comida. Puro y con test: un `false`
+  de más borra historial. Un campo de comida nuevo en `UnifiedEntryInput` va
+  acá. `promotesLooseCarbToMeal` decide cuándo un carbohidrato suelto pasa a
+  ser un plato — o sea cuándo nace un episodio y suenan alarmas.
 - `mealCarbMirror.ts` — qué fila de carbohidratos **es** una comida ya visible
   y cuál es un hecho propio. Puro y con test: esconder de más borra un dato de
   la vista, esconder de menos lo cuenta dos veces en el reporte médico.
@@ -133,6 +128,12 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
   `ROLLBACK` ajeno y la primera termina escribiendo suelta. Dos colas no
   sirven; contra una conexión se anidan igual. La tarea de fondo no la usa
   porque abre su propia conexión (`backgroundSync.ts`, `useNewConnection`).
+- `catalog-proposal.ts` (dominio) — qué propone la IA guardar al catálogo y
+  **qué se rechaza con su razón**; puro y con test. Escribir directo daba dos
+  fallas opuestas: alimentos descartados en silencio y porción siempre en
+  100 g. `normalizationBasis` usa la porción típica de denominador cuando no
+  hay gramos del plato; `confirmProposal` marca lo confirmado `'user'`, que es
+  lo que `blendCatalogEntry` protege. Su pantalla: `CatalogServingModal.tsx`.
 - `entryGroupClaim.ts` — promoción + edición como una sola transacción:
   relectura del grupo ganador, alineación del espejo y rollback conjunto. Puro
   y con tests de fallo, idempotencia y carrera; `db.ts` aporta el adaptador

@@ -214,6 +214,14 @@ export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
   if (!catalogColumns.some((column) => column.name === 'serving_label')) {
     await db.execAsync('ALTER TABLE food_catalog ADD COLUMN serving_label TEXT;');
   }
+  // Quién fijó la porción. Aditiva y nullable como las de arriba: NULL en toda
+  // fila anterior, y `rowToCatalogFood` las lee como `'user'` a propósito —
+  // son justo las porciones que Verónica escribió a mano en el editor, y
+  // tratarlas como propuestas de la IA las volvería pisables por el próximo
+  // análisis. Ver `blendCatalogEntry`.
+  if (!catalogColumns.some((column) => column.name === 'serving_source')) {
+    await db.execAsync('ALTER TABLE food_catalog ADD COLUMN serving_source TEXT;');
+  }
   // Foto del alimento. Aditiva y nullable por la misma razón que las dos de
   // arriba: la tabla ya tiene datos reales en el teléfono de Verónica y todos
   // ellos son anteriores a este campo. NULL = sin foto, que es exactamente lo
@@ -2949,13 +2957,19 @@ export async function recordCatalogFoods(
       const row = await db.getFirstAsync<FoodCatalogRow>('SELECT * FROM food_catalog WHERE key = ?', entry.key);
 
       if (row === null) {
+        // Las columnas de porción van acá **y no solo en el UPDATE**: hasta
+        // ahora el alta las omitía, así que un alimento nuevo perdía su
+        // porción en el primer guardado y solo la recuperaba si volvía a
+        // aparecer. No se notaba porque la IA todavía no proponía porción.
         await db.runAsync(
           `INSERT INTO food_catalog
-             (key, name, carbs_per_100g, protein_per_100g, fat_per_100g, fiber_per_100g, kcal_per_100g, times_seen, last_seen_at, image_uri)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+             (key, name, carbs_per_100g, protein_per_100g, fat_per_100g, fiber_per_100g, kcal_per_100g, times_seen, last_seen_at, serving_grams, serving_label, serving_source, image_uri)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
           entry.key, entry.name,
           entry.carbsPer100g, entry.proteinPer100g, entry.fatPer100g, entry.fiberPer100g, entry.kcalPer100g,
-          entry.lastSeenAt, entry.imageUri ?? null,
+          entry.lastSeenAt,
+          entry.servingGrams ?? null, entry.servingLabel ?? null, entry.servingSource ?? null,
+          entry.imageUri ?? null,
         );
         continue;
       }
@@ -2968,11 +2982,11 @@ export async function recordCatalogFoods(
         `UPDATE food_catalog SET
            name = ?, carbs_per_100g = ?, protein_per_100g = ?, fat_per_100g = ?,
            fiber_per_100g = ?, kcal_per_100g = ?, times_seen = ?, last_seen_at = ?,
-           serving_grams = ?, serving_label = ?, image_uri = ?
+           serving_grams = ?, serving_label = ?, serving_source = ?, image_uri = ?
          WHERE key = ?`,
         merged.name, merged.carbsPer100g, merged.proteinPer100g, merged.fatPer100g,
         merged.fiberPer100g, merged.kcalPer100g, merged.timesSeen, merged.lastSeenAt,
-        merged.servingGrams ?? null, merged.servingLabel ?? null,
+        merged.servingGrams ?? null, merged.servingLabel ?? null, merged.servingSource ?? null,
         // `blendCatalogEntry` conserva la foto anterior cuando la nueva no
         // trae una, así que escribir el resultado nunca la borra.
         merged.imageUri ?? null,
@@ -3004,11 +3018,11 @@ export async function updateCatalogFood(
     `UPDATE food_catalog SET
        name = ?, carbs_per_100g = ?, protein_per_100g = ?, fat_per_100g = ?,
        fiber_per_100g = ?, kcal_per_100g = ?, serving_grams = ?, serving_label = ?,
-       image_uri = ?
+       serving_source = ?, image_uri = ?
      WHERE key = ?`,
     next.name, next.carbsPer100g, next.proteinPer100g, next.fatPer100g,
     next.fiberPer100g, next.kcalPer100g,
-    next.servingGrams ?? null, next.servingLabel ?? null,
+    next.servingGrams ?? null, next.servingLabel ?? null, next.servingSource ?? null,
     next.imageUri ?? null,
     key,
   );
@@ -3049,12 +3063,12 @@ export async function createCatalogFoodVariant(
   }
   await db.runAsync(
     `INSERT INTO food_catalog
-       (key, name, carbs_per_100g, protein_per_100g, fat_per_100g, fiber_per_100g, kcal_per_100g, times_seen, last_seen_at, serving_grams, serving_label, image_uri)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+       (key, name, carbs_per_100g, protein_per_100g, fat_per_100g, fiber_per_100g, kcal_per_100g, times_seen, last_seen_at, serving_grams, serving_label, serving_source, image_uri)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
     key, created.name,
     created.carbsPer100g, created.proteinPer100g, created.fatPer100g,
     created.fiberPer100g, created.kcalPer100g, created.lastSeenAt,
-    created.servingGrams ?? null, created.servingLabel ?? null,
+    created.servingGrams ?? null, created.servingLabel ?? null, created.servingSource ?? null,
     created.imageUri ?? null,
   );
   return created;
@@ -3069,6 +3083,7 @@ interface FoodCatalogRow {
   fat_per_100g: number; fiber_per_100g: number; kcal_per_100g: number;
   times_seen: number; last_seen_at: string;
   serving_grams: number | null; serving_label: string | null;
+  serving_source: string | null;
   image_uri: string | null;
 }
 
@@ -3085,6 +3100,10 @@ function rowToCatalogFood(row: FoodCatalogRow): CatalogFood {
     lastSeenAt: row.last_seen_at,
     ...(row.serving_grams === null ? {} : { servingGrams: row.serving_grams }),
     ...(row.serving_label === null ? {} : { servingLabel: row.serving_label }),
+    // NULL = fila anterior a la columna = la escribió ella. Ver la migración.
+    ...(row.serving_grams === null
+      ? {}
+      : { servingSource: row.serving_source === 'ai' ? ('ai' as const) : ('user' as const) }),
     // Una fila anterior a la columna llega con `undefined` y así se queda: no
     // se inventa una imagen para datos viejos, se muestra el fallback.
     ...(row.image_uri === null || row.image_uri === undefined ? {} : { imageUri: row.image_uri }),

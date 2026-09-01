@@ -145,6 +145,13 @@ export async function editCatalogFoodWithInstruction(input: {
     fatPer100g: number;
     fiberPer100g: number;
     kcalPer100g: number;
+    /**
+     * La porción que ya tiene el alimento, si la tiene. Viaja para que una
+     * instrucción como "una porción son dos rebanadas" tenga contra qué
+     * corregir, en vez de que el modelo la invente desde cero.
+     */
+    servingGrams?: number | undefined;
+    servingLabel?: string | undefined;
   };
 }): Promise<MealAnalysisResult> {
   return editMealWithInstruction({
@@ -154,6 +161,8 @@ export async function editCatalogFoodWithInstruction(input: {
       foods: [{
         name: input.food.name,
         estimatedGrams: 100,
+        servingGrams: input.food.servingGrams ?? null,
+        servingLabel: input.food.servingLabel ?? null,
         carbsG: input.food.carbsPer100g,
         proteinG: input.food.proteinPer100g,
         fatG: input.food.fatPer100g,

@@ -122,6 +122,17 @@ function FoodEditor({
           fatPer100g: parseNonNegativeNumber(fat) ?? 0,
           fiberPer100g: parseNonNegativeNumber(fiber) ?? 0,
           kcalPer100g: parseNonNegativeNumber(kcal) ?? 0,
+          // La porción que hay ahora mismo en el formulario, para que una
+          // instrucción como "una porción son dos rebanadas" corrija sobre
+          // algo en vez de inventarlo.
+          //
+          // El campo vacío se descarta **antes** de parsear: `Number('')` es
+          // 0, no `NaN`, así que `parseNonNegativeNumber('')` devuelve 0 y sin
+          // esta guarda la IA recibiría "una porción pesa 0 g".
+          ...(servingGrams.trim() === '' || parseNonNegativeNumber(servingGrams) === null
+            ? {}
+            : { servingGrams: parseNonNegativeNumber(servingGrams) as number }),
+          ...(servingLabel.trim() === '' ? {} : { servingLabel: servingLabel.trim() }),
         },
       });
       const revised = result.estimate.foods[0];
@@ -141,6 +152,11 @@ function FoodEditor({
       setFat(per100(revised.fatG));
       setFiber(per100(revised.fiberG));
       setKcal(per100(revised.caloriesKcal));
+      // La porción también, si la propuso: "una porción son dos rebanadas" es
+      // justo el tipo de corrección que se escribe acá, y sin esto la
+      // instrucción se aplicaba a los macros y la porción quedaba intacta.
+      if (revised.servingGrams !== null) setServingGrams(numberText(revised.servingGrams));
+      if (revised.servingLabel !== null) setServingLabel(revised.servingLabel);
       setMessage('Campos actualizados con la propuesta. Revísalos: no se guarda nada hasta que toques Guardar.');
     } catch (error) {
       setMessage(error instanceof MobileApiError

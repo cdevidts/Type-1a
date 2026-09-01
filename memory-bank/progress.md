@@ -1,33 +1,32 @@
 # Progress
 
-_Última actualización: 2026-08-28._
+_Última actualización: 2026-09-01._
 
 ## Estado de validación
 
 | | |
 |---|---|
 | `pnpm verify` | Etapas verdes; el wrapper local de Windows conserva su fallo de rutas preexistente. CI Linux es la verificación integral |
-| Tests | **619** — domain 334, mobile 237, ai 15, schemas 13, cgm 10, api 10 |
-| Bundle de Metro | **1.352 módulos** (+1: `dbWriteQueue.ts`) |
+| Tests | **637** — domain 352, mobile 237, ai 15, schemas 13, cgm 10, api 10 |
+| Bundle de Metro | **1.354 módulos** (+2: `dbWriteQueue.ts`, `CatalogServingModal.tsx`) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
-⚠️ La base real medida es **1.341**, no los 1.333 que decía esta tabla. Los 11
-que suma el trabajo del 2026-08-27/28 son subpaths de Lucide y módulos nuevos,
-ningún barrel. Si vuelve a divergir, **la medición manda sobre la tabla**.
+⚠️ La base real medida es **1.341**. Los 13 que suma el trabajo desde entonces
+son subpaths de Lucide y módulos nuevos, ningún barrel. Si vuelve a divergir,
+**la medición manda sobre la tabla**.
 
 `pnpm verify` corre, en orden: `verify:contracts`, `lint`, `typecheck`, `test`,
 `verify:bundle` (export real de Metro).
 
 ## Entregado y en el dispositivo
 
-Build `preview` (`.apk`) del 2026-08-26 instalado: notificaciones por tipo (Fase
-19), "Comida" bajo un timestamp con sus tres decisiones (Fase 21), el episodio
-capturando su ventana (Fase 23), catálogo de insulinas con duración, Patrones
-por covariables, cetonas e iconos de Lucide. El detalle, en los commits.
+Build del 2026-08-26: notificaciones por tipo (Fase 19), "Comida" bajo un
+timestamp (Fase 21), el episodio con su ventana (Fase 23), catálogo de insulinas,
+Patrones por covariables, cetonas e iconos de Lucide.
 
-Lo del 2026-08-27/28 (Modal Maestro, calendario, carrito, fibra y el arreglo de
-las transacciones) **todavía no tiene build**: el teléfono de Verónica **sigue
-sin poder guardar** hasta que se instale uno nuevo.
+Build `preview` del 2026-08-31 (`a706510`, build `980faeee`) instalado: Modal
+Maestro, calendario, carrito, fibra y el arreglo de las transacciones SQLite.
+Lo del 2026-09-01 (porción propuesta y confirmada) **todavía no tiene build**.
 
 ## Deuda conocida
 
@@ -88,10 +87,9 @@ en el mismo commit. Quedan tres, declarados a propósito:
 ### 🟡 Menores
 
 - **Ni la UI ni `db.ts` tienen test de ejecución**: el repo no monta React y
-  `db.ts` importa nativos de Expo. Cada decisión se extrajo a un módulo puro con
-  test (`masterModal.ts`, `entryTime.ts`, `mealCarbMirror.ts`, `mealFields.ts`,
-  `meal-cart.ts`) — la salida que pide `AGENTS.md` —, pero el cableado hasta la
-  pantalla y el comportamiento transaccional se comprobaron leyendo el diff.
+  `db.ts` importa nativos de Expo. Cada decisión vive en un módulo puro con test
+  —la salida que pide `AGENTS.md`—, pero el cableado hasta la pantalla y el
+  comportamiento transaccional se comprobaron leyendo el diff.
 - Una escritura **suelta** (`runAsync` fuera de transacción) sigue pudiendo caer
   dentro de la transacción de otro y volver atrás con ella. Ventana angosta y de
   bajo daño —ajustes, no historial—; cerrarla exige encolar también las sueltas.
@@ -142,6 +140,8 @@ detalle vive en `git log --format=full`.
 | `estimatedCarbsG` viajó en un spread hacia una interfaz que no lo declaraba | segunda vez que muerde: el campo se declara o se pierde |
 | La tarea de fondo recibía **la misma conexión nativa** que la pantalla (Android cachea por ruta+opciones) y le corría `initializeDatabase` y un `BEGIN` encima cada ~15 min | una conexión por dueño: la tarea de fondo abre con `useNewConnection` y la concurrencia real la absorben WAL y `busy_timeout` |
 | `withTransactionAsync` de Expo tiene el `BEGIN` dentro del `try`: el `ROLLBACK` de la que fallaba cerraba la transacción de la otra, que seguía escribiendo suelta y terminaba en "no se pudo guardar" con filas ya aplicadas | **una sola** cola FIFO por conexión (`dbWriteQueue.ts`); dos colas contra una conexión anidan igual |
+| Un alimento sin `estimatedGrams` —lo que el prompt pide devolver cuando no puede estimar la porción— se descartaba del catálogo **sin un solo aviso**, y la pantalla decía "guardado" | lo que no se puede guardar se muestra **con su razón**; un filtro silencioso es un dato perdido que nadie va a buscar |
+| El catálogo caía siempre a 100 g porque la IA no podía proponer porción, y el `INSERT` del alta ni siquiera escribía las columnas de porción | la porción la propone la IA y la **confirma** la usuaria: multiplica los cuatro macros, así que un número que nadie miró no entra por esa puerta |
 
 ## Redeploy del backend
 

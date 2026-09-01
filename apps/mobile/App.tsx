@@ -23,7 +23,8 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import {
   basalInsulinLookbackMinutes,
   buildReportRows,
-  catalogEntriesFrom,
+  buildCatalogProposals,
+  type CatalogProposalSet,
   catalogEntryFromPortion,
   insulinNameForType,
   isPlausibleInsulinDuration,
@@ -37,6 +38,7 @@ import type {
   CGMProviderStatus,
   CGMReading,
   InsulinEvent,
+  MealAnalysisResult,
   MealEvent,
   TherapyProfile,
 } from '@type1a/schemas';
@@ -54,6 +56,7 @@ import { insulinProfileFields } from './src/components/InsulinPicker';
 import { GlucoseCard } from './src/components/GlucoseCard';
 import { InsulinAssociationModal } from './src/components/InsulinAssociationModal';
 import { CatalogModal, type CatalogEdit } from './src/components/CatalogModal';
+import { CatalogServingModal } from './src/components/CatalogServingModal';
 import type { MealEditResult } from './src/components/MealEditModal';
 import { MealModal, type ConfirmedMealDraft } from './src/components/MealModal';
 import { SettingsModal } from './src/components/SettingsModal';
@@ -219,6 +222,15 @@ function Type1AApp() {
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [nutritionProfile, setNutritionProfile] = useState<NutritionProfile | null>(null);
   const [catalogFoods, setCatalogFoods] = useState<CatalogFood[]>([]);
+  /**
+   * Lo que la IA propone guardar al catálogo, esperando confirmación.
+   *
+   * La comida ya quedó registrada cuando esto se llena: el catálogo es un paso
+   * aparte y opcional. Antes se escribía solo, y eso produjo las dos fallas que
+   * documenta `CatalogServingModal` — alimentos descartados en silencio y
+   * porciones siempre en 100 g.
+   */
+  const [catalogProposals, setCatalogProposals] = useState<CatalogProposalSet | null>(null);
   const [showGlucoseOnLockScreen, setShowGlucoseOnLockScreen] = useState(false);
   const [mealAlarmOffsets, setMealAlarmOffsets] = useState<number[]>([...DEFAULT_MEAL_ALARM_OFFSETS_MINUTES]);
   const [correctionReminder, setCorrectionReminder] = useState<CorrectionReminderSettings>({
@@ -533,6 +545,30 @@ function Type1AApp() {
    * Nunca lanza: el catálogo es una comodidad y su fallo no puede tumbar el
    * registro de lo que se comió.
    */
+
+  /**
+   * Prepara la confirmación de catálogo de un análisis, en vez de escribirlo
+   * de una. No lanza nunca: la comida ya está guardada y el catálogo es una
+   * comodidad — ver `CatalogServingModal`.
+   */
+  function proposeCatalog(
+    analysis: MealAnalysisResult,
+    seenAt: string,
+    imageUri: string | undefined,
+  ): void {
+    try {
+      setCatalogProposals(buildCatalogProposals(analysis.estimate.foods, {
+        seenAt,
+        imageUri,
+        // El catálogo actual: decide si confirmar es un alta o una fusión, y
+        // evita ofrecer reemplazar una porción que ella ya fijó a mano.
+        existingByKey: new Map(catalogFoods.map((food) => [food.key, food])),
+      }));
+    } catch (error) {
+      logSaveError('App.proposeCatalog', error);
+    }
+  }
+
   async function applyCatalogWrite(
     write: NonNullable<ConfirmedMealDraft['catalogWrite']>,
     timestamp: string,
@@ -636,14 +672,7 @@ function Type1AApp() {
         || (draft.analysis !== undefined && draft.saveToCatalog !== false);
       if (draft.catalogWrite !== undefined) await applyCatalogWrite(draft.catalogWrite, timestamp);
       if (draft.analysis !== undefined && draft.saveToCatalog !== false) {
-        try {
-          await recordCatalogFoods(db, catalogEntriesFrom(draft.analysis.estimate.foods, timestamp, draft.imageUri));
-        } catch (error) {
-          logSaveError('App.recordCatalogFoods', error);
-          setNotice('No se pudo guardar en el catálogo.');
-          await loadLocalState();
-          return;
-        }
+        proposeCatalog(draft.analysis, timestamp, draft.imageUri);
       }
       setNotice(wroteCatalog
         ? 'Guardado en tu catálogo. No se registró ninguna comida de hoy.'
@@ -686,13 +715,9 @@ function Type1AApp() {
     // El catálogo se alimenta de cada análisis, y nunca puede impedir que la
     // comida se guarde: es una comodidad, no parte del registro.
     if (draft.analysis !== undefined && draft.saveToCatalog !== false) {
-      try {
-        // Ver `saveEntry`: la foto es representación del alimento, no
-        // evidencia de sus macros.
-        await recordCatalogFoods(db, catalogEntriesFrom(draft.analysis.estimate.foods, timestamp, draft.imageUri));
-      } catch (error) {
-        logSaveError('App.recordCatalogFoods', error);
-      }
+      // Ver `CatalogServingModal`: la foto es representación del alimento, no
+      // evidencia de sus macros, y la porción se confirma antes de guardarse.
+      proposeCatalog(draft.analysis, timestamp, draft.imageUri);
     }
     await scheduleEpisodeNotifications(episodeId, timestamp, mealAlarmOffsets, reminderAlertStyle);
     setNotice(`Comida guardada. El episodio se completará con CGM a ${mealAlarmOffsets.map((minutes) => `+${minutes}`).join(', ')} minutos.`);
@@ -808,14 +833,10 @@ function Type1AApp() {
     // Antes esta hoja alimentaba el catálogo **siempre** que hubiera análisis,
     // sin ofrecer la decisión: dos caminos para lo mismo con reglas distintas.
     if (draft.analysis !== undefined && draft.saveToCatalog !== false) {
-      try {
-        // La foto de la comida viaja al catálogo como **representación** del
-        // alimento. Sale de la imagen real que ella sacó, nunca se genera, y
-        // no se usa para inferir macros: los macros vienen del análisis.
-        await recordCatalogFoods(db, catalogEntriesFrom(draft.analysis.estimate.foods, draft.timestamp, draft.imageUri));
-      } catch (error) {
-        logSaveError('App.recordCatalogFoods', error);
-      }
+      // La foto de la comida viaja al catálogo como **representación** del
+      // alimento. Sale de la imagen real que ella sacó, nunca se genera, y no
+      // se usa para inferir macros: los macros vienen del análisis.
+      proposeCatalog(draft.analysis, draft.timestamp, draft.imageUri);
     }
     if (outcome.episodeId !== null) {
       await scheduleEpisodeNotifications(outcome.episodeId, draft.timestamp, mealAlarmOffsets, reminderAlertStyle);
@@ -1498,6 +1519,20 @@ function Type1AApp() {
           if (removed > 0) {
             setNotice(`Se borraron ${removed} lectura(s) del sensor anterior para no mezclarlas con las nuevas. Tus registros manuales e importados siguen ahí.`);
           }
+        }}
+      />
+      <CatalogServingModal
+        visible={catalogProposals !== null}
+        proposals={catalogProposals}
+        onClose={() => { setCatalogProposals(null); }}
+        onConfirm={async ({ entries }) => {
+          await recordCatalogFoods(db, entries);
+          // El picker de comida lee de este estado: sin refrescar, el alimento
+          // recién confirmado no aparecería hasta reabrir la app.
+          setCatalogFoods(await getCatalogFoods(db));
+          setNotice(entries.length === 1
+            ? 'Alimento guardado en tu catálogo.'
+            : `${entries.length} alimentos guardados en tu catálogo.`);
         }}
       />
       <SummaryModal

@@ -27,6 +27,8 @@ function food(overrides: Partial<FoodEstimate> = {}): FoodEstimate {
   return {
     name: 'Pan integral',
     estimatedGrams: 50,
+    servingGrams: null,
+    servingLabel: null,
     carbsG: 20,
     proteinG: 5,
     fatG: 2,
@@ -368,14 +370,14 @@ describe('imagen del catálogo', () => {
 
   it('toCatalogEntry propaga la foto de la comida analizada, sin inventarla', () => {
     const conFoto = toCatalogEntry(
-      { name: 'Pan', estimatedGrams: 100, carbsG: 50, proteinG: 8, fatG: 3, fiberG: 4, caloriesKcal: 260, confidence: 0.8 },
+      { name: 'Pan', estimatedGrams: 100, servingGrams: null, servingLabel: null, carbsG: 50, proteinG: 8, fatG: 3, fiberG: 4, caloriesKcal: 260, confidence: 0.8 },
       '2026-08-27T12:00:00.000Z',
       'file:///nueva.jpg',
     );
     expect(conFoto?.imageUri).toBe('file:///nueva.jpg');
 
     const sinFoto = toCatalogEntry(
-      { name: 'Pan', estimatedGrams: 100, carbsG: 50, proteinG: 8, fatG: 3, fiberG: 4, caloriesKcal: 260, confidence: 0.8 },
+      { name: 'Pan', estimatedGrams: 100, servingGrams: null, servingLabel: null, carbsG: 50, proteinG: 8, fatG: 3, fiberG: 4, caloriesKcal: 260, confidence: 0.8 },
       '2026-08-27T12:00:00.000Z',
     );
     expect(sinFoto?.imageUri).toBeUndefined();

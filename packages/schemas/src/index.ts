@@ -206,6 +206,36 @@ export type HbA1cLabResult = z.infer<typeof HbA1cLabResultSchema>;
 export const FoodEstimateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   estimatedGrams: z.number().nonnegative().max(3000).finite().nullable(),
+  /**
+   * Cuánto pesa **una porción típica** de este alimento, independiente de
+   * cuánto se comió ahora.
+   *
+   * Es el denominador que le faltaba al catálogo. `estimatedGrams` dice
+   * cuánto había en el plato y el prompt manda devolverlo `null` cuando no se
+   * puede estimar —una lata de bebida descrita por texto, por ejemplo—, y sin
+   * él `toCatalogEntry` descartaba el alimento **en silencio**: no se podía
+   * normalizar por 100 g. Una porción típica sí se puede saber sin ver el
+   * plato ("una lata son 473 ml", "dos rebanadas son 60 g"), así que rescata
+   * exactamente esos casos.
+   *
+   * Y resuelve el otro lado: sin esto el catálogo caía siempre a 100 g, y
+   * reusar un alimento obligaba a averiguar por fuera qué fracción de 100 g
+   * es una porción de verdad.
+   *
+   * `null` cuando el modelo no puede afirmarlo. **Nunca se rellena con un
+   * default**: un 100 inventado se multiplica por todos los macros y termina
+   * en los carbohidratos sugeridos.
+   */
+  servingGrams: z.number().positive().max(2000).finite().nullable().default(null),
+  /**
+   * Cómo se dice esa porción: "1 lata (473 ml)", "2 rebanadas", "1 taza".
+   *
+   * Ambos con `.default(null)` a propósito: si el modelo omite el campo, se
+   * pierde la porción y nada más. Exigirlo haría que una respuesta incompleta
+   * tumbara el análisis entero y la comida cayera a registro manual — un
+   * precio desproporcionado por un dato accesorio.
+   */
+  servingLabel: z.string().trim().min(1).max(60).nullable().default(null),
   carbsG: z.number().nonnegative().max(500).finite(),
   proteinG: z.number().nonnegative().max(500).finite(),
   fatG: z.number().nonnegative().max(500).finite(),
