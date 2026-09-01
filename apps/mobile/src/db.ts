@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { z } from 'zod';
 
-import { applyCatalogEdit, blendCatalogEntry, convertGlucose, foodKey, insulinNameForType, insulinPurposeForEntry, isPlausibleCatalogEntry, planMySugrImport, resolveInsulinNameForEdit, resolveInsulinPurposeForEdit, type CatalogFood, type CatalogFoodEdit } from '@type1a/domain';
+import { applyCatalogEdit, applyRecipeFixPlan, blendCatalogEntry, convertGlucose, foodKey, isValidRecipeItemGrams, MAX_RECIPE_ITEM_GRAMS, MIN_RECIPE_ITEM_GRAMS, recipesUsingFood, insulinNameForType, insulinPurposeForEntry, isPlausibleCatalogEntry, planMySugrImport, resolveInsulinNameForEdit, resolveInsulinPurposeForEdit, type CatalogFood, type CatalogFoodEdit, type Recipe, type RecipeFixPlan, type RecipeItem } from '@type1a/domain';
 import {
   ActivityEventSchema,
   CGMReadingSchema,
@@ -176,6 +176,34 @@ export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS vitals_events_timestamp ON vitals_events(timestamp);
+    -- Recetas (2026-09-01). ADITIVAS: ninguna fila de food_catalog se toca, se
+    -- reinterpreta ni se borra, así que el catálogo que ya está en el teléfono
+    -- sigue funcionando exactamente igual.
+    --
+    -- Una receta NO guarda macros. Sus totales se derivan de sus componentes
+    -- al leer (recipeTotals, en dominio): corregir el arroz corrige todas las
+    -- recetas que lo usan, y no hay dos verdades que diverjan. Ver
+    -- packages/domain/src/recipe.ts
+    CREATE TABLE IF NOT EXISTS recipes (
+      id TEXT PRIMARY KEY,
+      key TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      image_uri TEXT,
+      times_seen INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL
+    );
+    -- ON DELETE CASCADE sobre la receta —borrar el plato se lleva su
+    -- composición— pero NUNCA sobre food_catalog: borrar un alimento usado
+    -- está bloqueado a propósito, y una cascada ahí cambiaría recetas a
+    -- espaldas de la usuaria. Ver deleteCatalogFood.
+    CREATE TABLE IF NOT EXISTS recipe_items (
+      recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+      food_key TEXT NOT NULL,
+      grams REAL NOT NULL,
+      PRIMARY KEY (recipe_id, food_key)
+    );
+    CREATE INDEX IF NOT EXISTS recipe_items_food_key ON recipe_items(food_key);
     CREATE TABLE IF NOT EXISTS hba1c_results (
       id TEXT PRIMARY KEY,
       timestamp TEXT NOT NULL,
@@ -3074,8 +3102,195 @@ export async function createCatalogFoodVariant(
   return created;
 }
 
+/**
+ * Error de borrado bloqueado. Lleva las recetas afectadas para que la pantalla
+ * pueda ofrecer resolverlas en vez de dejar un callejón sin salida.
+ */
+export class FoodInUseByRecipesError extends Error {
+  constructor(public readonly recipes: Recipe[]) {
+    super(
+      recipes.length === 1
+        ? `No se puede borrar: lo usa la receta "${recipes[0]!.name}".`
+        : `No se puede borrar: lo usan ${recipes.length} recetas.`,
+    );
+    this.name = 'FoodInUseByRecipesError';
+  }
+}
+
+/**
+ * Borra un alimento del catálogo, **salvo que alguna receta lo use**.
+ *
+ * El bloqueo es la decisión de producto (Verónica, 2026-09-01) y las dos
+ * alternativas se descartaron por lo que le hacen a un dato que nadie estaba
+ * editando: la cascada cambia recetas a espaldas de la usuaria, y congelar los
+ * totales deja una receta con componentes inexistentes y una suma que ya no se
+ * puede verificar contra nada.
+ *
+ * No es un callejón: quien reciba este error abre la pantalla de ayuda y
+ * resuelve receta por receta (`applyRecipeFixPlan` + `resolveRecipesAndDeleteFood`).
+ */
 export async function deleteCatalogFood(db: SQLiteDatabase, key: string): Promise<void> {
+  const blocking = recipesUsingFood(key, await getRecipes(db));
+  if (blocking.length > 0) throw new FoodInUseByRecipesError(blocking);
   await db.runAsync('DELETE FROM food_catalog WHERE key = ?', key);
+}
+
+interface RecipeRow {
+  id: string; key: string; name: string;
+  image_uri: string | null; times_seen: number;
+  created_at: string; last_seen_at: string;
+}
+
+/**
+ * Todas las recetas con sus componentes.
+ *
+ * Se leen enteras en dos consultas y se arman en memoria: el catálogo de una
+ * persona son decenas de filas, no miles, y una consulta por receta sería N+1
+ * para nada.
+ */
+export async function getRecipes(db: SQLiteDatabase): Promise<Recipe[]> {
+  const rows = await db.getAllAsync<RecipeRow>(
+    'SELECT * FROM recipes ORDER BY times_seen DESC, last_seen_at DESC',
+  );
+  if (rows.length === 0) return [];
+  const items = await db.getAllAsync<{ recipe_id: string; food_key: string; grams: number }>(
+    'SELECT recipe_id, food_key, grams FROM recipe_items',
+  );
+  const byRecipe = new Map<string, RecipeItem[]>();
+  for (const item of items) {
+    const list = byRecipe.get(item.recipe_id) ?? [];
+    list.push({ foodKey: item.food_key, grams: item.grams });
+    byRecipe.set(item.recipe_id, list);
+  }
+  return rows.map((row) => ({
+    id: row.id,
+    key: row.key,
+    name: row.name,
+    items: byRecipe.get(row.id) ?? [],
+    timesSeen: row.times_seen,
+    createdAt: row.created_at,
+    lastSeenAt: row.last_seen_at,
+    ...(row.image_uri === null ? {} : { imageUri: row.image_uri }),
+  }));
+}
+
+/**
+ * Crea una receta, o **suma una vista** a la que ya existe con esa clave.
+ *
+ * Volver a fotografiar el mismo plato no crea un duplicado ni reescribe su
+ * composición: la composición es de la usuaria desde que la confirmó, igual
+ * que la porción de un alimento. Solo se actualizan `times_seen`,
+ * `last_seen_at` y —si no tenía— la foto.
+ */
+export async function saveRecipe(
+  db: SQLiteDatabase,
+  input: { name: string; items: RecipeItem[]; imageUri?: string | undefined; seenAt: string },
+): Promise<string> {
+  const key = foodKey(input.name);
+  if (key === '') throw new Error('La receta necesita un nombre.');
+  if (input.items.length === 0) throw new Error('Una receta necesita al menos un alimento.');
+  for (const item of input.items) {
+    if (!isValidRecipeItemGrams(item.grams)) {
+      throw new Error(`Los gramos de un componente deben estar entre ${MIN_RECIPE_ITEM_GRAMS} y ${MAX_RECIPE_ITEM_GRAMS} g.`);
+    }
+  }
+
+  let recipeId = '';
+  await serializedTransaction(db, async () => {
+    const existing = await db.getFirstAsync<{ id: string; image_uri: string | null }>(
+      'SELECT id, image_uri FROM recipes WHERE key = ?', key,
+    );
+    if (existing !== null) {
+      recipeId = existing.id;
+      await db.runAsync(
+        'UPDATE recipes SET times_seen = times_seen + 1, last_seen_at = ?, image_uri = ? WHERE id = ?',
+        input.seenAt, existing.image_uri ?? input.imageUri ?? null, existing.id,
+      );
+      return;
+    }
+    recipeId = Crypto.randomUUID();
+    await db.runAsync(
+      'INSERT INTO recipes (id, key, name, image_uri, times_seen, created_at, last_seen_at) VALUES (?, ?, ?, ?, 1, ?, ?)',
+      recipeId, key, input.name.trim(), input.imageUri ?? null, input.seenAt, input.seenAt,
+    );
+    for (const item of input.items) {
+      await db.runAsync(
+        'INSERT OR REPLACE INTO recipe_items (recipe_id, food_key, grams) VALUES (?, ?, ?)',
+        recipeId, item.foodKey, item.grams,
+      );
+    }
+  });
+  return recipeId;
+}
+
+/** Reescribe la composición de una receta. Vacía no se acepta: ver `isEmptyRecipe`. */
+export async function updateRecipeItems(
+  db: SQLiteDatabase,
+  recipeId: string,
+  items: readonly RecipeItem[],
+): Promise<void> {
+  if (items.length === 0) throw new Error('Una receta sin alimentos no se puede guardar. Bórrala en su lugar.');
+  await serializedTransaction(db, async () => {
+    await db.runAsync('DELETE FROM recipe_items WHERE recipe_id = ?', recipeId);
+    for (const item of items) {
+      await db.runAsync(
+        'INSERT OR REPLACE INTO recipe_items (recipe_id, food_key, grams) VALUES (?, ?, ?)',
+        recipeId, item.foodKey, item.grams,
+      );
+    }
+  });
+}
+
+export async function deleteRecipe(db: SQLiteDatabase, recipeId: string): Promise<void> {
+  // `recipe_items` cae por la clave foránea con `ON DELETE CASCADE`; el
+  // `DELETE` explícito cubre una base donde `foreign_keys` no estuviera activo.
+  await serializedTransaction(db, async () => {
+    await db.runAsync('DELETE FROM recipe_items WHERE recipe_id = ?', recipeId);
+    await db.runAsync('DELETE FROM recipes WHERE id = ?', recipeId);
+  });
+}
+
+/** Actualiza la foto de una receta. `null` la quita. */
+export async function updateRecipePhoto(
+  db: SQLiteDatabase,
+  recipeId: string,
+  imageUri: string | null,
+): Promise<void> {
+  await db.runAsync('UPDATE recipes SET image_uri = ? WHERE id = ?', imageUri, recipeId);
+}
+
+/**
+ * Aplica el plan de resolución y borra el alimento **si el plan lo permite**.
+ *
+ * Todo en una transacción: dejar recetas resueltas a medias y el alimento sin
+ * borrar es un estado que nadie pidió. La decisión de qué es "permitido" vive
+ * en `applyRecipeFixPlan`, pura y con test — acá solo se escribe.
+ */
+export async function resolveRecipesAndDeleteFood(
+  db: SQLiteDatabase,
+  foodKeyToDelete: string,
+  plans: readonly RecipeFixPlan[],
+): Promise<{ deleted: boolean }> {
+  const outcome = applyRecipeFixPlan(foodKeyToDelete, await getRecipes(db), plans);
+  await serializedTransaction(db, async () => {
+    for (const updated of outcome.updated) {
+      await db.runAsync('DELETE FROM recipe_items WHERE recipe_id = ?', updated.id);
+      for (const item of updated.items) {
+        await db.runAsync(
+          'INSERT OR REPLACE INTO recipe_items (recipe_id, food_key, grams) VALUES (?, ?, ?)',
+          updated.id, item.foodKey, item.grams,
+        );
+      }
+    }
+    for (const recipeId of outcome.deletedRecipeIds) {
+      await db.runAsync('DELETE FROM recipe_items WHERE recipe_id = ?', recipeId);
+      await db.runAsync('DELETE FROM recipes WHERE id = ?', recipeId);
+    }
+    if (outcome.canDeleteFood) {
+      await db.runAsync('DELETE FROM food_catalog WHERE key = ?', foodKeyToDelete);
+    }
+  });
+  return { deleted: outcome.canDeleteFood };
 }
 
 interface FoodCatalogRow {

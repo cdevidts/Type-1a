@@ -9,6 +9,8 @@ import Trash2 from 'lucide-react-native/icons/trash-2';
 import WandSparkles from 'lucide-react-native/icons/wand-sparkles';
 
 import {
+  recipeTotals,
+  type Recipe,
   DEFAULT_SERVING_GRAMS,
   MAX_SERVING_GRAMS,
   isValidServingGrams,
@@ -444,6 +446,8 @@ export function CatalogModal({
   onLoad,
   onSaveFood,
   onDeleteFood,
+  recipes,
+  onDeleteRecipe,
   swipeHandlers,
 }: {
   visible: boolean;
@@ -451,6 +455,9 @@ export function CatalogModal({
   onLoad: (search: string) => Promise<CatalogFood[]>;
   onSaveFood: (key: string, edit: CatalogEdit) => Promise<void>;
   onDeleteFood: (food: CatalogFood) => Promise<void>;
+  /** Las recetas del catálogo. Sus totales se derivan de `foods` al vuelo. */
+  recipes: readonly Recipe[];
+  onDeleteRecipe: (recipe: Recipe) => Promise<void>;
   swipeHandlers?: GestureResponderHandlers | undefined;
 }) {
   const [search, setSearch] = useState('');
@@ -496,6 +503,27 @@ export function CatalogModal({
     const timer = setTimeout(() => { void load(search); }, 250);
     return () => { clearTimeout(timer); };
   }, [search, visible, load]);
+
+  const foodsByKey = new Map(foods.map((food) => [food.key, food]));
+
+  function confirmDeleteRecipe(recipe: Recipe): void {
+    Alert.alert(
+      `Borrar ${recipe.name}`,
+      'Se borra el plato. Sus alimentos siguen en el catálogo por separado, y las comidas ya registradas no se tocan.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Borrar',
+          style: 'destructive',
+          onPress: () => {
+            void onDeleteRecipe(recipe).catch((error: unknown) => {
+              logSaveError('CatalogModal.deleteRecipe', error);
+            });
+          },
+        },
+      ],
+    );
+  }
 
   function confirmDelete(food: CatalogFood): void {
     Alert.alert(
@@ -579,6 +607,56 @@ export function CatalogModal({
               editor cambia valores que después sugieren carbohidratos en cada
               comida que reuse el alimento.
             */}
+            {/*
+              Las recetas van primero y con su propia sección: son platos, no
+              alimentos, y mezclarlas en la misma grilla haría imposible saber
+              si "Arroz con pollo" es una cosa o dos. Sus macros **se derivan**
+              de sus componentes contra este mismo `foods`, así que corregir un
+              alimento corrige la receta sin tocarla.
+            */}
+            {recipes.length === 0 ? null : (
+              <View style={styles.recipesSection}>
+                <Text style={styles.sectionHeading}>Recetas</Text>
+                {recipes.map((recipe) => {
+                  const totals = recipeTotals(recipe, foodsByKey);
+                  const names = recipe.items
+                    .map((item) => foodsByKey.get(item.foodKey)?.name ?? item.foodKey)
+                    .join(' · ');
+                  return (
+                    <View key={recipe.id}>
+                      <FoodCard
+                        name={recipe.name}
+                        subtitle={`${recipe.items.length} alimentos · ${numberText(totals.grams)} g · ${names}`}
+                        {...(recipe.imageUri === undefined ? {} : { imageUri: recipe.imageUri })}
+                        macros={{
+                          carbsG: totals.carbsG,
+                          proteinG: totals.proteinG,
+                          fatG: totals.fatG,
+                          fiberG: totals.fiberG,
+                          caloriesKcal: totals.caloriesKcal,
+                        }}
+                        action={{
+                          kind: 'remove',
+                          label: `Borrar la receta ${recipe.name}`,
+                          onPress: () => { confirmDeleteRecipe(recipe); },
+                        }}
+                      />
+                      {totals.missingFoodKeys.length === 0 ? null : (
+                        // Un total que ignora un componente ausente miente
+                        // hacia abajo; se dice en vez de callarlo.
+                        <Text style={styles.recipeWarn}>
+                          Le falta {totals.missingFoodKeys.length}{' '}
+                          {totals.missingFoodKeys.length === 1 ? 'alimento' : 'alimentos'} del catálogo, así
+                          que este total es un mínimo.
+                        </Text>
+                      )}
+                    </View>
+                  );
+                })}
+                <Text style={styles.sectionHeading}>Alimentos</Text>
+              </View>
+            )}
+
             {foods.map((food) => (
               <View key={food.key}>
                 <FoodCard
@@ -729,6 +807,12 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm, borderWidth: 1, borderColor: colors.teal, paddingHorizontal: spacing.md,
   },
   photoButtonText: { color: colors.teal, fontSize: 13, fontWeight: '800' },
+  recipesSection: { marginBottom: spacing.sm },
+  sectionHeading: {
+    color: colors.navy, fontSize: 12, fontWeight: '900', letterSpacing: 0.4,
+    marginTop: spacing.md, marginBottom: spacing.xs, textTransform: 'uppercase',
+  },
+  recipeWarn: { color: colors.warning, fontSize: 11, lineHeight: 16, marginTop: -4, marginBottom: spacing.sm },
   removePhoto: {
     minHeight: 44, justifyContent: 'center', alignItems: 'center',
     borderRadius: radius.sm, borderWidth: 1, borderColor: colors.red,

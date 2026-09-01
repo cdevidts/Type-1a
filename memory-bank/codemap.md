@@ -106,18 +106,18 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
   carrito; solo cambia el control de la derecha (lápiz o X) y tocar el
   contenedor no edita. Las calorías van en chip neutro: no son un macro.
 - `StripCalendar.tsx` — la fila de días de Nutrición; su aritmética está en `entryTime.ts`.
+- `RecipeFixModal.tsx` — la salida al "no se puede borrar": resuelve receta por
+  receta. **Todo o nada**; la IA propone el sustituto, nunca lo aplica.
 - **Gráficos**: `GlucoseChart.tsx`, `SummaryCharts.tsx`; `reportExport.ts` dibuja SVG inline para el PDF.
 - `notifications.ts` — un canal de Android por tipo de alarma; Android congela
   sonido y vibración al crearlo.
-- `timelineVitals.ts` — cetonas y vitales **sueltos** del timeline. Un `WHERE`
-  de más los escondió, y son el dato de triage de CAD.
+- `timelineVitals.ts` — cetonas y vitales **sueltos**; un `WHERE` de más los escondió.
 - `mealFields.ts` — qué campos **son** una comida; un `false` de más borra
   historial. Un campo de comida nuevo en `UnifiedEntryInput` va acá.
   `promotesLooseCarbToMeal` decide cuándo un carbohidrato suelto pasa a ser un
   plato — o sea cuándo nace un episodio y suenan alarmas.
-- `mealNote.ts` — qué texto queda como nota de una comida, para que tocar el
-  registro diga qué se comió. Puro y con test por su techo duro: `note` es
-  `max(300)` en el esquema, y pasarse hace que Zod rechace la comida entera.
+- `mealNote.ts` — qué texto queda como nota de una comida. Techo duro: `note`
+  es `max(300)`, y pasarse hace que Zod rechace la comida entera.
 - `mealCarbMirror.ts` — qué carbohidrato **es** una comida ya visible. Esconder
   de más borra un dato; de menos, lo cuenta dos veces en el reporte médico.
 - `entryTime.ts` — días, meses y la hora de un registro histórico. "Cuándo pasó"

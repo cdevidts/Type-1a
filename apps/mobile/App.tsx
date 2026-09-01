@@ -25,6 +25,7 @@ import {
   buildReportRows,
   buildCatalogProposals,
   type CatalogProposalSet,
+  type Recipe,
   catalogEntryFromPortion,
   insulinNameForType,
   isPlausibleInsulinDuration,
@@ -57,6 +58,7 @@ import { GlucoseCard } from './src/components/GlucoseCard';
 import { InsulinAssociationModal } from './src/components/InsulinAssociationModal';
 import { CatalogModal, type CatalogEdit } from './src/components/CatalogModal';
 import { CatalogServingModal } from './src/components/CatalogServingModal';
+import { RecipeFixModal } from './src/components/RecipeFixModal';
 import type { MealEditResult } from './src/components/MealEditModal';
 import { MealModal, type ConfirmedMealDraft } from './src/components/MealModal';
 import { SettingsModal } from './src/components/SettingsModal';
@@ -100,6 +102,11 @@ import {
   getMealAlarmOffsets,
   createCatalogFoodVariant,
   deleteCatalogFood,
+  FoodInUseByRecipesError,
+  getRecipes,
+  deleteRecipe,
+  saveRecipe,
+  resolveRecipesAndDeleteFood,
   getCatalogFoods,
   updateCatalogFood,
   getMealEvents,
@@ -231,6 +238,16 @@ function Type1AApp() {
    * porciones siempre en 100 g.
    */
   const [catalogProposals, setCatalogProposals] = useState<CatalogProposalSet | null>(null);
+  /**
+   * Recetas del catálogo. Se leen enteras: son decenas de filas, y sus totales
+   * se derivan al vuelo contra `catalogFoods` (ver `recipeTotals`).
+   */
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  /**
+   * El alimento cuyo borrado quedó bloqueado por las recetas que lo usan, con
+   * esas recetas. Abrir esto es la salida al callejón de "no se puede borrar".
+   */
+  const [recipeFix, setRecipeFix] = useState<{ food: CatalogFood; recipes: Recipe[] } | null>(null);
   const [showGlucoseOnLockScreen, setShowGlucoseOnLockScreen] = useState(false);
   const [mealAlarmOffsets, setMealAlarmOffsets] = useState<number[]>([...DEFAULT_MEAL_ALARM_OFFSETS_MINUTES]);
   const [correctionReminder, setCorrectionReminder] = useState<CorrectionReminderSettings>({
@@ -264,7 +281,7 @@ function Type1AApp() {
     // latestLiveReading() finds the true latest live point regardless of
     // how wide this window is.
     const from = new Date(to.getTime() - 30 * 24 * 60 * 60_000);
-    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending, mealOffsets, correctionSettings, alertStyle, capillarySettings, onboardingSeen, isLegacyBackendInstall, nutrition, catalog] = await Promise.all([
+    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending, mealOffsets, correctionSettings, alertStyle, capillarySettings, onboardingSeen, isLegacyBackendInstall, nutrition, catalog, nextRecipes] = await Promise.all([
       getCGMReadings(db, from, to, readTally),
       getTimeline(db),
       getTherapyProfile(db),
@@ -280,6 +297,7 @@ function Type1AApp() {
       resolveLegacyBackendSensor(db, LEGACY_BACKEND_SENSOR_KEY),
       getNutritionProfile(db),
       getCatalogFoods(db),
+      getRecipes(db),
     ]);
     setReadings(cached);
     setReadingsUnreadable(readTally.unreadable);
@@ -309,6 +327,7 @@ function Type1AApp() {
     setOnboardingDone(onboardingSeen === 'true');
     setNutritionProfile(nutrition);
     setCatalogFoods(catalog);
+    setRecipes(nextRecipes);
     sensorSourceRef.current = await resolveSensorSource(isLegacyBackendInstall);
   }, [db]);
 
@@ -1526,18 +1545,44 @@ function Type1AApp() {
           }
         }}
       />
+      <RecipeFixModal
+        visible={recipeFix !== null}
+        food={recipeFix?.food ?? null}
+        recipes={recipeFix?.recipes ?? []}
+        catalog={catalogFoods}
+        onClose={() => { setRecipeFix(null); }}
+        onResolve={async (plans) => {
+          const key = recipeFix?.food.key;
+          if (key === undefined) return;
+          const { deleted } = await resolveRecipesAndDeleteFood(db, key, plans);
+          setRecipes(await getRecipes(db));
+          setCatalogFoods(await getCatalogFoods(db));
+          setNotice(deleted
+            ? 'Recetas actualizadas y alimento borrado.'
+            : 'Recetas actualizadas. El alimento sigue en tu catálogo porque alguna receta lo conserva.');
+        }}
+      />
       <CatalogServingModal
         visible={catalogProposals !== null}
         proposals={catalogProposals}
         onClose={() => { setCatalogProposals(null); }}
-        onConfirm={async ({ entries }) => {
+        onConfirm={async ({ entries, recipe }) => {
+          // Los alimentos van SIEMPRE primero, receta o no: sus totales se
+          // derivan de ellos, así que una receta escrita antes que sus
+          // componentes sería una suma sin sumandos.
           await recordCatalogFoods(db, entries);
+          if (recipe !== undefined) {
+            await saveRecipe(db, { ...recipe, seenAt: new Date().toISOString() });
+            setRecipes(await getRecipes(db));
+          }
           // El picker de comida lee de este estado: sin refrescar, el alimento
           // recién confirmado no aparecería hasta reabrir la app.
           setCatalogFoods(await getCatalogFoods(db));
-          setNotice(entries.length === 1
-            ? 'Alimento guardado en tu catálogo.'
-            : `${entries.length} alimentos guardados en tu catálogo.`);
+          setNotice(recipe !== undefined
+            ? `Receta "${recipe.name}" guardada con sus ${entries.length} alimentos.`
+            : entries.length === 1
+              ? 'Alimento guardado en tu catálogo.'
+              : `${entries.length} alimentos guardados en tu catálogo.`);
         }}
       />
       <SummaryModal
@@ -1557,9 +1602,25 @@ function Type1AApp() {
           // seguiría sugiriendo el valor que ella acaba de corregir.
           setCatalogFoods(await getCatalogFoods(db));
         }}
+        recipes={recipes}
+        onDeleteRecipe={async (recipe) => {
+          await deleteRecipe(db, recipe.id);
+          setRecipes(await getRecipes(db));
+          setNotice(`Receta "${recipe.name}" borrada. Sus alimentos siguen en el catálogo.`);
+        }}
         onDeleteFood={async (food) => {
-          await deleteCatalogFood(db, food.key);
-          setCatalogFoods(await getCatalogFoods(db));
+          try {
+            await deleteCatalogFood(db, food.key);
+            setCatalogFoods(await getCatalogFoods(db));
+          } catch (error) {
+            // Bloqueado porque alguna receta lo usa. **No es un error a
+            // reportar**: es el camino a la pantalla que lo resuelve.
+            if (error instanceof FoodInUseByRecipesError) {
+              setRecipeFix({ food, recipes: error.recipes });
+              return;
+            }
+            throw error;
+          }
         }}
       />
       <NutritionModal

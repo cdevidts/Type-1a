@@ -126,6 +126,49 @@ describe('buildCatalogProposals', () => {
   });
 });
 
+describe('propuesta de duplicado y de receta', () => {
+  const existente: CatalogFood = {
+    key: 'manzana', name: 'Manzana',
+    carbsPer100g: 14, proteinPer100g: 0.3, fatPer100g: 0.2, fiberPer100g: 2.4, kcalPer100g: 52,
+    timesSeen: 4, lastSeenAt: AT,
+  };
+
+  it('marca el parecido cuando el nombre no coincide exacto', () => {
+    const { proposals } = buildCatalogProposals([food({ name: 'Manzanas' })], {
+      seenAt: AT,
+      existingByKey: new Map([['manzana', existente]]),
+    });
+    expect(proposals[0]?.existing).toBe(false);
+    expect(proposals[0]?.similarTo?.food.name).toBe('Manzana');
+    expect(proposals[0]?.similarTo?.reason).toBe('mismas-palabras');
+  });
+
+  it('no marca parecido cuando ya es el mismo por clave: la fusión ya es un hecho', () => {
+    const { proposals } = buildCatalogProposals([food({ name: 'Manzana' })], {
+      seenAt: AT,
+      existingByKey: new Map([['manzana', existente]]),
+    });
+    expect(proposals[0]?.existing).toBe(true);
+    expect(proposals[0]?.similarTo).toBeNull();
+  });
+
+  it('propone nombre de receta solo con más de un alimento', () => {
+    const uno = buildCatalogProposals([food({ name: 'Arroz' })], { seenAt: AT });
+    expect(uno.suggestedRecipeName).toBeUndefined();
+
+    const dos = buildCatalogProposals(
+      [food({ name: 'Arroz' }), food({ name: 'Pollo' })],
+      { seenAt: AT },
+    );
+    expect(dos.suggestedRecipeName).toBe('Arroz con Pollo');
+  });
+
+  it('conserva la foto del plato para que la receta la herede', () => {
+    const set = buildCatalogProposals([food()], { seenAt: AT, imageUri: 'file:///plato.jpg' });
+    expect(set.imageUri).toBe('file:///plato.jpg');
+  });
+});
+
 describe('initialServingGrams — lo de la usuaria manda sobre lo de la IA', () => {
   it('precarga la porción que ella ya había fijado, no la nueva propuesta', () => {
     const existente: CatalogFood = {

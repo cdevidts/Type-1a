@@ -5,11 +5,13 @@ import {
   confirmProposal,
   initialServingGrams,
   rejectionMessage,
+  similarityLabel,
   MAX_SERVING_GRAMS,
   MIN_SERVING_GRAMS,
   type CatalogFood,
   type CatalogProposal,
   type CatalogProposalSet,
+  type RecipeItem,
 } from '@type1a/domain';
 
 import { parseNonNegativeNumber } from '../format';
@@ -53,9 +55,25 @@ const numberText = (value: number): string => String(Number(value.toFixed(2)));
  * lo que se comió.
  */
 
+/**
+ * Qué hacer con una comida de varios alimentos.
+ *
+ * Es la pregunta de tres salidas que pidió el producto, y aparece **solo**
+ * cuando el análisis devolvió más de un alimento: guardar "una manzana" como
+ * receta no tiene sentido.
+ */
+export type MultiFoodChoice = 'foods' | 'recipe' | 'both';
+
 /** La decisión ya tomada, lista para escribirse. */
 export interface ConfirmedCatalogEntries {
+  /** Los alimentos sueltos. Vacío si eligió guardar **solo** como receta. */
   entries: Omit<CatalogFood, 'timesSeen'>[];
+  /**
+   * La receta, si eligió guardarla. Sus componentes referencian por clave a
+   * los alimentos —que en ese caso también se escriben, porque una receta sin
+   * sus componentes en el catálogo sería una suma sin sumandos.
+   */
+  recipe?: { name: string; items: RecipeItem[]; imageUri?: string | undefined };
 }
 
 function ProposalRow({
@@ -119,6 +137,16 @@ function ProposalRow({
         accessibilityLabel={`Nombre de la porción de ${entry.name}`}
       />
 
+      {proposal.similarTo === null ? null : (
+        // Duplicados: **solo se propone**. Emparejar mal mezcla los macros de
+        // dos alimentos distintos, y eso después sugiere carbohidratos sin que
+        // nada lo delate; un duplicado es feo y reversible.
+        <Text style={styles.similar}>
+          {similarityLabel(proposal.similarTo.reason)}: "{proposal.similarTo.food.name}". Al confirmar se
+          fusiona con ese en vez de crear otro.
+        </Text>
+      )}
+
       {proposal.existingServingGrams !== null ? (
         <Text style={styles.kept}>
           Ya tenías {numberText(proposal.existingServingGrams)} g anotados para este alimento, así que se
@@ -154,6 +182,8 @@ export function CatalogServingModal({
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [choice, setChoice] = useState<MultiFoodChoice>('foods');
+  const [recipeName, setRecipeName] = useState('');
 
   useEffect(() => {
     if (!visible || proposals === null) return;
@@ -169,6 +199,10 @@ export function CatalogServingModal({
     setLabels(nextLabels);
     setMessage(null);
     setBusy(false);
+    // Por defecto, lo de siempre: alimentos sueltos. Guardar como receta es
+    // una decisión, no algo que pase por omisión.
+    setChoice('foods');
+    setRecipeName(proposals.suggestedRecipeName ?? '');
   }, [visible, proposals]);
 
   async function confirm(): Promise<void> {
@@ -196,9 +230,34 @@ export function CatalogServingModal({
       }
       entries.push(entry);
     }
+    // Una receta necesita nombre y al menos dos componentes; si no, no es un
+    // plato, es un alimento.
+    const wantsRecipe = isMulti && (choice === 'recipe' || choice === 'both');
+    if (wantsRecipe && recipeName.trim() === '') {
+      setMessage('Ponle un nombre a la receta, por ejemplo "Arroz con pollo".');
+      return;
+    }
     setBusy(true);
     try {
-      await onConfirm({ entries });
+      await onConfirm({
+        // Con "solo receta" los alimentos igual se escriben: una receta guarda
+        // referencias a sus componentes y sus totales se derivan de ellos, así
+        // que sin los alimentos en el catálogo sería una suma sin sumandos. Lo
+        // que cambia es que no se listan sueltos en la grilla.
+        entries,
+        ...(wantsRecipe
+          ? {
+              recipe: {
+                name: recipeName.trim(),
+                items: proposals.proposals.map((proposal) => ({
+                  foodKey: proposal.entry.key,
+                  grams: proposal.basisGrams,
+                })),
+                ...(proposals.imageUri === undefined ? {} : { imageUri: proposals.imageUri }),
+              },
+            }
+          : {}),
+      });
       onClose();
     } catch (error) {
       logSaveError('CatalogServingModal.confirm', error);
@@ -210,6 +269,9 @@ export function CatalogServingModal({
 
   const list = proposals?.proposals ?? [];
   const rejected = proposals?.rejected ?? [];
+  // La pregunta de tres salidas solo aparece con más de un alimento: guardar
+  // "una manzana" como receta no significa nada.
+  const isMulti = list.length > 1;
 
   return (
     <ModalShell visible={visible} title="Guardar en tu catálogo" onClose={onClose}>
@@ -223,6 +285,49 @@ export function CatalogServingModal({
           El análisis no dejó ningún alimento para el catálogo. Analiza la comida con foto o con una
           descripción y vuelve a intentarlo.
         </Text>
+      ) : null}
+
+      {isMulti ? (
+        <View style={styles.block}>
+          <Text style={styles.blockTitle}>Son {list.length} alimentos. ¿Cómo lo guardas?</Text>
+          <Text style={styles.blockHint}>
+            Una receta es el plato completo con sus alimentos adentro. Guardarla arregla que cada
+            componente herede la foto del plato entero: dentro de la receta cada uno puede tener la suya.
+          </Text>
+          <View style={styles.choices}>
+            {([
+              ['foods', 'Por separado'],
+              ['recipe', 'Como receta'],
+              ['both', 'Las dos cosas'],
+            ] as const).map(([value, label]) => (
+              <Pressable
+                key={value}
+                style={[styles.choice, choice === value && styles.choiceOn]}
+                onPress={() => { setChoice(value); }}
+                accessibilityRole="button"
+                accessibilityState={{ selected: choice === value }}
+              >
+                <Text style={[styles.choiceText, choice === value && styles.choiceTextOn]}>{label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {choice === 'foods' ? null : (
+            <>
+              <TextInput
+                value={recipeName}
+                onChangeText={setRecipeName}
+                style={styles.nameInput}
+                placeholder="Nombre del plato"
+                placeholderTextColor={colors.muted}
+                accessibilityLabel="Nombre de la receta"
+              />
+              <Text style={styles.blockHint}>
+                Sus macros no se guardan: siempre son la suma de sus alimentos. Si después corriges uno,
+                la receta se corrige sola.
+              </Text>
+            </>
+          )}
+        </View>
       ) : null}
 
       {list.map((proposal) => (
@@ -294,6 +399,29 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm, minHeight: 44,
   },
   kept: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: spacing.sm },
+  similar: {
+    color: colors.navy, backgroundColor: colors.tealSoft, borderRadius: radius.sm,
+    padding: spacing.sm, fontSize: 11, lineHeight: 16, marginTop: spacing.sm,
+  },
+  choices: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.sm },
+  choice: {
+    minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.md,
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface,
+  },
+  choiceOn: { borderColor: colors.teal, backgroundColor: colors.tealSoft },
+  choiceText: { color: colors.muted, fontSize: 12, fontWeight: '700' },
+  choiceTextOn: { color: colors.navy, fontWeight: '900' },
+  block: {
+    backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.line,
+    padding: spacing.md, marginTop: spacing.md,
+  },
+  blockTitle: { color: colors.ink, fontSize: 14, fontWeight: '800' },
+  blockHint: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: 4 },
+  nameInput: {
+    color: colors.ink, fontSize: 15, fontWeight: '700', backgroundColor: colors.background,
+    borderRadius: radius.sm, borderColor: colors.line, borderWidth: 1,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginTop: spacing.sm, minHeight: 44,
+  },
   rejected: { backgroundColor: colors.warningSoft, borderRadius: radius.sm, padding: spacing.md, marginTop: spacing.lg },
   rejectedTitle: { color: colors.warning, fontSize: 13, fontWeight: '800' },
   rejectedItem: { color: colors.warning, fontSize: 12, lineHeight: 18, marginTop: 4 },

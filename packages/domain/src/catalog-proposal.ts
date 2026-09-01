@@ -6,6 +6,7 @@ import {
   toCatalogEntry,
   type CatalogFood,
 } from './food-catalog';
+import { findSimilarFood, type SimilarFood } from './catalog-similarity';
 import type { FoodEstimate } from '@type1a/schemas';
 
 /**
@@ -61,6 +62,12 @@ export interface CatalogProposal {
    * Cuando existe, es la que manda: se ofrece conservarla, no reemplazarla.
    */
   existingServingGrams: number | null;
+  /**
+   * Un alimento del catálogo que **probablemente ya es este**, cuando el
+   * nombre no coincide exacto ("manzanas" vs "manzana", "pollo con arroz" vs
+   * "arroz con pollo"). Se muestra para que ella decida; nunca se fusiona sola.
+   */
+  similarTo: SimilarFood | null;
 }
 
 /** Por qué un alimento del análisis no se puede ofrecer siquiera. */
@@ -81,6 +88,15 @@ export interface CatalogProposalSet {
   proposals: CatalogProposal[];
   /** Lo que no se puede guardar, **con su razón**, para poder decirlo. */
   rejected: CatalogRejection[];
+  /** La foto del plato, para que la receta la conserve. */
+  imageUri?: string | undefined;
+  /**
+   * Nombre propuesto para la receta: los alimentos unidos por "con".
+   *
+   * Es un punto de partida editable, no una afirmación. `undefined` con un
+   * solo alimento, donde una receta no significa nada.
+   */
+  suggestedRecipeName?: string | undefined;
 }
 
 /** Texto para la usuaria. Vive acá porque la razón es una regla, no una vista. */
@@ -150,10 +166,23 @@ export function buildCatalogProposals(
       existingServingGrams: existingServing !== undefined && isValidServingGrams(existingServing)
         ? existingServing
         : null,
+      // Solo tiene sentido si NO es el mismo por clave: cuando ya existe, la
+      // fusión es un hecho y `existing` ya lo dice.
+      similarTo: existing !== undefined
+        ? null
+        : findSimilarFood(name, [...existingByKey.values()]),
     });
   }
 
-  return { proposals: [...proposals.values()], rejected };
+  const list = [...proposals.values()];
+  return {
+    proposals: list,
+    rejected,
+    ...(input.imageUri === undefined ? {} : { imageUri: input.imageUri }),
+    ...(list.length > 1
+      ? { suggestedRecipeName: list.map((proposal) => proposal.entry.name).join(' con ') }
+      : {}),
+  };
 }
 
 /**

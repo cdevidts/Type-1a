@@ -14,27 +14,22 @@ se puede guardar.** Al crear manda el acceso rápido; al editar manda el
 **contenido** (`masterSectionsFor`). El tipo con el que nació un registro no
 limita lo que se le suma después.
 
-## Ya entregado al teléfono (build del 2026-08-31, commit `a706510`)
+## Ya entregado al teléfono (build del 2026-08-31, `a706510`)
 
-El detalle vive en los cuerpos de commit; acá solo las reglas que sobreviven.
+Reglas que sobreviven; el detalle vive en los cuerpos de commit.
 
 - **La edición retroactiva no tiene límite de tipo.** `promoteEventToEntryGroup`
-  convierte un evento suelto en grupo con un `UPDATE` de una columna:
-  idempotente, sin borrar ni recrear, conservando id, hora, `created_at`,
-  `source` y procedencia. Promoción y edición van en **una** transacción
-  serializada (`entryGroupClaim.ts`), así que un fallo revierte las dos.
-- **Comida y carbohidratos son un solo hecho visible.** La fila espejo
-  (`meal_confirmed`) se sigue guardando —dominio, reporte y borrado dependen de
-  ella— pero se esconde cuando su comida está a la vista. Un espejo **huérfano**
-  sí se muestra: es la única copia que queda de esos gramos.
-- **`ingestedAt` y la hora de una lectura externa no se mueven nunca**, ni
-  siquiera al mover un grupo entero de hora.
-- **Un blanco no es un cero.** Vitales, foto y análisis son parches: corregir
-  una cetona no borra el peso de la misma fila.
-- **El nombre de la insulina es configuración**, no un campo por registro
-  (`insulinNameForType` / `resolveInsulinNameForEdit`, en dominio).
-- Carrito multi-alimento, Strip Calendar, fecha y hora editables, fibra de
-  primera clase, y `QuickNumericModal` para basal y cetonas.
+  convierte un evento suelto en grupo con un `UPDATE` de una columna,
+  conservando id, hora, `created_at`, `source` y procedencia. Promoción y
+  edición van en **una** transacción (`entryGroupClaim.ts`).
+- **Comida y carbohidratos son un solo hecho visible.** La fila espejo se
+  esconde cuando su comida está a la vista; un espejo **huérfano** se muestra,
+  porque es la única copia que queda de esos gramos.
+- **`ingestedAt` y la hora de una lectura externa no se mueven nunca.**
+- **Un blanco no es un cero.** Vitales, foto y análisis son parches.
+- **El nombre de la insulina es configuración**, no un campo por registro.
+- Carrito multi-alimento, Strip Calendar, fecha y hora editables, fibra, y
+  `QuickNumericModal` para basal y cetonas.
 
 ## Las transacciones SQLite, cerradas (2026-08-28)
 
@@ -51,10 +46,9 @@ FIFO (`dbWriteQueue.ts`) — dos colas contra una conexión se anidan igual.
 ## El catálogo, cerrado en cuatro frentes (2026-09-01)
 
 **El grande: faltaba saber cuánto pesa una porción**, con dos síntomas
-opuestos. Una Monster Zero no llegaba al catálogo —no por la confianza ni por
-los ceros, sino porque `toCatalogEntry` exigía `estimatedGrams` y el prompt le
-pide al modelo devolverlo `null` cuando no puede estimar la porción—; y todo lo
-demás quedaba con porción de 100 g.
+opuestos. Una Monster Zero no llegaba al catálogo —porque `toCatalogEntry`
+exigía `estimatedGrams` y el prompt le pide devolverlo `null` cuando no puede
+estimar la porción—; y todo lo demás quedaba con porción de 100 g.
 
 Ahora la IA propone `servingGrams` y `servingLabel`, eso sirve de denominador
 cuando no hay gramos del plato, y `CatalogServingModal` lo muestra para
@@ -63,12 +57,10 @@ descarte silencioso es un dato perdido que nadie va a buscar.
 
 Se confirma en vez de aplicarse solo porque la porción multiplica los cuatro
 macros y alimenta los carbohidratos que se sugieren al reusar el alimento.
-Confirmar lo vuelve dato de la usuaria (`servingSource: 'user'`), y
-`blendCatalogEntry` protege eso: **solo otro `'user'` lo reemplaza.** Esa regla
-antes no hacía falta —la IA no podía mandar el campo—; sin escribirla, cada
-foto nueva le habría borrado su "una taza son 150 g". Una fila sin
-`servingSource` se trata como suya, porque lo es. De paso: el `INSERT` de
-`recordCatalogFoods` omitía las columnas de porción.
+Confirmar lo vuelve dato de la usuaria (`servingSource: 'user'`) y
+`blendCatalogEntry` protege eso: **solo otro `'user'` lo reemplaza.** Sin esa
+regla, cada foto nueva le habría borrado su "una taza son 150 g"; una fila sin
+`servingSource` se trata como suya, porque lo es.
 
 Y tres huecos chicos:
 
@@ -85,17 +77,35 @@ Y tres huecos chicos:
 
 ## Diseñado y sin construir
 
-- `reference/catalog-recipes.md` — **recetas: el dominio ya está construido**
-  (`recipe.ts`, `catalog-similarity.ts`, 32 tests); faltan las tablas, la
-  migración y toda la UI. Verónica decidió: totales **derivados** (corregir un
-  alimento corrige sus recetas), borrar un alimento usado **se bloquea** con
-  una pantalla de ayuda para resolver receta por receta —todo o nada—, y los
-  duplicados **solo se proponen**, nunca se fusionan solos.
-- `reference/meal-ai-text-fields.md` — separar el cuadro de texto en dos: la
-  **pista para la foto** y la **corrección sobre lo ya propuesto**. Hallazgo
-  que ordena esa corrida: `editMealWithInstruction` ya resuelve lo segundo y
-  **no manda la imagen** —trabaja sobre la composición en pantalla—, pero solo
-  se alcanza desde `MealEditModal`. Tiene que llegar a los tres modales.
+- `reference/meal-ai-text-fields.md` — lo único grande que queda sin construir.
+  Separar el cuadro de texto en dos: la **pista para la foto** y la
+  **corrección sobre lo ya propuesto**. `editMealWithInstruction` ya resuelve
+  lo segundo y **no manda la imagen** —trabaja sobre la composición en
+  pantalla—, pero solo se alcanza desde `MealEditModal`. Tiene que llegar a los
+  tres modales.
+
+## Recetas, completas (2026-09-01)
+
+Tablas `recipes` y `recipe_items`, **aditivas**: ninguna fila de `food_catalog`
+se toca. Una receta **no guarda macros** — se derivan de sus componentes contra
+el catálogo vivo, así que corregir el arroz corrige todas las recetas que lo
+usan. Un componente ausente se declara en vez de sumar cero callado.
+
+Al guardar una comida de varios alimentos, la pregunta de tres salidas: por
+separado, como receta, o las dos. Con "solo receta" los alimentos igual se
+escriben — sin ellos la suma no tendría sumandos; lo que cambia es que no se
+listan sueltos.
+
+Borrar un alimento que una receta usa lanza `FoodInUseByRecipesError`, que **no
+es un error a reportar**: abre `RecipeFixModal`, donde se resuelve receta por
+receta (cambiarlo conservando los gramos, sacarlo, o dejarla). **Todo o nada**:
+si queda una sin resolver, el alimento no se borra. La IA propone el sustituto
+—por nombre parecido o por macros cercanos, con la razón escrita— y nunca lo
+aplica sola.
+
+Los duplicados se marcan en la confirmación (`similarTo`) y jamás se fusionan
+solos: emparejar mal mezcla macros de dos alimentos y eso sugiere carbohidratos
+sin delatarse; un duplicado es feo y reversible.
 
 ## Reglas de proceso que sobreviven
 
@@ -112,30 +122,17 @@ Y tres huecos chicos:
 
 ## Backlog de producto priorizado
 
-### 1. Reportes PDF más ricos
-
-Legibilidad, **iconografía en los gráficos** para identificar de un vistazo qué
-evento es cada marca, y una síntesis clínica al cierre. Ojo con la frontera:
-una conclusión describe lo que pasó, **nunca** evalúa si una dosis fue adecuada
-ni sugiere cambiarla (`contracts/safety-acceptance.md`). Las marcas nuevas no
-pueden distinguirse solo por color. La estructura del Excel sigue sin tocarse a
-propósito: se rediseña junto con el reporte.
-
-### 1b. Los tres hallazgos declarados del 2026-08-27
-
-Espejo compartido entre comidas sin grupo a la misma hora, foto de catálogo que
-es del plato, y el `source` de un carbohidrato importado editado. Ver
-`progress.md`; el tercero necesita decisión de producto.
-
-### 2. Los cuatro hallazgos vivos de la revisión repuntada
-
-Siguen abiertos y son anteriores a esta corrida. Ver `progress.md` § Deuda.
-
-### 3. Chat de IA
-
-Sin construir. Antes hay que arreglar los imports `.js` de `@type1a/ai`
-(`progress.md` § Bomba): el día que `apps/mobile` dependa de ese paquete, el
-bundle rompe.
+1. **Reportes PDF más ricos**: legibilidad, **iconografía en los gráficos** y
+   una síntesis clínica al cierre. Ojo con la frontera: una conclusión describe
+   lo que pasó, **nunca** evalúa si una dosis fue adecuada ni sugiere cambiarla
+   (`contracts/safety-acceptance.md`), y las marcas nuevas no pueden
+   distinguirse solo por color. El Excel se rediseña junto con el reporte.
+2. **Los tres hallazgos declarados del 2026-08-27** y **los cuatro vivos de la
+   revisión repuntada**: ver `progress.md`. El del `source` de un carbohidrato
+   importado necesita decisión de producto.
+3. **Chat de IA**, sin construir. Antes hay que arreglar los imports `.js` de
+   `@type1a/ai` (`progress.md` § Bomba): el día que `apps/mobile` dependa de ese
+   paquete, el bundle rompe.
 
 ## Fuera de foco pero pendiente
 

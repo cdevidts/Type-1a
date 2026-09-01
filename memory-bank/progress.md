@@ -7,8 +7,8 @@ _Última actualización: 2026-09-01._
 | | |
 |---|---|
 | `pnpm verify` | Etapas verdes; el wrapper local de Windows conserva su fallo de rutas preexistente. CI Linux es la verificación integral |
-| Tests | **680** — domain 384, mobile 248, ai 15, schemas 13, cgm 10, api 10 |
-| Bundle de Metro | **1.357 módulos** (+5 desde el build; ningún barrel) |
+| Tests | **684** — domain 388, mobile 248, ai 15, schemas 13, cgm 10, api 10 |
+| Bundle de Metro | **1.358 módulos** (+6 desde el build; ningún barrel) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
 ⚠️ La base real medida es **1.341**. Los 13 que suma el trabajo desde entonces
@@ -26,8 +26,8 @@ Patrones por covariables, cetonas e iconos de Lucide.
 
 Build `preview` del 2026-08-31 (`a706510`, build `980faeee`) instalado: Modal
 Maestro, calendario, carrito, fibra y el arreglo de las transacciones SQLite.
-Lo del 2026-09-01 (porción confirmada, nota del botón rápido, calorías en la
-tarjeta y fotos desde el editor) **todavía no tiene build**.
+Lo del 2026-09-01 (porción confirmada, nota del botón rápido, calorías, fotos
+desde el editor y **recetas completas**) va en el build siguiente.
 
 ## Deuda conocida
 
@@ -45,9 +45,8 @@ app dependa de ese paquete —el chat de IA es el candidato— el bundle rompe.
 Del `domain-safety-reviewer` contra `d868ece` y `c4ca192`. Los dos que
 corrompían datos ya están cerrados; estos siguen abiertos:
 
-1. **La basal es invisible al modelo y al aviso de ventana sucia**
-   (`macro-glucose.ts:281-287`, sin rama para `basal_insulin`): 20 U de Tresiba
-   no entran como covariable ni marcan `confoundedCount`.
+1. **La basal es invisible al modelo** (`macro-glucose.ts:281-287`, sin rama
+   para `basal_insulin`): 20 U de Tresiba no entran como covariable.
 2. **Cantidad ausente = "no pasó nada"** (`event.amount ?? 0` con `> 0`): una
    comida real sin carbos confirmados desaparece del conteo.
 3. **Un fallo al registrar la insulina se pisa con "Comida guardada"**
@@ -142,6 +141,7 @@ detalle vive en `git log --format=full`.
 | Un alimento sin `estimatedGrams` —lo que el prompt pide devolver cuando no puede estimar la porción— se descartaba del catálogo **sin un solo aviso**, y la pantalla decía "guardado" | lo que no se puede guardar se muestra **con su razón**; un filtro silencioso es un dato perdido que nadie va a buscar |
 | El catálogo caía siempre a 100 g porque la IA no podía proponer porción, y el `INSERT` del alta ni siquiera escribía las columnas de porción | la porción la propone la IA y la **confirma** la usuaria: multiplica los cuatro macros, así que un número que nadie miró no entra por esa puerta |
 | El cuadro de texto del botón rápido alimentaba a la IA y se tiraba, así que la comida quedaba sin nota mientras el maestro sí la guardaba | una capacidad que solo tiene un camino es una asimetría: el texto que describe la comida se escribe venga de donde venga |
+| Una foto de arroz con pollo dejaba dos alimentos sueltos y **los dos con la foto del plato entero** | el contenedor que faltaba es la receta: guarda la foto del plato y cada componente queda libre de tener la suya |
 
 ## Redeploy del backend
 
