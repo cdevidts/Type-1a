@@ -16,6 +16,7 @@ import {
   isValidServingGrams,
   MAX_SERVING_GRAMS,
   isValidServings,
+  isListedFood,
   scaleCatalogFoodByServings,
   servingGramsOf,
   type CatalogFood,
@@ -435,5 +436,49 @@ describe('imagen del catálogo', () => {
   it('applyCatalogEdit conserva la foto por defecto y la quita solo con null', () => {
     expect(applyCatalogEdit(base, { name: 'Pan integral' })?.imageUri).toBe('file:///pan.jpg');
     expect(applyCatalogEdit(base, { imageUri: null })?.imageUri).toBeUndefined();
+  });
+});
+
+describe('listed — "solo receta" no se lista suelto', () => {
+  const base: CatalogFood = {
+    key: 'arroz', name: 'Arroz',
+    carbsPer100g: 28, proteinPer100g: 2.7, fatPer100g: 0.3, fiberPer100g: 0.4, kcalPer100g: 130,
+    timesSeen: 3, lastSeenAt: AT,
+  };
+  // `timesSeen` se quita con `delete` y no destructurando: la regla de lint
+  // del repo rechaza la variable descartada, aunque lleve guion bajo.
+  const next = (over: Partial<Omit<CatalogFood, 'timesSeen'>> = {}): Omit<CatalogFood, 'timesSeen'> => {
+    const rest: Partial<CatalogFood> = { ...base, ...over };
+    delete rest.timesSeen;
+    return rest as Omit<CatalogFood, 'timesSeen'>;
+  };
+
+  it('ausente significa visible: toda fila anterior al campo lo es', () => {
+    expect(isListedFood(base)).toBe(true);
+    expect(isListedFood({ listed: false })).toBe(false);
+  });
+
+  it('al fusionar, visible gana: guardar un alimento dentro de una receta no lo esconde', () => {
+    const merged = blendCatalogEntry(base, next({ listed: false }));
+    expect(isListedFood(merged)).toBe(true);
+    // Y no se inventa el campo en una fila que nunca lo tuvo.
+    expect('listed' in merged).toBe(false);
+  });
+
+  it('confirmarlo suelto saca a la luz uno que estaba oculto', () => {
+    const merged = blendCatalogEntry({ ...base, listed: false }, next());
+    expect(isListedFood(merged)).toBe(true);
+  });
+
+  it('dos veces "solo receta" sigue oculto', () => {
+    const merged = blendCatalogEntry({ ...base, listed: false }, next({ listed: false }));
+    expect(merged.listed).toBe(false);
+  });
+
+  it('corregir macros o convertir una porción no cambia si está a la vista', () => {
+    const hidden = { ...base, listed: false };
+    expect(applyCatalogEdit(hidden, { carbsPer100g: 30 })?.listed).toBe(false);
+    expect(applyCatalogEdit(base, { carbsPer100g: 30 })).not.toHaveProperty('listed');
+    expect(catalogEntryFromPortion(hidden, { grams: 100, carbsG: 28, proteinG: 2.7, fatG: 0.3, fiberG: 0.4, caloriesKcal: 130 }, AT)?.listed).toBe(false);
   });
 });

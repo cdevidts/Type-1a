@@ -3,13 +3,16 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { AppState, Image, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
-import { assessFreshness, calculateCorrection, calculateMealBolus, convertGlucose, isSensorReading, resolveMacrosSource, type CartLine, type CatalogFood } from '@type1a/domain';
+import { assessFreshness, calculateCorrection, calculateMealBolus, convertGlucose, isSensorReading, resolveMacrosSource, type CartLine, type CatalogFood,
+  type Recipe,
+} from '@type1a/domain';
 import type { CGMReading, MealAnalysisResult, MealEvent, TherapyProfile } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, editMealWithInstruction, MobileApiError } from '../api';
 import { MealAiFields } from './MealAiFields';
 import { combineDayAndTime, dayOfMonthISO, isFutureDay, parseDayISO, timeOfDay } from '../entryTime';
 import { formatDayTime, parseBlankAsUnset, parseBlankAsUnsetPositive, parseNonNegativeNumber } from '../format';
+import { knownFoodNamesFrom } from '../knownFoods';
 import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
 import {
@@ -193,6 +196,7 @@ export function UnifiedEntryModal({
   profile,
   therapyConfigured,
   catalogFoods,
+  recipes,
   focus = 'all',
   onClose,
   onOpenTherapySettings,
@@ -205,6 +209,8 @@ export function UnifiedEntryModal({
   therapyConfigured: boolean;
   /** Alimentos ya conocidos, para reusar sin llamar a la IA (Fase 15). */
   catalogFoods: readonly CatalogFood[];
+  /** Recetas, para que el carrito pueda reusarlas. */
+  recipes?: readonly Recipe[] | undefined;
   /**
    * Con qué sección arranca abierta al **crear**. Es lo único que distingue un
    * acceso rápido de una entrada completa: el mismo formulario, plegado
@@ -473,6 +479,7 @@ export function UnifiedEntryModal({
       });
       if (compressed.base64 === undefined) throw new Error('No base64 image');
       const nextAnalysis = await analyzeMealImage({
+        knownFoodNames: knownFoodNamesFrom(catalogFoods),
         imageBase64: compressed.base64,
         mimeType: 'image/jpeg',
         ...(description.trim() === '' ? {} : { description: description.trim() }),
@@ -539,6 +546,7 @@ export function UnifiedEntryModal({
     setBusy(true);
     try {
       const next = await editMealWithInstruction({
+        knownFoodNames: knownFoodNamesFrom(catalogFoods),
         instruction: instruction.trim(),
         current: {
           confirmedCarbsG: analysis.totals.carbsG,
@@ -568,7 +576,7 @@ export function UnifiedEntryModal({
     setBusy(true);
     setAnalysis(null);
     try {
-      const nextAnalysis = await analyzeMealDescription(description.trim());
+      const nextAnalysis = await analyzeMealDescription(description.trim(), knownFoodNamesFrom(catalogFoods));
       adoptAnalysis(nextAnalysis);
       setMessage('Estimación lista a partir del texto (sin foto, así que la incertidumbre es mayor). Escribe tú los carbohidratos que confirmas.');
     } catch (error) {
@@ -1209,6 +1217,7 @@ export function UnifiedEntryModal({
         */}
         <MealCart
           foods={catalogFoods}
+          recipes={recipes ?? []}
           lines={cartLines}
           onChange={(next) => {
             setCartLines(next);

@@ -84,10 +84,16 @@ export async function fetchCGMReadings(from: Date, to: Date): Promise<CGMReading
   return ReadingsEnvelopeSchema.parse(await requestJson(`/v1/cgm/readings?${query.toString()}`)).readings;
 }
 
+/**
+ * `knownFoodNames` en los tres modos: los nombres de su catálogo, para que el
+ * modelo reuse el exacto en vez de crear un duplicado. Ver `knownFoods.ts`
+ * por qué son solo nombres y qué sale del teléfono con esto.
+ */
 export async function analyzeMealImage(input: {
   imageBase64: string;
   mimeType: 'image/jpeg' | 'image/png' | 'image/webp';
   description?: string;
+  knownFoodNames?: readonly string[];
 }): Promise<MealAnalysisResult> {
   const payload = await requestJson('/v1/ai/meal-analysis', {
     method: 'POST',
@@ -97,10 +103,13 @@ export async function analyzeMealImage(input: {
 }
 
 /** Same endpoint, no photo — just a typed description of what was eaten. */
-export async function analyzeMealDescription(description: string): Promise<MealAnalysisResult> {
+export async function analyzeMealDescription(
+  description: string,
+  knownFoodNames?: readonly string[],
+): Promise<MealAnalysisResult> {
   const payload = await requestJson('/v1/ai/meal-analysis', {
     method: 'POST',
-    body: JSON.stringify({ description }),
+    body: JSON.stringify({ description, ...(knownFoodNames === undefined ? {} : { knownFoodNames }) }),
   });
   return MealAnalysisResultSchema.parse(payload);
 }
@@ -117,6 +126,7 @@ export async function analyzeMealDescription(description: string): Promise<MealA
 export async function editMealWithInstruction(input: {
   instruction: string;
   current: MealSnapshot;
+  knownFoodNames?: readonly string[];
 }): Promise<MealAnalysisResult> {
   const payload = await requestJson('/v1/ai/meal-analysis', {
     method: 'POST',

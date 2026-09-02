@@ -1,7 +1,16 @@
 import { containsTherapyRecommendation } from '@type1a/domain';
 import { describe, expect, it } from 'vitest';
 
-import { GLUCOSE_INSIGHT_PROMPT_VERSION, glucoseInsightSystemPrompt } from '../src/prompts';
+import {
+  GLUCOSE_INSIGHT_PROMPT_VERSION,
+  MEAL_EDIT_PROMPT_VERSION,
+  MEAL_TEXT_PROMPT_VERSION,
+  MEAL_VISION_PROMPT_VERSION,
+  glucoseInsightSystemPrompt,
+  mealEditSystemPrompt,
+  mealTextSystemPrompt,
+  mealVisionSystemPrompt,
+} from '../src/prompts';
 
 /**
  * El prompt del insight es superficie de seguridad, no copy. Estos tests
@@ -73,5 +82,23 @@ describe('glucoseInsightSystemPrompt', () => {
     // versión no, no hay forma de saber después bajo qué reglas se generó un
     // insight ya almacenado.
     expect(GLUCOSE_INSIGHT_PROMPT_VERSION).toBe('glucose-insight.v6');
+  });
+});
+
+describe('nombres conocidos del catálogo (2026-09-02)', () => {
+  it('los tres prompts de comida piden reusar el nombre EXACTO solo si es el mismo alimento', () => {
+    // La mitad del arreglo de los duplicados vive acá; la otra mitad es que
+    // el cliente mande los nombres. Un prompt que reuse de más mezcla macros
+    // de dos alimentos, así que la regla lleva su propio freno escrito.
+    for (const prompt of [mealVisionSystemPrompt, mealTextSystemPrompt, mealEditSystemPrompt]) {
+      expect(prompt).toMatch(/return its name EXACTLY as listed/i);
+      expect(prompt).toMatch(/a different cut, preparation, variety or brand is a different food/i);
+    }
+  });
+
+  it('las versiones de los tres se movieron con la regla', () => {
+    expect(MEAL_VISION_PROMPT_VERSION).toBe('meal-analysis.v3');
+    expect(MEAL_TEXT_PROMPT_VERSION).toBe('meal-analysis-text.v3');
+    expect(MEAL_EDIT_PROMPT_VERSION).toBe('meal-analysis-edit.v3');
   });
 });

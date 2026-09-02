@@ -9,6 +9,7 @@ import Trash2 from 'lucide-react-native/icons/trash-2';
 import WandSparkles from 'lucide-react-native/icons/wand-sparkles';
 
 import {
+  isListedFood,
   recipeTotals,
   scaleCatalogFood,
   type Recipe,
@@ -32,6 +33,7 @@ import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
 import { FoodCard } from './FoodCard';
 import { ModalShell } from './ModalShell';
+import { RecipeDetail, type RecipeDetailActions } from './RecipeDetail';
 
 const numberText = (value: number): string => String(Number(value.toFixed(2)));
 
@@ -447,8 +449,9 @@ export function CatalogModal({
   onLoad,
   onSaveFood,
   onDeleteFood,
+  catalog,
   recipes,
-  onDeleteRecipe,
+  recipeActions,
   swipeHandlers,
 }: {
   visible: boolean;
@@ -456,9 +459,16 @@ export function CatalogModal({
   onLoad: (search: string) => Promise<CatalogFood[]>;
   onSaveFood: (key: string, edit: CatalogEdit) => Promise<void>;
   onDeleteFood: (food: CatalogFood) => Promise<void>;
-  /** Las recetas del catálogo. Sus totales se derivan de `foods` al vuelo. */
+  /**
+   * El catálogo **entero**, ocultos incluidos. Es contra lo que se derivan
+   * los totales de las recetas: la lista buscada de arriba puede no contener
+   * un componente (está oculto, o la búsqueda lo dejó fuera), y sumar contra
+   * ella lo daría por "ya no está en el catálogo".
+   */
+  catalog: readonly CatalogFood[];
+  /** Las recetas del catálogo. Sus totales se derivan de `catalog` al vuelo. */
   recipes: readonly Recipe[];
-  onDeleteRecipe: (recipe: Recipe) => Promise<void>;
+  recipeActions: RecipeDetailActions;
   swipeHandlers?: GestureResponderHandlers | undefined;
 }) {
   const [search, setSearch] = useState('');
@@ -466,6 +476,13 @@ export function CatalogModal({
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [editing, setEditing] = useState<CatalogFood | null>(null);
+  /**
+   * La receta abierta, por id: se busca en `recipes` en cada render para que
+   * un guardado (nombre, foto, composición) se refleje sin reabrir. Si la
+   * borraron, deja de encontrarse y la vista vuelve a la lista sola.
+   */
+  const [openRecipeId, setOpenRecipeId] = useState<string | null>(null);
+  const openRecipe = openRecipeId === null ? null : (recipes.find((recipe) => recipe.id === openRecipeId) ?? null);
 
   // `onLoad` llega como arrow inline desde `App`, así que cambia de identidad
   // en cada render. Si `load` dependiera de él, el efecto de más abajo se
@@ -505,26 +522,10 @@ export function CatalogModal({
     return () => { clearTimeout(timer); };
   }, [search, visible, load]);
 
-  const foodsByKey = new Map(foods.map((food) => [food.key, food]));
-
-  function confirmDeleteRecipe(recipe: Recipe): void {
-    Alert.alert(
-      `Borrar ${recipe.name}`,
-      'Se borra el plato. Sus alimentos siguen en el catálogo por separado, y las comidas ya registradas no se tocan.',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Borrar',
-          style: 'destructive',
-          onPress: () => {
-            void onDeleteRecipe(recipe).catch((error: unknown) => {
-              logSaveError('CatalogModal.deleteRecipe', error);
-            });
-          },
-        },
-      ],
-    );
-  }
+  const foodsByKey = new Map(catalog.map((food) => [food.key, food]));
+  // "Solo receta" no se lista suelto. La fila existe —la receta la necesita
+  // para sumar— pero ella eligió no verla acá.
+  const listedFoods = foods.filter(isListedFood);
 
   function confirmDelete(food: CatalogFood): void {
     Alert.alert(
@@ -546,8 +547,22 @@ export function CatalogModal({
   }
 
   return (
-    <ModalShell visible={visible} title="Catálogo" onClose={onClose} scroll={false} swipeHandlers={swipeHandlers}>
-      {editing !== null ? (
+    <ModalShell visible={visible} title={openRecipe === null ? 'Catálogo' : openRecipe.name} onClose={onClose} scroll={false} swipeHandlers={swipeHandlers}>
+      {openRecipe !== null ? (
+        // En lugar de la lista, no encima: ver `RecipeDetail`.
+        <ScrollView contentContainerStyle={styles.listBody} keyboardShouldPersistTaps="handled">
+          <RecipeDetail
+            recipe={openRecipe}
+            catalog={catalog}
+            actions={{
+              ...recipeActions,
+              onDelete: async (recipe) => { await recipeActions.onDelete(recipe); setOpenRecipeId(null); void load(search); },
+              onListFood: async (key) => { await recipeActions.onListFood(key); void load(search); },
+            }}
+            onBack={() => { setOpenRecipeId(null); }}
+          />
+        </ScrollView>
+      ) : editing !== null ? (
         <FoodEditor
           food={editing}
           onCancel={() => { setEditing(null); void load(search); }}
@@ -585,7 +600,7 @@ export function CatalogModal({
               </View>
             ) : null}
 
-            {!loading && !failed && foods.length === 0 ? (
+            {!loading && !failed && listedFoods.length === 0 && recipes.length === 0 ? (
               <View style={styles.empty}>
                 <Text style={styles.emptyTitle}>
                   {search.trim() === '' ? 'Todavía no hay alimentos' : 'Ningún alimento con ese nombre'}
@@ -637,10 +652,12 @@ export function CatalogModal({
                           caloriesKcal: totals.caloriesKcal,
                         }}
                         macrosCaption={`Macros de la receta completa · ${numberText(totals.grams)} g`}
+                        // Abrir, no borrar: el borrado vive dentro del detalle,
+                        // confirmado y lejos del gesto de "ver qué lleva".
                         action={{
-                          kind: 'remove',
-                          label: `Borrar la receta ${recipe.name}`,
-                          onPress: () => { confirmDeleteRecipe(recipe); },
+                          kind: 'edit',
+                          label: `Abrir la receta ${recipe.name}`,
+                          onPress: () => { setOpenRecipeId(recipe.id); },
                         }}
                       />
                       {totals.missingFoodKeys.length === 0 ? null : (
@@ -674,7 +691,7 @@ export function CatalogModal({
               cuando no hay otra), y la leyenda dice cuál es: los mismos cinco
               chips sobre otro denominador son otros cinco números.
             */}
-            {foods.map((food) => {
+            {listedFoods.map((food) => {
               const serving = servingGramsOf(food);
               const perServing = scaleCatalogFood(food, serving);
               return (

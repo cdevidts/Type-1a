@@ -54,7 +54,7 @@ Puro, determinístico, con test. **Ningún `.tsx` calcula una métrica de salud.
 | `macros-source.ts` | `resolveMacrosSource()` — quién puso los macros de una comida. Se imprime en el reporte médico; ningún `.tsx` lo decide |
 | `vitals-summary.ts` | cómo se lee un registro de vitales, con la banda de `assessKetones`. El componente elige el color; no decide qué es urgente |
 | `insulin-catalog.ts` | catálogo de insulinas, su duración y su nombre por configuración. Devuelve `undefined` si no está configurada — nunca un default silencioso. Nunca calcula dosis |
-| `food-catalog.ts` | `foodKey`, `blendCatalogEntry`; misma implementación en teléfono y servidor. `imageUri` es representación del alimento, nunca base de un macro |
+| `food-catalog.ts` | `foodKey`, `blendCatalogEntry`; misma implementación en teléfono y servidor. `imageUri` es representación, nunca base de un macro. `listed` = "solo receta": ausente es visible, y visible gana al fusionar |
 | `meal-cart.ts` | el carrito multi-alimento: suma líneas y declara qué macro falta. Su total es **estimación**; confirmarlo es un acto de la usuaria |
 | `recipe.ts` | una receta y sus componentes. **Los totales se derivan, nunca se guardan**: corregir un alimento corrige todas las recetas que lo usan. Redondea igual que el carrito a propósito |
 | `catalog-similarity.ts` | qué alimento del catálogo ya cubre uno recién identificado. **Solo propone**: emparejar mal mezcla macros de dos alimentos y eso sugiere carbohidratos sin delatarse |
@@ -106,19 +106,20 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
   contenedor no edita. Las calorías van en chip neutro: no son un macro. En el
   catálogo los chips son **por porción**, y `macrosCaption` dice el
   denominador: los mismos cinco números sobre otra base son otros cinco.
-- `RecipeFixModal.tsx` — la salida al "no se puede borrar": resuelve receta por
-  receta. **Todo o nada**; la IA propone el sustituto, nunca lo aplica.
+- `RecipeFixModal.tsx` — la salida al "no se puede borrar", receta por receta,
+  **todo o nada**. `RecipeDetail.tsx` — el detalle, **en lugar de** la lista y
+  no encima; "Usar en una comida" la expande al carrito, una línea por componente.
+- `knownFoods.ts` — qué nombres del catálogo viajan con un análisis (solo
+  nombres, máx. 300) para que la IA reuse el exacto y no nazca un duplicado.
 - `MealAiFields.tsx` — los **dos** cuadros de texto de la IA, en los tres
-  modales: la pista para la foto y la corrección sobre lo ya propuesto, que
-  **no reenvía la foto**. Adoptar una propuesta invalida la dosis calculada.
+  modales: pista para la foto y corrección sobre lo propuesto (**no reenvía la
+  foto**). Adoptar una propuesta invalida la dosis calculada.
 - **Gráficos**: `GlucoseChart.tsx`, `SummaryCharts.tsx`; `reportExport.ts` dibuja SVG inline para el PDF.
-- `notifications.ts` — un canal por tipo de alarma; Android congela sonido y vibración al crearlo.
-- `timelineVitals.ts` — cetonas y vitales **sueltos**; un `WHERE` de más los escondió.
+- `notifications.ts` — un canal por tipo de alarma; Android congela sonido y vibración al crearlo. `timelineVitals.ts` — cetonas y vitales **sueltos**; un `WHERE` de más los escondió.
 - `mealFields.ts` — qué campos **son** una comida; un `false` de más borra
   historial. `promotesLooseCarbToMeal` decide cuándo un carbohidrato suelto pasa
   a ser un plato — o sea cuándo nace un episodio y suenan alarmas.
-- `mealNote.ts` — el texto que queda como nota de una comida. `note` es
-  `max(300)`: pasarse hace que Zod rechace la comida entera.
+- `mealNote.ts` — la nota de una comida. `note` es `max(300)`: pasarse hace que Zod rechace la comida entera.
 - `mealCarbMirror.ts` — qué carbohidrato **es** una comida ya visible; de menos se cuenta dos veces en el reporte médico.
 - `entryTime.ts` — días, meses y la hora de un registro histórico (y la
   aritmética de `StripCalendar.tsx`). "Cuándo pasó" agrupa episodios y recorta
@@ -142,8 +143,7 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
   sin perder identidad), `moveEntryGroupRows` (mover la hora, sin tocar
   `ingestedAt` ni una lectura externa) y `applyVitalsPatchRows` (parche, no
   reemplazo: corregir una cetona no borra el peso).
-- `theme.ts` — todos los tokens. `branding.ts` — el logo, en una variable.
-- `sensorConnection.ts` — cada usuaria conecta su propia cuenta LibreLinkUp.
+- `theme.ts` — todos los tokens. `branding.ts` — el logo. `sensorConnection.ts` — cada usuaria conecta su propia cuenta LibreLinkUp.
 
 ## `docs/adr`
 

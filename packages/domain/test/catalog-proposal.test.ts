@@ -5,6 +5,7 @@ import {
   buildCatalogProposals,
   confirmProposal,
   initialServingGrams,
+  recipeItemsFromConfirmed,
   rejectionMessage,
 } from '../src/catalog-proposal';
 import { blendCatalogEntry, normalizationBasis, toCatalogEntry, type CatalogFood } from '../src/food-catalog';
@@ -242,5 +243,65 @@ describe('la porción de la usuaria sobrevive a un análisis nuevo', () => {
     delete vieja.servingSource;
     const deLaIA = toCatalogEntry(food({ servingGrams: 30 }), AT)!;
     expect(blendCatalogEntry(vieja, deLaIA).servingGrams).toBe(150);
+  });
+});
+
+describe('confirmProposal — solo receta, fusión a mano y la foto del plato', () => {
+  const existing: CatalogFood = {
+    key: 'muslo de pollo', name: 'Muslo de pollo',
+    carbsPer100g: 0, proteinPer100g: 26, fatPer100g: 8, fiberPer100g: 0, kcalPer100g: 180,
+    timesSeen: 4, lastSeenAt: AT, servingGrams: 120, servingSource: 'user',
+  };
+  const pata = () => buildCatalogProposals(
+    [food({ name: 'Pata de pollo', estimatedGrams: 110, carbsG: 0, proteinG: 28, fatG: 9, fiberG: 0, caloriesKcal: 195 })],
+    { seenAt: AT, imageUri: 'file:///plato.jpg', existingByKey: new Map([[existing.key, existing]]) },
+  ).proposals[0]!;
+
+  it('"solo receta" escribe el alimento oculto', () => {
+    const entry = confirmProposal(pata(), { servingGrams: null, servingLabel: null, listed: false });
+    expect(entry?.listed).toBe(false);
+  });
+
+  it('por defecto queda a la vista, sin inventar el campo', () => {
+    const entry = confirmProposal(pata(), { servingGrams: null, servingLabel: null });
+    expect(entry).not.toHaveProperty('listed');
+  });
+
+  it('fusionar a mano hereda clave Y nombre del existente, con los macros de la propuesta', () => {
+    // El caso de Verónica: "pata de pollo" ES su "Muslo de pollo". La
+    // heurística no puede saberlo —son palabras distintas— y no debe
+    // adivinarlo; ella lo dice y la entrada apunta al alimento de ella.
+    const entry = confirmProposal(pata(), { servingGrams: null, servingLabel: null, mergeInto: existing });
+    expect(entry?.key).toBe('muslo de pollo');
+    expect(entry?.name).toBe('Muslo de pollo');
+    expect(entry?.proteinPer100g).toBeCloseTo(28 / 1.1, 1);
+  });
+
+  it('fusionar con uno visible no lo esconde aunque la elección sea "solo receta"', () => {
+    const entry = confirmProposal(pata(), { servingGrams: null, servingLabel: null, listed: false, mergeInto: existing });
+    expect(entry).not.toHaveProperty('listed');
+  });
+
+  it('con receta, el componente NO hereda la foto del plato', () => {
+    // Era el bug de origen de todo el módulo de recetas: "arroz" con la
+    // miniatura de un arroz con pollo. La receta se queda con la foto.
+    const con = confirmProposal(pata(), { servingGrams: null, servingLabel: null });
+    const sin = confirmProposal(pata(), { servingGrams: null, servingLabel: null, withoutPlatePhoto: true });
+    expect(con?.imageUri).toBe('file:///plato.jpg');
+    expect(sin).not.toHaveProperty('imageUri');
+  });
+});
+
+describe('recipeItemsFromConfirmed', () => {
+  it('suma los gramos de dos propuestas fusionadas en el mismo alimento', () => {
+    // Dos líneas con la misma clave se pisarían en `recipe_items`.
+    expect(recipeItemsFromConfirmed([
+      { key: 'muslo de pollo', basisGrams: 110 },
+      { key: 'arroz', basisGrams: 150 },
+      { key: 'muslo de pollo', basisGrams: 40 },
+    ])).toEqual([
+      { foodKey: 'muslo de pollo', grams: 150 },
+      { foodKey: 'arroz', grams: 150 },
+    ]);
   });
 });

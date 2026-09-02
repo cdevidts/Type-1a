@@ -3,7 +3,9 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
   confirmProposal,
+  foodKey,
   initialServingGrams,
+  recipeItemsFromConfirmed,
   rejectionMessage,
   similarityLabel,
   MAX_SERVING_GRAMS,
@@ -76,28 +78,122 @@ export interface ConfirmedCatalogEntries {
   recipe?: { name: string; items: RecipeItem[]; imageUri?: string | undefined };
 }
 
-function ProposalRow({
+/**
+ * "¿Ya lo tienes?" — fusionar a mano con un alimento del catálogo.
+ *
+ * La heurística de `catalog-similarity.ts` solo empareja plural/singular y las
+ * mismas palabras en otro orden, a propósito: no puede saber que "pata de
+ * pollo" es el "Muslo de pollo" de Verónica, y adivinarlo mezclaría macros de
+ * dos alimentos distintos. Ella sí lo sabe. Esto le da dónde decirlo: busca en
+ * su catálogo y elige; la propuesta pasa a fusionarse con ese en vez de crear
+ * otro. Si la heurística encontró algo, viene preseleccionado **y visible**,
+ * con la salida "es otro" a un toque.
+ */
+function MergePicker({
   proposal,
-  grams,
-  label,
-  onGrams,
-  onLabel,
+  catalog,
+  selected,
+  onSelect,
 }: {
   proposal: CatalogProposal;
+  catalog: readonly CatalogFood[];
+  selected: CatalogFood | null;
+  onSelect: (food: CatalogFood | null) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const term = foodKey(query);
+  const results = term === ''
+    ? []
+    : catalog.filter((food) => food.key !== proposal.entry.key && food.key.includes(term)).slice(0, 6);
+
+  return (
+    <View style={styles.merge}>
+      {selected !== null ? (
+        <>
+          <Text style={styles.similar}>
+            {proposal.similarTo !== null && proposal.similarTo.food.key === selected.key
+              ? `${similarityLabel(proposal.similarTo.reason)}: "${selected.name}". `
+              : `Se fusiona con "${selected.name}". `}
+            Al confirmar se suma a ese alimento en vez de crear otro, y conserva su nombre.
+          </Text>
+          <View style={styles.mergeRow}>
+            <Pressable style={styles.mergeButton} onPress={() => { onSelect(null); setOpen(false); }} accessibilityRole="button">
+              <Text style={styles.mergeButtonText}>No, es otro alimento</Text>
+            </Pressable>
+            <Pressable style={styles.mergeButton} onPress={() => { setOpen((v) => !v); }} accessibilityRole="button">
+              <Text style={styles.mergeButtonText}>Elegir otro</Text>
+            </Pressable>
+          </View>
+        </>
+      ) : (
+        <Pressable style={styles.mergeButton} onPress={() => { setOpen((v) => !v); }} accessibilityRole="button">
+          <Text style={styles.mergeButtonText}>{open ? 'Cerrar búsqueda' : '¿Ya lo tienes con otro nombre? Buscar'}</Text>
+        </Pressable>
+      )}
+      {open ? (
+        <>
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            style={styles.labelInput}
+            placeholder="Busca en tu catálogo, por ejemplo pollo"
+            placeholderTextColor={colors.muted}
+            accessibilityLabel={`Buscar con qué alimento fusionar ${proposal.entry.name}`}
+            autoFocus
+          />
+          {results.map((food) => (
+            <Pressable
+              key={food.key}
+              style={styles.mergeResult}
+              onPress={() => { onSelect(food); setOpen(false); setQuery(''); }}
+              accessibilityRole="button"
+              accessibilityLabel={`Fusionar con ${food.name}`}
+            >
+              <Text style={styles.mergeResultName}>{food.name}</Text>
+              <Text style={styles.mergeResultMeta}>
+                {numberText(food.carbsPer100g)} g carbos/100 g · visto {food.timesSeen} {food.timesSeen === 1 ? 'vez' : 'veces'}
+              </Text>
+            </Pressable>
+          ))}
+          {term !== '' && results.length === 0 ? (
+            <Text style={styles.kept}>Nada con ese nombre en tu catálogo.</Text>
+          ) : null}
+        </>
+      ) : null}
+    </View>
+  );
+}
+
+function ProposalRow({
+  proposal,
+  catalog,
+  grams,
+  label,
+  mergeInto,
+  onGrams,
+  onLabel,
+  onMergeInto,
+}: {
+  proposal: CatalogProposal;
+  catalog: readonly CatalogFood[];
   grams: string;
   label: string;
+  mergeInto: CatalogFood | null;
   onGrams: (value: string) => void;
   onLabel: (value: string) => void;
+  onMergeInto: (food: CatalogFood | null) => void;
 }) {
   const { entry } = proposal;
+  const merges = proposal.existing || mergeInto !== null;
   return (
     <View style={styles.card}>
       <View style={styles.cardHead}>
         <Text style={styles.name} numberOfLines={2}>{entry.name}</Text>
         {/* El estado va **escrito**, nunca solo por color: alta y fusión
             tienen consecuencias distintas sobre un dato que ya existía. */}
-        <Text style={[styles.badge, proposal.existing ? styles.badgeMerge : styles.badgeNew]}>
-          {proposal.existing ? 'Ya existe · se fusiona' : 'Nuevo'}
+        <Text style={[styles.badge, merges ? styles.badgeMerge : styles.badgeNew]}>
+          {merges ? 'Ya existe · se fusiona' : 'Nuevo'}
         </Text>
       </View>
 
@@ -137,14 +233,11 @@ function ProposalRow({
         accessibilityLabel={`Nombre de la porción de ${entry.name}`}
       />
 
-      {proposal.similarTo === null ? null : (
-        // Duplicados: **solo se propone**. Emparejar mal mezcla los macros de
-        // dos alimentos distintos, y eso después sugiere carbohidratos sin que
-        // nada lo delate; un duplicado es feo y reversible.
-        <Text style={styles.similar}>
-          {similarityLabel(proposal.similarTo.reason)}: "{proposal.similarTo.food.name}". Al confirmar se
-          fusiona con ese en vez de crear otro.
-        </Text>
+      {proposal.existing ? null : (
+        // Duplicados: **solo se propone**, y desde acá también se elige.
+        // Emparejar mal mezcla los macros de dos alimentos distintos, y eso
+        // después sugiere carbohidratos sin que nada lo delate.
+        <MergePicker proposal={proposal} catalog={catalog} selected={mergeInto} onSelect={onMergeInto} />
       )}
 
       {proposal.existingServingGrams !== null ? (
@@ -169,17 +262,21 @@ function ProposalRow({
 export function CatalogServingModal({
   visible,
   proposals,
+  catalog,
   onClose,
   onConfirm,
 }: {
   visible: boolean;
   proposals: CatalogProposalSet | null;
+  /** El catálogo entero, ocultos incluidos: para fusionar a mano. */
+  catalog: readonly CatalogFood[];
   /** Cerrar sin guardar nada al catálogo. La comida ya quedó registrada. */
   onClose: () => void;
   onConfirm: (confirmed: ConfirmedCatalogEntries) => Promise<void>;
 }) {
   const [grams, setGrams] = useState<Record<string, string>>({});
   const [labels, setLabels] = useState<Record<string, string>>({});
+  const [mergeInto, setMergeInto] = useState<Record<string, CatalogFood | null>>({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [choice, setChoice] = useState<MultiFoodChoice>('foods');
@@ -189,14 +286,20 @@ export function CatalogServingModal({
     if (!visible || proposals === null) return;
     const nextGrams: Record<string, string> = {};
     const nextLabels: Record<string, string> = {};
+    const nextMerge: Record<string, CatalogFood | null> = {};
     for (const proposal of proposals.proposals) {
       // La porción que ella ya fijó manda sobre la que propone la IA.
       const initial = initialServingGrams(proposal);
       nextGrams[proposal.entry.key] = initial === null ? '' : numberText(initial);
       nextLabels[proposal.entry.key] = proposal.entry.servingLabel ?? proposal.proposedServingLabel ?? '';
+      // El parecido por nombre viene preseleccionado y **a la vista**, con la
+      // salida "es otro" al lado. Antes el texto prometía la fusión y la
+      // entrada se guardaba con su propia clave: prometía y no cumplía.
+      nextMerge[proposal.entry.key] = proposal.similarTo?.food ?? null;
     }
     setGrams(nextGrams);
     setLabels(nextLabels);
+    setMergeInto(nextMerge);
     setMessage(null);
     setBusy(false);
     // Por defecto, lo de siempre: alimentos sueltos. Guardar como receta es
@@ -208,7 +311,11 @@ export function CatalogServingModal({
   async function confirm(): Promise<void> {
     if (proposals === null) return;
     setMessage(null);
+    // Una receta necesita nombre y al menos dos componentes; si no, no es un
+    // plato, es un alimento.
+    const wantsRecipe = isMulti && (choice === 'recipe' || choice === 'both');
     const entries: Omit<CatalogFood, 'timesSeen'>[] = [];
+    const confirmedItems: { key: string; basisGrams: number }[] = [];
     for (const proposal of proposals.proposals) {
       const text = (grams[proposal.entry.key] ?? '').trim();
       // Vacío es una respuesta válida —"este alimento no tiene porción
@@ -223,16 +330,22 @@ export function CatalogServingModal({
       const entry = confirmProposal(proposal, {
         servingGrams: parsed,
         servingLabel: labelText === '' ? null : labelText,
+        // "Solo receta": los componentes se escriben pero no se listan
+        // sueltos. Antes esta elección hacía exactamente lo mismo que "las
+        // dos cosas", y la grilla se llenaba de alimentos que ella no pidió.
+        ...(isMulti && choice === 'recipe' ? { listed: false } : {}),
+        // Con receta, la foto del plato es de la receta: un componente con la
+        // miniatura del plato entero era el bug que originó todo esto.
+        ...(wantsRecipe ? { withoutPlatePhoto: true } : {}),
+        mergeInto: mergeInto[proposal.entry.key] ?? null,
       });
       if (entry === null) {
         setMessage(`No se pudo preparar ${proposal.entry.name} con esos valores. Revisa la porción.`);
         return;
       }
       entries.push(entry);
+      confirmedItems.push({ key: entry.key, basisGrams: proposal.basisGrams });
     }
-    // Una receta necesita nombre y al menos dos componentes; si no, no es un
-    // plato, es un alimento.
-    const wantsRecipe = isMulti && (choice === 'recipe' || choice === 'both');
     if (wantsRecipe && recipeName.trim() === '') {
       setMessage('Ponle un nombre a la receta, por ejemplo "Arroz con pollo".');
       return;
@@ -249,10 +362,9 @@ export function CatalogServingModal({
           ? {
               recipe: {
                 name: recipeName.trim(),
-                items: proposals.proposals.map((proposal) => ({
-                  foodKey: proposal.entry.key,
-                  grams: proposal.basisGrams,
-                })),
+                // Por clave **final**: dos propuestas fusionadas en el mismo
+                // alimento son una sola línea con los gramos sumados.
+                items: recipeItemsFromConfirmed(confirmedItems),
                 ...(proposals.imageUri === undefined ? {} : { imageUri: proposals.imageUri }),
               },
             }
@@ -322,7 +434,10 @@ export function CatalogServingModal({
                 accessibilityLabel="Nombre de la receta"
               />
               <Text style={styles.blockHint}>
-                Sus macros no se guardan: siempre son la suma de sus alimentos. Si después corriges uno,
+                {choice === 'recipe'
+                  ? 'Sus alimentos quedan solo dentro de la receta: no aparecen sueltos en el catálogo ni en el buscador. Desde la receta puedes mostrar cualquiera cuando quieras.'
+                  : 'La receta y además cada alimento suelto en el catálogo.'}
+                {' '}Sus macros no se guardan: siempre son la suma de sus alimentos. Si después corriges uno,
                 la receta se corrige sola.
               </Text>
             </>
@@ -334,10 +449,13 @@ export function CatalogServingModal({
         <ProposalRow
           key={proposal.entry.key}
           proposal={proposal}
+          catalog={catalog}
           grams={grams[proposal.entry.key] ?? ''}
           label={labels[proposal.entry.key] ?? ''}
+          mergeInto={mergeInto[proposal.entry.key] ?? null}
           onGrams={(value) => { setGrams((prev) => ({ ...prev, [proposal.entry.key]: value })); }}
           onLabel={(value) => { setLabels((prev) => ({ ...prev, [proposal.entry.key]: value })); }}
+          onMergeInto={(food) => { setMergeInto((prev) => ({ ...prev, [proposal.entry.key]: food })); }}
         />
       ))}
 
@@ -403,6 +521,16 @@ const styles = StyleSheet.create({
     color: colors.navy, backgroundColor: colors.tealSoft, borderRadius: radius.sm,
     padding: spacing.sm, fontSize: 11, lineHeight: 16, marginTop: spacing.sm,
   },
+  merge: { marginTop: spacing.sm },
+  mergeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.xs },
+  mergeButton: {
+    minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.md,
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.teal, backgroundColor: colors.surface,
+  },
+  mergeButtonText: { color: colors.teal, fontSize: 12, fontWeight: '800' },
+  mergeResult: { minHeight: 44, justifyContent: 'center', paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.line },
+  mergeResultName: { color: colors.ink, fontSize: 14, fontWeight: '700' },
+  mergeResultMeta: { color: colors.muted, fontSize: 11, marginTop: 2 },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.sm },
   choice: {
     minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.md,

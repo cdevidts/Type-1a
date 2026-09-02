@@ -9,6 +9,7 @@ import {
   MEAL_TEXT_PROMPT_VERSION,
   mealEditSystemPrompt,
   mealTextSystemPrompt,
+  knownFoodsBlock,
   sanitizeForStrictJsonSchema,
 } from '../src/index.js';
 
@@ -251,5 +252,22 @@ describe('modo edición (Fase 17)', () => {
       }),
     ).rejects.toBeInstanceOf(AIServiceError);
     expect(called).toBe(0);
+  });
+});
+
+describe('knownFoodsBlock', () => {
+  it('vacío o ausente no cambia el mensaje', () => {
+    expect(knownFoodsBlock(undefined)).toBe('');
+    expect(knownFoodsBlock([])).toBe('');
+    expect(knownFoodsBlock(['  '])).toBe('');
+  });
+
+  it('lista solo nombres, uno por línea, con la regla de "solo si es el mismo"', () => {
+    const block = knownFoodsBlock(['Muslo de pollo', ' Arroz ']);
+    expect(block).toContain('- Muslo de pollo');
+    expect(block).toContain('- Arroz');
+    expect(block).toMatch(/nombre EXACTO solo si es el mismo alimento/);
+    // Nada más que el nombre viaja: ni macros ni veces vista.
+    expect(block).not.toMatch(/\d/);
   });
 });

@@ -9,15 +9,19 @@ import {
   cartLineTotals,
   cartTotals,
   foodKey,
+  isListedFood,
   isValidCartQuantity,
   MAX_SERVINGS,
   MIN_SERVINGS,
+  recipeToCartLines,
+  recipeTotals,
   removeCartLine,
   servingGramsOf,
   updateCartLineQuantity,
   type CartLine,
   type CartPortionMode,
   type CatalogFood,
+  type Recipe,
 } from '@type1a/domain';
 
 import { colors, radius, spacing } from '../theme';
@@ -56,20 +60,31 @@ let cartLineSeq = 0;
  * componente, solo distingue dos líneas del mismo alimento mientras el
  * formulario está abierto.
  */
-function nextLineId(): string {
+export function nextCartLineId(): string {
   cartLineSeq += 1;
   return `line-${cartLineSeq}`;
 }
+const nextLineId = nextCartLineId;
 
 export function MealCart({
   foods,
+  recipes = [],
   lines,
   onChange,
   onUseCarbs,
   onMessage,
 }: {
-  /** El catálogo completo sobre el que se busca. */
+  /**
+   * El catálogo completo, ocultos incluidos. Se busca solo entre los que
+   * están a la vista; los ocultos hacen falta igual para expandir una receta.
+   */
   foods: readonly CatalogFood[];
+  /**
+   * Las recetas, para reusarlas: una receta entra como **una línea por
+   * componente**, en gramos, así que después se puede quitar el pollo o poner
+   * menos arroz sin inventar un macro para el plato entero.
+   */
+  recipes?: readonly Recipe[];
   lines: readonly CartLine[];
   onChange: (next: CartLine[]) => void;
   /**
@@ -82,6 +97,9 @@ export function MealCart({
 }) {
   const [search, setSearch] = useState('');
   const [pending, setPending] = useState<CatalogFood | null>(null);
+  const [pendingRecipe, setPendingRecipe] = useState<Recipe | null>(null);
+  const [pendingPlates, setPendingPlates] = useState('1');
+  const foodsByKey = useMemo(() => new Map(foods.map((food) => [food.key, food])), [foods]);
   const [pendingMode, setPendingMode] = useState<CartPortionMode>('servings');
   const [pendingQuantity, setPendingQuantity] = useState('');
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
@@ -98,9 +116,36 @@ export function MealCart({
    */
   const results = useMemo(() => {
     const term = foodKey(search);
-    const matches = term === '' ? foods : foods.filter((food) => food.key.includes(term));
+    const listed = foods.filter(isListedFood);
+    const matches = term === '' ? listed : listed.filter((food) => food.key.includes(term));
     return matches.slice(0, 12);
   }, [foods, search]);
+  const recipeResults = useMemo(() => {
+    const term = foodKey(search);
+    const matches = term === '' ? recipes : recipes.filter((recipe) => recipe.key.includes(term));
+    return matches.slice(0, 6);
+  }, [recipes, search]);
+
+  function confirmPendingRecipe(): void {
+    if (pendingRecipe === null) return;
+    const plates = Number(pendingPlates.trim().replace(',', '.'));
+    if (!isValidCartQuantity('servings', plates)) {
+      onMessage(`Escribe cuántos platos comiste, entre ${MIN_SERVINGS} y ${MAX_SERVINGS}.`);
+      return;
+    }
+    const { lines: expanded, missingFoodKeys } = recipeToCartLines(pendingRecipe, foodsByKey, plates, nextLineId);
+    let next = [...lines];
+    for (const line of expanded) next = addCartLine(next, line);
+    onChange(next);
+    if (missingFoodKeys.length > 0) {
+      // Se declara, no se calla: una línea que falta baja los carbohidratos
+      // del carrito y ese carrito puede terminar en confirmados.
+      onMessage(`${pendingRecipe.name} entró sin ${missingFoodKeys.length} ${missingFoodKeys.length === 1 ? 'alimento que ya no está' : 'alimentos que ya no están'} en el catálogo. El total es un mínimo.`);
+    }
+    setPendingRecipe(null);
+    setPendingPlates('1');
+    setSearch('');
+  }
 
   function confirmPending(): void {
     if (pending === null) return;
@@ -158,11 +203,52 @@ export function MealCart({
         </Text>
       ) : null}
 
-      {pending === null ? (
+      {pendingRecipe !== null ? (
+        <View style={styles.pendingBox}>
+          <Text style={styles.pendingTitle}>{pendingRecipe.name}</Text>
+          <Text style={styles.hint}>
+            ¿Cuántos platos? Un plato son {recipeTotals(pendingRecipe, foodsByKey).grams.toFixed(0)} g y entra como una línea
+            por alimento, así que después puedes ajustar cada uno.
+          </Text>
+          <View style={styles.quantityRow}>
+            <TextInput
+              value={pendingPlates}
+              onChangeText={setPendingPlates}
+              keyboardType="decimal-pad"
+              style={styles.quantityInput}
+              placeholder={`${MIN_SERVINGS} a ${MAX_SERVINGS}`}
+              placeholderTextColor={colors.muted}
+              accessibilityLabel="Cuántos platos"
+              selectTextOnFocus
+            />
+            <Text style={styles.quantityUnit}>platos</Text>
+            <Pressable style={styles.primary} onPress={confirmPendingRecipe} accessibilityRole="button">
+              <Text style={styles.primaryText}>Agregar</Text>
+            </Pressable>
+            <Pressable style={styles.cancel} onPress={() => { setPendingRecipe(null); }} accessibilityRole="button">
+              <Text style={styles.cancelText}>Cancelar</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : pending === null ? (
         <ScrollView style={styles.results} nestedScrollEnabled keyboardShouldPersistTaps="handled">
-          {results.length === 0 && foods.length > 0 ? (
+          {results.length === 0 && recipeResults.length === 0 && foods.length > 0 ? (
             <Text style={styles.empty}>Ningún alimento con ese nombre. Prueba con otra palabra.</Text>
           ) : null}
+          {recipeResults.map((recipe) => (
+            <Pressable
+              key={`recipe-${recipe.id}`}
+              style={styles.result}
+              onPress={() => { setPendingRecipe(recipe); setPendingPlates('1'); }}
+              accessibilityRole="button"
+              accessibilityLabel={`Agregar la receta ${recipe.name} al carrito`}
+            >
+              <Text style={styles.resultName}>{recipe.name} <Text style={styles.resultTag}>RECETA</Text></Text>
+              <Text style={styles.resultMeta}>
+                {recipe.items.length} alimentos · {recipeTotals(recipe, foodsByKey).carbsG} g carbos por plato
+              </Text>
+            </Pressable>
+          ))}
           {results.map((food) => (
             <Pressable
               key={food.key}
@@ -363,6 +449,9 @@ const styles = StyleSheet.create({
   results: { maxHeight: 180, marginTop: spacing.sm },
   result: { minHeight: 44, justifyContent: 'center', paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
   resultName: { color: colors.ink, fontSize: 14, fontWeight: '700' },
+  // El tipo va escrito, no solo por estilo: una receta y un alimento no son
+  // la misma cosa al tocarlos.
+  resultTag: { color: colors.teal, fontSize: 10, fontWeight: '900', letterSpacing: 0.5 },
   resultMeta: { color: colors.muted, fontSize: 11, marginTop: 1 },
   empty: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: spacing.sm },
   pendingBox: { marginTop: spacing.sm, backgroundColor: colors.background, borderRadius: radius.sm, padding: spacing.md },

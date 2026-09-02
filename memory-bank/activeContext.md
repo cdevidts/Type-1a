@@ -1,6 +1,6 @@
 # Active Context
 
-_Última actualización: 2026-09-01 (porción, fibra y la hora del resumen)._
+_Última actualización: 2026-09-02 (recetas de verdad, duplicados, el 502)._
 
 ## Lo que cambió el foco
 
@@ -26,64 +26,60 @@ le suma después.
 
 ## Las transacciones SQLite, cerradas (2026-08-28)
 
-El "no se puede guardar" sumaba dos causas: la tarea de fondo recibía la **misma
-conexión nativa** que la pantalla (Android cachea por ruta+opciones) y le corría
-un `BEGIN` encima cada ~15 min, y `refresh()` escribe CGM en cada vuelta a
-primer plano. No fallaba limpio porque `expo-sqlite` pone el `BEGIN` **dentro**
-del `try`: la segunda falla al abrir y su `catch` hace un `ROLLBACK` **ajeno**
-mientras la primera sigue escribiendo suelta. Hoy el fondo abre con
-`useNewConnection` y **toda** transacción pasa por una sola cola FIFO
-(`dbWriteQueue.ts`): dos colas contra una conexión se anidan igual.
+La tarea de fondo recibía la **misma conexión nativa** que la pantalla y le
+corría un `BEGIN` encima; `expo-sqlite` pone el `BEGIN` dentro del `try`, así
+que la segunda hacía un `ROLLBACK` ajeno y la primera seguía escribiendo
+suelta. Hoy el fondo abre con `useNewConnection` y **toda** transacción pasa
+por una sola cola FIFO (`dbWriteQueue.ts`).
 
-## El catálogo, cerrado en cuatro frentes (2026-09-01)
+## El catálogo y los campos de IA (2026-09-01)
 
-**El grande: faltaba saber cuánto pesa una porción**, con dos síntomas opuestos.
-Una Monster Zero no llegaba al catálogo —`toCatalogEntry` exigía
-`estimatedGrams` y el prompt le pide devolverlo `null` cuando no puede estimar
-la porción— y todo lo demás quedaba en 100 g. Ahora la IA propone `servingGrams`
-y `servingLabel`, y `CatalogServingModal` lo muestra para confirmar. Lo
-rechazado se muestra **con su razón**: un descarte silencioso es un dato perdido
-que nadie va a buscar.
+**Faltaba saber cuánto pesa una porción**: una Monster Zero no llegaba al
+catálogo (`toCatalogEntry` exigía `estimatedGrams`, que el prompt devuelve
+`null` cuando no puede estimar) y todo lo demás quedaba en 100 g. Ahora la IA
+propone `servingGrams`/`servingLabel`, `CatalogServingModal` lo confirma y lo
+rechazado se muestra **con su razón**. Confirmar lo vuelve `'user'`, y solo
+otro `'user'` lo reemplaza. Además: nota del botón rápido (`mealNote.ts`,
+techo 300), calorías en chip neutro, fotos desde el editor del catálogo.
 
-Se confirma porque la porción multiplica los cuatro macros. Confirmar la vuelve
-dato de la usuaria (`servingSource: 'user'`) y `blendCatalogEntry` protege eso:
-**solo otro `'user'` lo reemplaza**, o cada foto nueva le borraría su "una taza
-son 150 g". Una fila sin `servingSource` se trata como suya, porque lo es.
+`MealAiFields.tsx` separa la **pista para la foto** de la **corrección sobre
+lo ya propuesto** (sin reenviar la imagen), en los tres modales. Adoptar una
+propuesta invalida la dosis. Y la cobertura de días volvió a verse en 30 y 90:
+`coverage.ts` separa "cuánto está cubierto" de "alcanza para la HbA1c".
 
-Y tres huecos chicos: **la nota del botón rápido** (`mealNote.ts` respeta el
-techo de 300 del esquema, donde pasarse hace que Zod rechace la comida entera),
-**calorías en chip neutro** y **fotos desde el editor del catálogo**.
+## Recetas, ahora sí completas (2026-09-02)
 
-## Los dos cuadros de texto de la IA, y la cobertura (2026-09-01)
+Verónica probó el build y encontró que "completas" era generoso. Cuatro cosas:
 
-`MealAiFields.tsx` separa lo que era un campo haciendo dos trabajos: la **pista
-para la foto** (el rótulo cambia según haya imagen — ese cambio *es* el arreglo,
-porque el campo mentía) y la **corrección sobre lo ya propuesto**, que
-`editMealWithInstruction` resolvía **sin reenviar la imagen** pero solo se
-alcanzaba desde `MealEditModal`. Adoptar una propuesta invalida la dosis: los
-carbohidratos cambian.
+**"Solo receta" listaba los alimentos igual.** La elección escribía las filas
+—una receta no guarda macros, los deriva— pero nada las distinguía de "las dos
+cosas". Ahora `food_catalog.listed` (ausente = visible): un componente oculto
+no aparece en la grilla ni en el buscador, sale a la luz desde el detalle de
+la receta, `blendCatalogEntry` hace OR (visible gana) y `deleteRecipe` borra
+los ocultos que ninguna otra receta use, porque nadie más podría.
 
-**La cobertura de días volvió a verse en 30 y 90.** Solo se mencionaba bajo el
-umbral clínico de 14 días, así que con datos suficientes desaparecía y el
-promedio se leía como si cubriera el rango entero. `coverage.ts` separa cuánto
-está cubierto (siempre) de si alcanza para la HbA1c estimada (clínico).
+**Duplicados: "pata de pollo" al lado de "muslo de pollo".** La heurística no
+puede saberlo y no debe adivinarlo. Dos mitades: ella **fusiona a mano** desde
+la confirmación (`mergeInto`: hereda clave y nombre del existente, macros de
+la propuesta; el parecido por nombre viene preseleccionado y visible — antes
+el texto prometía la fusión y no la hacía), y la IA recibe `knownFoodNames`
+—solo nombres, máx. 300— para reusar el exacto cuando es el mismo alimento,
+con el freno escrito: otro corte o preparación es otro alimento. Esa mitad
+espera redeploy (prompts de comida v3).
 
-## Recetas, completas (2026-09-01)
+**El detalle de una receta no existía.** `RecipeDetail.tsx`, en lugar de la
+lista y no encima: totales con la misma fila de chips de la tarjeta, cada
+componente con sus gramos **en este plato** editables, agregar y quitar, foto,
+nombre, borrar, y "Usar en una comida", que la expande al carrito **una línea
+por componente** (`recipeToCartLines`) para que la porción siga siendo por
+alimento. El carrito también la encuentra al buscar.
 
-Tablas `recipes` y `recipe_items`, **aditivas**. Una receta **no guarda macros**:
-se derivan de sus componentes contra el catálogo vivo, así que corregir el arroz
-corrige todas las recetas que lo usan. Un componente ausente se declara en vez
-de sumar cero callado. Al guardar una comida de varios alimentos, la pregunta de
-tres salidas: por separado, como receta, o las dos. Con "solo receta" los
-alimentos igual se escriben —sin ellos la suma no tendría sumandos—; lo que
-cambia es que no se listan sueltos.
+**Los componentes ya no heredan la foto del plato** cuando hay receta: era el
+bug que originó todo el módulo.
 
-Borrar un alimento que una receta usa lanza `FoodInUseByRecipesError`, que **no
-es un error a reportar**: abre `RecipeFixModal`, donde se resuelve receta por
-receta. **Todo o nada**: si queda una sin resolver, el alimento no se borra. La
-IA propone el sustituto —con la razón escrita— y nunca lo aplica sola. Los
-duplicados se marcan (`similarTo`) y jamás se fusionan solos: emparejar mal
-mezcla macros de dos alimentos y eso sugiere carbohidratos sin delatarse.
+⚠️ **Las fotos no se analizan en producción y no es la app**: el redeploy del
+2026-09-02 dejó el proxy respondiendo 502 a todo cuerpo mayor a ~8 KB. Repro y
+prompt en `docs/DEEPAGENT_REDEPLOY_PROMPT.md`.
 
 ## Porción, fibra y la hora del resumen (2026-09-01)
 

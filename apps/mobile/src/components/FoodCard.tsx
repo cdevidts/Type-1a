@@ -125,6 +125,28 @@ function Thumbnail({ imageUri, name }: { imageUri: string | undefined; name: str
   );
 }
 
+/**
+ * La fila de cinco chips, sola. Es lo que la tarjeta dibuja bajo el nombre, y
+ * lo que el detalle de una receta muestra como total del plato: **la misma**
+ * fila, para que los mismos gramos se vean igual en los dos lugares.
+ */
+export function MacroChipRow({ macros, caption }: { macros: FoodCardMacros; caption?: string | undefined }) {
+  return (
+    <>
+      <View style={styles.chipRow}>
+        <MacroChip label="Carbos" value={macros.carbsG} unit="g" color={macroColors.carbs} />
+        <MacroChip label="Proteína" value={macros.proteinG} unit="g" color={macroColors.protein} />
+        <MacroChip label="Grasa" value={macros.fatG} unit="g" color={macroColors.fat} />
+        <MacroChip label="Fibra" value={macros.fiberG} unit="g" color={macroColors.fiber} outlined />
+        <MacroChip label="Calorías" value={macros.caloriesKcal} unit="kcal" color={colors.muted} neutral />
+      </View>
+      {caption === undefined ? null : (
+        <Text style={styles.macrosCaption} numberOfLines={2}>{caption}</Text>
+      )}
+    </>
+  );
+}
+
 export function FoodCard({
   name,
   subtitle,
@@ -161,16 +183,7 @@ export function FoodCard({
       <View style={styles.body}>
         <Text style={styles.name} numberOfLines={2}>{name}</Text>
         <Text style={styles.subtitle} numberOfLines={2}>{subtitle}</Text>
-        <View style={styles.chipRow}>
-          <MacroChip label="Carbos" value={macros.carbsG} unit="g" color={macroColors.carbs} />
-          <MacroChip label="Proteína" value={macros.proteinG} unit="g" color={macroColors.protein} />
-          <MacroChip label="Grasa" value={macros.fatG} unit="g" color={macroColors.fat} />
-          <MacroChip label="Fibra" value={macros.fiberG} unit="g" color={macroColors.fiber} outlined />
-          <MacroChip label="Calorías" value={macros.caloriesKcal} unit="kcal" color={colors.muted} neutral />
-        </View>
-        {macrosCaption === undefined ? null : (
-          <Text style={styles.macrosCaption} numberOfLines={2}>{macrosCaption}</Text>
-        )}
+        <MacroChipRow macros={macros} caption={macrosCaption} />
       </View>
       <Pressable
         style={styles.action}

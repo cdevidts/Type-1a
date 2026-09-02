@@ -9,11 +9,14 @@ import Camera from 'lucide-react-native/icons/camera';
 import PencilLine from 'lucide-react-native/icons/pencil-line';
 import WandSparkles from 'lucide-react-native/icons/wand-sparkles';
 
-import { resolveMacrosSource, type CartLine, type CatalogFood } from '@type1a/domain';
+import { resolveMacrosSource, type CartLine, type CatalogFood,
+  type Recipe,
+} from '@type1a/domain';
 import type { MealAnalysisResult, MealEvent, MealSnapshot } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, editMealWithInstruction, MobileApiError } from '../api';
 import { parseBlankAsClear, parseBlankAsUnset } from '../format';
+import { knownFoodNamesFrom } from '../knownFoods';
 import { logSaveError } from '../log';
 import { MealAiFields } from './MealAiFields';
 import { colors, radius, spacing } from '../theme';
@@ -81,6 +84,7 @@ function DiffRow({ label, before, after, unit }: { label: string; before: string
 export function MealEditModal({
   meal,
   catalogFoods,
+  recipes,
   onClose,
   onSave,
 }: {
@@ -95,6 +99,8 @@ export function MealEditModal({
    * `CatalogQuickAdd` una vez.
    */
   catalogFoods: readonly CatalogFood[];
+  /** Recetas, para que el carrito pueda reusarlas. */
+  recipes?: readonly Recipe[] | undefined;
   onClose: () => void;
   onSave: (mealId: string, result: MealEditResult) => Promise<void>;
 }) {
@@ -218,6 +224,7 @@ export function MealEditModal({
       });
       if (compressed.base64 === undefined) throw new Error('No base64 image');
       const next = await analyzeMealImage({
+        knownFoodNames: knownFoodNamesFrom(catalogFoods),
         imageBase64: compressed.base64,
         mimeType: 'image/jpeg',
         ...(description.trim() === '' ? {} : { description: description.trim() }),
@@ -243,7 +250,7 @@ export function MealEditModal({
     setBusy(true);
     setProposal(null);
     try {
-      const next = await analyzeMealDescription(description.trim());
+      const next = await analyzeMealDescription(description.trim(), knownFoodNamesFrom(catalogFoods));
       setProposal(next);
       setMessage('Propuesta lista desde el texto (sin foto, la incertidumbre es mayor). No se guarda nada hasta que toques Guardar.');
     } catch (error) {
@@ -262,7 +269,7 @@ export function MealEditModal({
     setBusy(true);
     setProposal(null);
     try {
-      const next = await editMealWithInstruction({ instruction: instruction.trim(), current: snapshot() });
+      const next = await editMealWithInstruction({ instruction: instruction.trim(), current: snapshot(), knownFoodNames: knownFoodNamesFrom(catalogFoods) });
       setProposal(next);
       setMessage('Propuesta lista. Revísala abajo: no se guarda nada hasta que toques Guardar.');
     } catch (error) {
@@ -543,6 +550,7 @@ export function MealEditModal({
       <Text style={styles.sectionTitle}>Agregar del catálogo</Text>
       <MealCart
         foods={catalogFoods}
+        recipes={recipes ?? []}
         lines={cartLines}
         onChange={setCartLines}
         onUseCarbs={(totals) => {

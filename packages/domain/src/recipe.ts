@@ -1,4 +1,5 @@
 import { scaleCatalogFood, servingGramsOf, type CatalogFood } from './food-catalog';
+import type { CartLine } from './meal-cart';
 
 /**
  * Una **receta**: un plato con nombre propio que agrupa varios alimentos del
@@ -168,6 +169,61 @@ export function replaceRecipeItem(
 /** Una receta sin ese componente. Puede quedar vacía; ver `isEmptyRecipe`. */
 export function removeRecipeItem(recipe: Recipe, foodKey: string): Recipe {
   return { ...recipe, items: recipe.items.filter((item) => item.foodKey !== foodKey) };
+}
+
+/**
+ * La receta con **esos** gramos para ese componente. Gramos inválidos
+ * devuelven la receta intacta: corregir una línea no puede dejarla en 0 g ni
+ * en 30 kg, y quien edita ya tiene el mensaje de rango para decirlo.
+ */
+export function setRecipeItemGrams(recipe: Recipe, foodKey: string, grams: number): Recipe {
+  if (!isValidRecipeItemGrams(grams)) return recipe;
+  return {
+    ...recipe,
+    items: recipe.items.map((item) => (item.foodKey === foodKey ? { foodKey, grams: round(grams) } : item)),
+  };
+}
+
+/**
+ * La receta con un componente más. Si ya lo contenía, se **suman** los gramos
+ * en vez de duplicar la línea: `recipe_items` tiene clave primaria
+ * `(receta, alimento)`, y dos líneas del mismo alimento se pisarían al guardar.
+ */
+export function addRecipeItem(recipe: Recipe, foodKey: string, grams: number): Recipe {
+  if (!isValidRecipeItemGrams(grams)) return recipe;
+  const existing = recipe.items.find((item) => item.foodKey === foodKey);
+  if (existing === undefined) return { ...recipe, items: [...recipe.items, { foodKey, grams: round(grams) }] };
+  return setRecipeItemGrams(recipe, foodKey, existing.grams + grams);
+}
+
+/**
+ * Una receta **en el carrito**: una línea por componente, en gramos.
+ *
+ * Se expande a propósito en vez de entrar como una sola línea "Arroz con
+ * pollo": la porción de un alimento sigue siendo por alimento, así que después
+ * ella puede quitar el pollo o poner menos arroz sin romper la receta ni
+ * inventar un macro para el plato entero. `servings` es cuántos platos comió
+ * —"medio plato" = 0,5— y escala cada componente por igual.
+ *
+ * Un componente que ya no esté en el catálogo **se declara**, no se omite: una
+ * línea que falta baja los carbohidratos del carrito sin que nada lo diga, y
+ * ese carrito puede terminar en carbohidratos confirmados.
+ */
+export function recipeToCartLines(
+  recipe: Pick<Recipe, 'items'>,
+  foodsByKey: ReadonlyMap<string, CatalogFood>,
+  servings: number,
+  nextLineId: () => string,
+): { lines: CartLine[]; missingFoodKeys: string[] } {
+  if (!Number.isFinite(servings) || servings <= 0) throw new Error('Servings must be a positive number.');
+  const lines: CartLine[] = [];
+  const missingFoodKeys: string[] = [];
+  for (const item of recipe.items) {
+    const food = foodsByKey.get(item.foodKey);
+    if (food === undefined) { missingFoodKeys.push(item.foodKey); continue; }
+    lines.push({ id: nextLineId(), food, mode: 'grams', quantity: round(item.grams * servings) });
+  }
+  return { lines, missingFoodKeys };
 }
 
 /**

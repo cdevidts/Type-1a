@@ -47,75 +47,52 @@ en vez de abrir la pregunta de nuevo.
 | 2026-08-25 | Fase 19 + Fase 23 + catálogo desde "Nueva entrada", y los 11 hallazgos de esa revisión | **SÍ.** `apps/api/src/*` no se tocó, pero sí `packages/ai/src/prompts.ts` y `packages/domain/src/ai-safety.ts`, que el backend importa. Ver la sección de abajo. |
 | 2026-08-31 | Modal Maestro, carrito, calendario, transacciones SQLite | No — `packages/domain`, `packages/schemas` y `apps/mobile`. |
 | 2026-09-01 | Porción propuesta por la IA, recetas, campos de IA separados, cobertura de días | **SÍ.** `FoodEstimateSchema` gana `servingGrams`/`servingLabel` y los tres prompts de comida pasan a v2. Sin redeploy la IA nunca propone porción. |
-| 2026-09-01 | Macros por porción, meta de fibra, hora local del resumen, y los hallazgos de su revisión | **SÍ, y es el que dispara este redeploy.** `glucose-insight` v6 + patrones nuevos en `ai-safety.ts`. |
+| 2026-09-01 | Macros por porción, meta de fibra, hora local del resumen, y los hallazgos de su revisión | **SÍ** — desplegado el 2026-09-02 como `30a87fa` (DeepAgent, verificado con los tres curl: hora local 13:00 ✓, `servingGrams` ✓). |
+| 2026-09-02 | Recetas completas (detalle, "solo receta", fusión a mano, reuso en el carrito) + `knownFoodNames` | **SÍ, dos cosas.** (1) 🔴 **Bug de infraestructura del deploy anterior**: todo cuerpo > ~8 KB responde 502 — las fotos no se analizan. (2) `knownFoodNames` en los tres modos de análisis, prompts de comida v3. Ver abajo. |
 
 ## Qué cambió desde el último deploy
 
-**Lo desplegado hoy es el commit `7fec114` (2026-08-21)**, verificado contra el
-servidor real el 2026-09-01: `GET /v1/food-catalog?q=arroz` responde `200
-{"foods":[]}` (o sea que ese deploy y su `DATABASE_URL` ya están hechos) y
-`POST /v1/ai/meal-analysis` con un cuerpo inválido responde `400
-invalid_meal_input` con el mensaje actual. Los dos pendientes que este
-documento arrastraba desde agosto —el tercer modo de la Fase 17 y el catálogo
-compartido— **están resueltos**.
+**Lo desplegado hoy es `30a87fa` (2026-09-02, DeepAgent)**, verificado por él y
+por Claude Code: la hora local del resumen tomó y `servingGrams` viene. Pero el
+deploy trajo un problema de infraestructura que el anterior no tenía, y el repo
+avanzó una vez más.
 
-`apps/api/src/*` no ha cambiado desde entonces. Lo que quedó atrás son los dos
-paquetes que el backend **importa**: `packages/ai` (los prompts) y
-`packages/domain` (el filtro de salida). Por eso este redeploy no toca
-configuración ni variables de entorno: es traer el código nuevo y nada más.
+### 1. 🔴 Cuerpos de más de ~8 KB responden 502: las fotos no se analizan
 
-### 1. El filtro de seguridad de salida está desactualizado en producción 🔴
+Verificado contra el servidor real el 2026-09-02, con `curl`:
 
-Es lo más importante y no es cosmético. `AbacusGlucoseInsightService.summarize`
-pasa toda respuesta del modelo por `containsTherapyRecommendation`
-(`packages/domain/src/ai-safety.ts`). **En producción corre la versión de 4
-patrones**; la de hoy tiene 14. Faltan, entre otros:
+| Cuerpo de `POST /v1/ai/meal-analysis` | Respuesta |
+|---|---|
+| `{"description":"una manzana"}` (texto) | 200 en 4,6 s |
+| imagen PNG de 1×1 px (~70 bytes en base64) | 200 en 5,4 s — el camino de visión funciona |
+| 8 KB de base64 | **502 en 0,5 s** |
+| 200 KB de base64 | **502 en 0,9 s** |
+| 525 KB (una foto real comprimida) | **502 en 1,9 s** |
 
-- los de **insulina activa (IOB)**, agregados el 2026-08-22 tras la revisión de
-  la Fase 23 — y son los que más importan, porque desde el build del
-  2026-08-31 la app **sí manda** `contextEvents` (las dosis de la ventana),
-  mientras el prompt desplegado (v2) no dice nada sobre qué hacer con ellas;
-- los de **juicio de suficiencia** sobre una dosis ("fue insuficiente", "se
-  quedó corta"), del 2026-08-25;
-- los de **juicio o consejo sobre la hora de comer**, del 2026-09-01.
+Con o sin `Expect: 100-continue`, da lo mismo. Una foto del teléfono pesa
+300–550 KB en base64, así que **ninguna foto llega**: la app muestra "no se
+pudo analizar la foto" y solo funciona estimar por texto.
 
-O sea: hoy el modelo recibe dosis con sus unidades y sus minutos, sin
-instrucción de prompt y sin la mitad del filtro. No hay evidencia de que haya
-producido una salida así, pero la barrera que debía atraparla no está puesta.
+No es el código: `apps/api/src/app.ts` fija `bodyLimit: 12_000_000` y no cambió
+desde el deploy del 21 de agosto, que sí analizaba fotos. Un 502 en medio
+segundo es la capa de proxy (nginx / el ingreso del host) cortando el cuerpo o
+la conexión al proceso antes de que Fastify responda — Fastify contestaría 413,
+no 502. Candidatos típicos: `client_max_body_size` chico en el sitio nuevo,
+`client_body_buffer_size`/`client_body_temp_path` sin permisos tras el
+redeploy, o `proxy_request_buffering` contra un upstream que cierra. El
+proceso mismo acepta 12 MB; la reja está antes.
 
-### 2. `glucoseInsightSystemPrompt`: v2 desplegado, v6 en el repo
+### 2. `knownFoodNames`: la IA reusa el nombre exacto de lo que ya existe
 
-El prompt en producción tiene dos párrafos: unidades en mg/dL y las
-prohibiciones básicas. Le faltan cuatro bloques:
+Los tres modos de `/v1/ai/meal-analysis` aceptan `knownFoodNames` (solo
+nombres, máximo 300 de hasta 80 caracteres; `KnownFoodNamesSchema`). Los
+prompts de comida pasan a **v3** con la regla y su freno: reusar el nombre
+exacto solo si es el mismo alimento; corte, preparación, variedad o marca
+distinta es otro alimento. Sin redeploy, el campo viaja, Zod lo descarta en
+silencio y el modelo sigue inventando "pata de pollo" al lado de "muslo de
+pollo". Compatible hacia atrás: es opcional.
 
-- **v3** — describir los `contextEvents` sin evaluarlos, y que
-  `minutesAfterAnchor` **puede ser negativo** (una dosis *antes* de la comida).
-  Sin esto, el modelo puede leer `-45` como "45 minutos después" e invertir la
-  lectura clínica del episodio.
-- **v4/v5** — no describir insulina como todavía activa, acumulándose o
-  solapándose (es una estimación de IOB, que el MVP no computa); no juzgar si
-  un evento fue apropiado; una nota no lleva texto, no especular sobre él.
-- **v6** — **el arreglo del bug que reportó Verónica**: las marcas de tiempo
-  ahora viajan en hora local con desfase explícito
-  (`2026-09-01T17:30:00.000-04:00`) y el prompt prohíbe convertir de zona.
-  Sin redeploy, el resumen puede seguir diciendo "el episodio empezó a las
-  21:30" para una comida de las 17:30. Incluye además la prohibición de juzgar
-  o aconsejar la hora de comer, que existe justamente porque la hora local le
-  da al modelo material para hacerlo.
-
-### 3. Los tres prompts de comida: v1 desplegado, v2 en el repo
-
-`FoodEstimateSchema` gana `servingGrams` y `servingLabel`, y los tres prompts
-piden la porción típica del alimento con su etiqueta en lenguaje natural. El
-JSON Schema que se le manda al modelo se deriva de ese Zod **en el servidor**,
-así que hasta el redeploy el modelo **no tiene dónde devolver la porción**: la
-pantalla de confirmación aparece igual, pero siempre con el default de 100 g y
-sin propuesta que confirmar. Es la otra mitad del bug del catálogo.
-
-No rompe nada: los dos campos son `.default(null)` en el cliente, así que una
-respuesta vieja parsea bien y solo pierde la porción.
-
-### 4. Diferido a propósito, no pendiente de confirmación
+### 3. Diferido a propósito, no pendiente de confirmación
 
 Quitar `LIBRELINKUP_EMAIL`/`LIBRELINKUP_PASSWORD` del entorno — Verónica ya
 confirmó (2026-08-21) que su cuenta propia funciona conectada desde la app,
@@ -143,86 +120,88 @@ acá y commitea, o diagnostica el problema real primero.
 
 ## El prompt consolidado (copiar/pegar a DeepAgent tal cual)
 
-Actualizado el 2026-09-01 para la rama `claude/prompt-maestro-14-cambios-pa5ale`,
-commit `6849f11`. **Ya no pide variables de entorno**: `DATABASE_URL` quedó
-configurada en el deploy del 2026-08-21 y el catálogo compartido responde 200.
+Actualizado el 2026-09-02 para la rama `claude/prompt-maestro-14-cambios-pa5ale`.
+**Completar el commit** con el último pusheado (`git log -1`).
 
 ```
-Necesito que redespliegues el backend de Type 1A (apps/api de
-github.com/cdevidts/type-1a) a producción, en el mismo host que ya está
-sirviendo https://237e8b7f1.abacusai.cloud.
+Dos cosas sobre el backend de Type 1A (apps/api de github.com/cdevidts/type-1a)
+en https://237e8b7f1.abacusai.cloud. La primera es un bug de infraestructura
+que dejó el redeploy de hoy; la segunda es un redeploy más.
 
 Rama: claude/prompt-maestro-14-cambios-pa5ale
-Commit: 6849f11
+Commit: <SHA>
 
-No hay código que escribir ni variables de entorno que tocar. El deploy
-actual es del commit 7fec114 (21 de agosto) y apps/api/src/ no ha cambiado
-desde entonces: lo que quedó atrás son dos paquetes del monorepo que el
-backend importa, packages/ai (los prompts que se le mandan al modelo) y
-packages/domain (el filtro que revisa lo que el modelo responde). Traer el
-código nuevo es todo.
+1) URGENTE: DESDE EL REDEPLOY, TODO CUERPO DE MÁS DE ~8 KB RESPONDE 502
 
-Por qué importa, en orden:
+Reproducción exacta, desde cualquier máquina:
 
-1. SEGURIDAD. El backend pasa toda respuesta del modelo por
-   containsTherapyRecommendation (packages/domain/src/ai-safety.ts). En
-   producción corre la versión con 4 patrones; la del repo tiene 14. Faltan
-   los que detectan afirmaciones de insulina activa (IOB), los de juicio
-   sobre si una dosis fue suficiente, y los de consejo sobre la hora de
-   comer. Mientras tanto la app sí le manda al modelo las dosis registradas
-   en la ventana del episodio, con sus unidades y sus minutos.
+   # texto: funciona
+   curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" -X POST \
+     https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
+     -H 'Content-Type: application/json' -d '{"description":"una manzana"}'
+   → 200
 
-2. UN BUG REPORTADO POR LA USUARIA. El resumen post-comida cita la hora en
-   UTC: dice "el episodio empezó a las 21:30" para una comida de las 17:30.
-   La app ya manda las marcas de tiempo en hora local con desfase explícito
-   (2026-09-01T17:30:00.000-04:00), pero la instrucción de no convertir de
-   zona vive en el prompt, que está en el servidor. La mitad del arreglo
-   está esperando este deploy.
+   # 200 KB de cuerpo: 502 en menos de un segundo
+   python3 -c "import json,base64,os;json.dump({'imageBase64':base64.b64encode(os.urandom(150000)).decode(),'mimeType':'image/jpeg'},open('/tmp/big.json','w'))"
+   curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" -X POST \
+     https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
+     -H 'Content-Type: application/json' --data-binary @/tmp/big.json
+   → 502 (error code: 502) en ~0.9 s
 
-3. OTRO BUG REPORTADO. Los prompts de análisis de comida pasaron a pedir la
-   porción típica de cada alimento (servingGrams / servingLabel). El JSON
-   Schema que se le manda al modelo se deriva en el servidor, así que hasta
-   el redeploy el modelo no tiene dónde devolver la porción y todo el
-   catálogo queda con 100 g por defecto.
+   # una imagen PNG de 1x1 px sí responde 200: el camino de visión funciona,
+   # lo que falla es el TAMAÑO del cuerpo.
 
-Importante: no cambies el dominio ni la URL. La app móvil apunta a
-EXPO_PUBLIC_API_BASE_URL, ya configurada contra ese host, y cambiarla
-obligaría a un build nuevo del APK. Las variables de entorno actuales quedan
-como están: no las hardcodees, no las rotes, no agregues ninguna (ver
-apps/api/src/config.ts y .env.example en el repo).
+Una foto real del teléfono pesa 300-550 KB en base64, así que ninguna foto
+llega al análisis: la usuaria ve "no se pudo analizar la foto" y solo puede
+estimar por texto. Antes del redeploy del 2026-09-02 las fotos funcionaban.
 
-Después del deploy, confirma con estos tres curl:
+No es el código de la app: apps/api/src/app.ts fija bodyLimit: 12_000_000 y no
+ha cambiado desde agosto. Un 502 en medio segundo viene de la capa de proxy
+(nginx o el ingreso del host) rechazando el cuerpo o cerrando la conexión al
+proceso antes de que Fastify responda; Fastify respondería 413, no 502. Revisa
+en ese orden: client_max_body_size del server/location de este sitio (debe
+permitir al menos 15m), client_body_buffer_size y los permisos de
+client_body_temp_path para el usuario con el que corre nginx, y
+proxy_request_buffering. Mira el error log de nginx justo después de correr el
+curl de 200 KB: ahí está la causa escrita. Arregla eso, recarga nginx, y
+vuelve a correr el curl de 200 KB: tiene que responder 200 (el modelo dirá que
+no ve comida en ruido, y está bien; lo que se prueba es que el cuerpo llegue).
 
-A) El servidor arriba y respondiendo:
+2) REDEPLOY DESDE <SHA>
 
-   curl https://237e8b7f1.abacusai.cloud/health
-   (200 con {"status":"ok","version":"0.1.0"})
+Trae una cosa: los tres modos de /v1/ai/meal-analysis aceptan un campo
+opcional knownFoodNames (arreglo de nombres, máx 300) y los prompts de comida
+pasan a v3 para que el modelo reuse el nombre exacto de un alimento que la
+usuaria ya tiene en vez de crear un duplicado. Es compatible hacia atrás.
+Mismo procedimiento que hoy: checkout del commit, pnpm install
+--frozen-lockfile, reiniciar el servicio. No toques dominio, puerto, nginx
+(salvo lo del punto 1) ni variables de entorno.
 
-B) La hora local — es la verificación que de verdad importa. Este episodio
-   es de las 13:00 hora local; en UTC serían las 17:00:
+Verificación final, los cuatro curl:
 
-   curl -X POST https://237e8b7f1.abacusai.cloud/v1/ai/glucose-insight \
-     -H 'Content-Type: application/json' \
-     -d '{"mealTimestamp":"2026-09-01T13:00:00.000-04:00","startingGlucose":110,"glucose60":170,"glucose120":150,"peakGlucose":180,"peakDelta":70,"timeToPeakMinutes":75,"minGlucose":108,"timeAboveRangeMinutes":10,"timeBelowRangeMinutes":0,"confirmedCarbsG":45,"readingCount":24}'
+   A) curl https://237e8b7f1.abacusai.cloud/health
+      → 200 {"status":"ok","version":"0.1.0"}
 
-   Debe responder 200 con un resumen en español. Si menciona una hora, tiene
-   que ser las 13:00 y NUNCA las 17:00. Si dice 17:00, el deploy no tomó el
-   prompt nuevo — avísame antes de dar el trabajo por terminado.
+   B) el curl de 200 KB del punto 1
+      → 200 (o 4xx del modelo, NUNCA 502)
 
-C) La porción propuesta por la IA:
+   C) curl -s -X POST https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
+        -H 'Content-Type: application/json' \
+        -d '{"description":"un trozo de pollo, la pierna","knownFoodNames":["Muslo de pollo","Arroz"]}'
+      → 200, y el alimento del arreglo "foods" debe llamarse exactamente
+        "Muslo de pollo" (el modelo reusó el nombre conocido). El analysisId
+        debe empezar con meal-analysis-text.v3.
 
-   curl -X POST https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
-     -H 'Content-Type: application/json' \
-     -d '{"description":"una lata de bebida cola de 350 ml"}'
+   D) curl -s -X POST https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
+        -H 'Content-Type: application/json' \
+        -d '{"description":"arroz integral","knownFoodNames":["Arroz"]}'
+      → 200, y el alimento NO debe llamarse "Arroz": es otro alimento y el
+        prompt le prohíbe fusionarlos. Si lo llama "Arroz", avísame.
 
-   Debe responder 200 y cada alimento del arreglo "foods" debe traer las
-   claves servingGrams y servingLabel. Si esas claves no aparecen, el deploy
-   quedó con el schema viejo.
-
-Contexto de arquitectura por si influye en cómo lo despliegas: es el mismo
-servicio Fastify de siempre, con la única tabla Postgres del catálogo
-compartido que ya existe y se auto-provee al arrancar (CREATE TABLE IF NOT
-EXISTS). No hay migración que correr.
+Si el punto 1 no se puede arreglar en la configuración que tienes a mano,
+dime exactamente qué capa devuelve el 502 y con qué límite, antes de dar el
+trabajo por terminado. Sin el punto 1 la app no analiza fotos, que es su
+función principal.
 ```
 
 ### Diferido a propósito — NO agregar todavía

@@ -258,6 +258,14 @@ export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
   if (!catalogColumns.some((column) => column.name === 'image_uri')) {
     await db.execAsync('ALTER TABLE food_catalog ADD COLUMN image_uri TEXT;');
   }
+  // "Solo receta" (2026-09-02). Aditiva y con DEFAULT 1: toda fila anterior
+  // es un alimento que ella guardó a la vista, y así se queda. 0 = componente
+  // que vive solo dentro de sus recetas; se lista desde el detalle de la
+  // receta, nunca en la grilla ni en el buscador de comidas. Antes de esta
+  // columna "solo receta" y "las dos cosas" escribían exactamente lo mismo.
+  if (!catalogColumns.some((column) => column.name === 'listed')) {
+    await db.execAsync('ALTER TABLE food_catalog ADD COLUMN listed INTEGER NOT NULL DEFAULT 1;');
+  }
 
   const episodeColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(meal_episodes)');
   if (!episodeColumns.some((column) => column.name === 'rapid_insulin_event_id')) {
@@ -3006,13 +3014,14 @@ export async function recordCatalogFoods(
         // aparecer. No se notaba porque la IA todavía no proponía porción.
         await db.runAsync(
           `INSERT INTO food_catalog
-             (key, name, carbs_per_100g, protein_per_100g, fat_per_100g, fiber_per_100g, kcal_per_100g, times_seen, last_seen_at, serving_grams, serving_label, serving_source, image_uri)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+             (key, name, carbs_per_100g, protein_per_100g, fat_per_100g, fiber_per_100g, kcal_per_100g, times_seen, last_seen_at, serving_grams, serving_label, serving_source, image_uri, listed)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`,
           entry.key, entry.name,
           entry.carbsPer100g, entry.proteinPer100g, entry.fatPer100g, entry.fiberPer100g, entry.kcalPer100g,
           entry.lastSeenAt,
           entry.servingGrams ?? null, entry.servingLabel ?? null, entry.servingSource ?? null,
           entry.imageUri ?? null,
+          entry.listed === false ? 0 : 1,
         );
         continue;
       }
@@ -3025,7 +3034,7 @@ export async function recordCatalogFoods(
         `UPDATE food_catalog SET
            name = ?, carbs_per_100g = ?, protein_per_100g = ?, fat_per_100g = ?,
            fiber_per_100g = ?, kcal_per_100g = ?, times_seen = ?, last_seen_at = ?,
-           serving_grams = ?, serving_label = ?, serving_source = ?, image_uri = ?
+           serving_grams = ?, serving_label = ?, serving_source = ?, image_uri = ?, listed = ?
          WHERE key = ?`,
         merged.name, merged.carbsPer100g, merged.proteinPer100g, merged.fatPer100g,
         merged.fiberPer100g, merged.kcalPer100g, merged.timesSeen, merged.lastSeenAt,
@@ -3033,6 +3042,8 @@ export async function recordCatalogFoods(
         // `blendCatalogEntry` conserva la foto anterior cuando la nueva no
         // trae una, así que escribir el resultado nunca la borra.
         merged.imageUri ?? null,
+        // Y hace OR con la visibilidad: uno a la vista no se esconde.
+        merged.listed === false ? 0 : 1,
         merged.key,
       );
     }
@@ -3256,13 +3267,70 @@ export async function updateRecipeItems(
   });
 }
 
-export async function deleteRecipe(db: SQLiteDatabase, recipeId: string): Promise<void> {
-  // `recipe_items` cae por la clave foránea con `ON DELETE CASCADE`; el
-  // `DELETE` explícito cubre una base donde `foreign_keys` no estuviera activo.
+/**
+ * Muestra u oculta un alimento como suelto. Es la salida del "solo receta":
+ * desde el detalle de la receta un componente oculto puede pasar a la grilla.
+ */
+export async function setCatalogFoodListed(db: SQLiteDatabase, key: string, listed: boolean): Promise<void> {
+  await db.runAsync('UPDATE food_catalog SET listed = ? WHERE key = ?', listed ? 1 : 0, key);
+}
+
+/**
+ * Renombra una receta y/o cambia su foto.
+ *
+ * Renombrar recalcula la clave —es lo que evita duplicados al volver a
+ * fotografiar el plato— y se rechaza si otra receta ya la tiene: dos platos
+ * con la misma clave se fusionarían en el próximo guardado sin que nadie lo
+ * pidiera. `imageUri` en `null` quita la foto; ausente la deja.
+ */
+export async function updateRecipe(
+  db: SQLiteDatabase,
+  recipeId: string,
+  patch: { name?: string | undefined; imageUri?: string | null | undefined },
+): Promise<void> {
   await serializedTransaction(db, async () => {
+    if (patch.name !== undefined) {
+      const name = patch.name.trim();
+      const key = foodKey(name);
+      if (key === '') throw new Error('La receta necesita un nombre.');
+      const clash = await db.getFirstAsync<{ id: string }>('SELECT id FROM recipes WHERE key = ? AND id <> ?', key, recipeId);
+      if (clash !== null) throw new Error('Ya tienes una receta con ese nombre.');
+      await db.runAsync('UPDATE recipes SET name = ?, key = ? WHERE id = ?', name, key, recipeId);
+    }
+    if (patch.imageUri !== undefined) {
+      await db.runAsync('UPDATE recipes SET image_uri = ? WHERE id = ?', patch.imageUri, recipeId);
+    }
+  });
+}
+
+/**
+ * Borra una receta **y los componentes que solo existían para ella**.
+ *
+ * Un alimento guardado con "solo receta" (`listed = 0`) no está en la grilla,
+ * así que nadie podría borrarlo después: quedaría una fila invisible e
+ * inalcanzable. Se va con la última receta que lo usa. Los alimentos a la
+ * vista no se tocan — son de ella, no de la receta.
+ */
+export async function deleteRecipe(db: SQLiteDatabase, recipeId: string): Promise<{ deletedFoodKeys: string[] }> {
+  const deletedFoodKeys: string[] = [];
+  await serializedTransaction(db, async () => {
+    const orphans = await db.getAllAsync<{ key: string }>(
+      `SELECT f.key FROM food_catalog f
+        JOIN recipe_items ri ON ri.food_key = f.key AND ri.recipe_id = ?
+       WHERE f.listed = 0
+         AND NOT EXISTS (SELECT 1 FROM recipe_items o WHERE o.food_key = f.key AND o.recipe_id <> ?)`,
+      recipeId, recipeId,
+    );
+    // `recipe_items` cae por la clave foránea con `ON DELETE CASCADE`; el
+    // `DELETE` explícito cubre una base donde `foreign_keys` no estuviera activo.
     await db.runAsync('DELETE FROM recipe_items WHERE recipe_id = ?', recipeId);
     await db.runAsync('DELETE FROM recipes WHERE id = ?', recipeId);
+    for (const orphan of orphans) {
+      await db.runAsync('DELETE FROM food_catalog WHERE key = ?', orphan.key);
+      deletedFoodKeys.push(orphan.key);
+    }
   });
+  return { deletedFoodKeys };
 }
 
 /** Actualiza la foto de una receta. `null` la quita. */
@@ -3315,6 +3383,7 @@ interface FoodCatalogRow {
   serving_grams: number | null; serving_label: string | null;
   serving_source: string | null;
   image_uri: string | null;
+  listed: number | null;
 }
 
 function rowToCatalogFood(row: FoodCatalogRow): CatalogFood {
@@ -3337,6 +3406,9 @@ function rowToCatalogFood(row: FoodCatalogRow): CatalogFood {
     // Una fila anterior a la columna llega con `undefined` y así se queda: no
     // se inventa una imagen para datos viejos, se muestra el fallback.
     ...(row.image_uri === null || row.image_uri === undefined ? {} : { imageUri: row.image_uri }),
+    // Solo se materializa el `false`: una fila visible no lleva el campo, igual
+    // que las anteriores a la columna. Ver `CatalogFood.listed`.
+    ...(row.listed === 0 ? { listed: false } : {}),
   };
 }
 

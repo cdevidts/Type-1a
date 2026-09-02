@@ -1,17 +1,17 @@
 # Progress
 
-_Última actualización: 2026-09-01._
+_Última actualización: 2026-09-02._
 
 ## Estado de validación
 
 | | |
 |---|---|
 | `pnpm verify` | Verde; el wrapper local de Windows conserva su fallo de rutas preexistente. CI Linux es la verificación integral |
-| Tests | **724** — domain 426, mobile 248, ai 17, schemas 13, cgm 10, api 10 |
-| Bundle de Metro | **1.361 módulos** medidos (+1: `episode-local-time.ts`) |
+| Tests | **749** — domain 443, mobile 252, ai 21, schemas 13, cgm 10, api 10 |
+| Bundle de Metro | **1.364 módulos** medidos (+3: `RecipeDetail`, `knownFoods`, iconos) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
-⚠️ La base del último build es **1.341**; los 20 que suma el trabajo desde
+⚠️ La base del último build es **1.361**; lo que suma el trabajo desde
 entonces son subpaths de Lucide y módulos nuevos, ningún barrel. Si vuelve a
 divergir, **la medición manda sobre la tabla**. `pnpm verify` corre, en orden:
 `verify:contracts`, `lint`, `typecheck`, `test`, `verify:bundle` (Metro real).
@@ -27,7 +27,10 @@ divergir, **la medición manda sobre la tabla**. `pnpm verify` corre, en orden:
 - 2026-09-02 (`4a660b8`, build `03fb5c6d`): campos de IA, cobertura de días,
   macros por porción, meta de fibra, hora local y el grupo de la comida rápida.
 
-⚠️ La hora del resumen necesita **además** el redeploy: su regla vive en el prompt.
+**Sin build**: recetas de verdad ("solo receta", detalle, fusión a mano, reuso
+en el carrito) y `knownFoodNames`. **Backend**: `30a87fa` desplegado el
+2026-09-02 (hora local ✓), pero **el proxy responde 502 a cuerpos > 8 KB** —
+las fotos no se analizan— y `knownFoodNames` espera redeploy.
 
 ## Deuda conocida
 
@@ -35,10 +38,8 @@ divergir, **la medición manda sobre la tabla**. `pnpm verify` corre, en orden:
 
 `packages/ai/src/abacus.ts:23` y `packages/ai/src/index.ts:1-2` usan extensión
 `.js` en imports relativos — **la trampa de Metro que rompió dos builds**. No
-explota solo porque `apps/mobile/package.json` no depende de `@type1a/ai`;
-`domain`, `cgm` y `schemas`, que sí se bundlean, están limpios. El día que la app
-dependa de ese paquete —el chat de IA— el bundle rompe. `verify:bundle` lo
-atraparía, pero la causa sigue ahí y cuesta tres líneas.
+explota solo porque `apps/mobile/package.json` no depende de `@type1a/ai`; el
+día que dependa —el chat de IA— el bundle rompe. Cuesta tres líneas.
 
 ### 🔴 Dos hallazgos vivos de la revisión repuntada (2026-08-26)
 
@@ -54,8 +55,7 @@ abiertos los dos de `macro-glucose.ts`:
 Cerrados el 2026-09-01: el fallo de la insulina que se pisaba con "Comida
 guardada", y la dosis del botón rápido escrita sin `entryGroupId`.
 
-Menores: `MealModal` no recibe glucosa (`isHypoglycemic` nunca dispara); las
-unidades se descartan al apagar "Registrarla como comida de ahora";
+Menores: `MealModal` no recibe glucosa (`isHypoglycemic` nunca dispara);
 `attachEntryToReading` no valida cetonas ni macros.
 
 ### 🟠 Hallazgos de la revisión de seguridad del 2026-08-27, no corregidos
@@ -64,33 +64,28 @@ El `domain-safety-reviewer` contra `f9c12d5..f2e9e93`: **cero críticos**, 5
 altos, 3 medios, 3 bajos. Los altos y cuatro de los seis restantes se cerraron
 en el mismo commit; quedan tres, declarados a propósito:
 
-1. **Dos comidas SIN grupo a la misma hora exacta comparten espejo.**
-   `syncConfirmedCarbRow`, `writeMirrorCarbRow` y `deleteMealEventRows` acotan
-   por `entry_group_id` cuando la comida lo tiene —todo lo editado—; sin grupo
-   siguen emparejando por `timestamp + source`, y `combineDayAndTime` deja
-   segundos en cero, así que dos comidas movidas a "13:00" colisionan. Cerrarlo
-   pide una clave `meal_id` en `carb_events`: migración con backfill.
-2. **La foto del catálogo es del plato, no del alimento.** Todos los alimentos de
-   un análisis heredan la misma imagen. Se corrigió lo que **afirma** la interfaz
-   ("la comida donde se identificó"); recortar exige coordenadas que la IA no da.
-3. **Editar los gramos de un `carb_events` importado conserva
-   `source: 'imported'`**, aunque el número ya no sea el del CSV. Decisión de
-   producto: relabelar a `'manual'` pierde el origen, dejarlo miente sobre el
-   valor. Va a Verónica.
+1. **Dos comidas SIN grupo a la misma hora exacta comparten espejo.** Sin
+   grupo siguen emparejando por `timestamp + source`, y `combineDayAndTime`
+   deja segundos en cero, así que dos comidas movidas a "13:00" colisionan.
+   Cerrarlo pide una clave `meal_id` en `carb_events`: migración con backfill.
+2. **La foto de un alimento suelto es del plato.** Con receta ya no; sin ella,
+   la etiqueta lo dice y recortar exige coordenadas que la IA no da.
+3. **Editar un `carb_events` importado conserva `source: 'imported'`.**
+   Decisión de producto: relabelar pierde el origen, dejarlo miente. Va a Verónica.
 
 ### 🟡 Menores
 
 - **Ni la UI ni `db.ts` tienen test de ejecución**: el repo no monta React y
   `db.ts` importa nativos de Expo. El cableado se comprobó leyendo el diff.
-- Una escritura **suelta** (`runAsync` fuera de transacción) puede caer dentro de
-  la transacción de otro y volver atrás con ella. Ventana angosta y de bajo daño
-  —ajustes, no historial—; cerrarla exige encolar también las sueltas.
+- Una escritura **suelta** (`runAsync` fuera de transacción) puede caer dentro
+  de la de otro y volver atrás con ella. Daño bajo: ajustes, no historial.
 - `README.md` sigue en pie (63 líneas). Se **reescribe a ~30**, no se elimina.
+- Un alimento `listed = 0` fuera de toda receta queda invisible e inalcanzable
+  (`deleteRecipe` solo limpia los de su receta). No suma en ningún total.
 
 ## Historial de fallos que definieron las reglas
 
-Cada uno costó un build, una corrida o un número falso en un reporte médico; el
-detalle vive en `git log --format=full`.
+Cada uno costó un build, una corrida o un número falso; detalle en `git log`.
 
 | Fallo | Regla que produjo |
 |---|---|
@@ -142,9 +137,13 @@ detalle vive en `git log --format=full`.
 | Mandar la hora **local** al modelo no agregó un campo, pero sí volvió citable un dato sobre su vida: con UTC no podía juzgar a qué hora cenaba, con hora de pared sí | el filtro crece cuando crece lo que el modelo **puede decir**, no solo cuando crece el payload |
 | El aviso de éxito corría siempre y pisaba al de "no se pudo registrar la insulina": se cerraba la app creyendo que la dosis había quedado | un `catch` que solo escribe un mensaje no arregla nada si el camino feliz lo reemplaza después; el fallo se lleva a la decisión final, no a un `setState` intermedio |
 | El botón rápido guardaba la comida y su dosis **sin `entryGroupId`**, y el timeline agrupa solo por esa columna | una facultad que el maestro tiene y el acceso rápido no es una asimetría, no una simplificación — tercera vez que muerde |
+| "Solo receta" y "las dos cosas" escribían exactamente lo mismo: la elección existía en la pantalla y en ningún dato | una opción que no cambia ninguna fila es una mentira con botón; si se ofrece, hay una columna que la recuerda |
+| La confirmación decía "se fusiona con ese" y guardaba con su propia clave | el texto de una pantalla se verifica contra lo que **escribe** |
+| El estado cargaba 60 alimentos y las recetas sumaban contra esos 60 | un `LIMIT` de presentación no puede ser la fuente de un total |
+| El redeploy dejó el proxy respondiendo 502 a cuerpos > 8 KB y la app decía "no se pudo analizar la foto" | se reproduce contra el servidor real ANTES de tocar la app: un 502 en medio segundo nunca es el código |
 
 ## Redeploy del backend
 
-`apps/api` solo cambió en `prompts.ts` (`glucose-insight.v6`), y **este redeploy
-sí importa**: la regla de zona horaria y la prohibición de aconsejar la hora de
-comer viven en el prompt; hasta desplegarlo, el resumen puede seguir en UTC.
+`30a87fa` está desplegado (hora local ✓). Pendiente: **el 502 del proxy** (bug
+de infraestructura, urgente: sin él no se analizan fotos) y `knownFoodNames`
+(prompts de comida v3). Prompt listo en `docs/DEEPAGENT_REDEPLOY_PROMPT.md`.

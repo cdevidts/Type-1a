@@ -95,6 +95,24 @@ export interface CatalogFood {
    * al leer el catálogo. Ver `catalogFoodMissingMacros` y `blendCatalogEntry`.
    */
   imageUri?: string;
+  /**
+   * Si se muestra como alimento suelto en el catálogo y en el buscador de
+   * comidas. **Ausente = `true`**: toda fila anterior a este campo es un
+   * alimento que ella guardó a la vista.
+   *
+   * `false` es "solo receta": la usuaria eligió guardar un plato de varios
+   * alimentos **como receta y nada más**. Los componentes igual viven en
+   * `food_catalog` —una receta no guarda macros, los deriva de ellos, así que
+   * sin las filas sería una suma sin sumandos— pero no se listan sueltos.
+   * Antes esa elección escribía las filas y las listaba igual, o sea que
+   * "solo receta" y "las dos cosas" hacían exactamente lo mismo.
+   *
+   * Un componente oculto vive y muere con sus recetas (`deleteRecipe` borra
+   * los que ninguna otra receta use), y se puede sacar a la luz desde el
+   * detalle de la receta. Volver a confirmar el mismo alimento "por separado"
+   * también lo muestra: `blendCatalogEntry` hace OR, nunca oculta uno visible.
+   */
+  listed?: boolean;
 }
 
 /**
@@ -280,6 +298,10 @@ export function blendCatalogEntry(
   // tiene imagen, y sin esto reconocer el mismo alimento sin foto borraría la
   // que ya había — un dato que solo se recupera volviendo a fotografiar.
   const imageUri = next.imageUri ?? existing.imageUri;
+  // Visible gana: un alimento que ella ya tenía a la vista no se esconde
+  // porque después lo guardó dentro de una receta, y uno oculto sale a la luz
+  // en cuanto lo confirma suelto.
+  const listed = (existing.listed ?? true) || (next.listed ?? true);
   const mix = (old: number, incoming: number): number =>
     Number(((old * weight + incoming) / (weight + 1)).toFixed(2));
   return {
@@ -296,7 +318,13 @@ export function blendCatalogEntry(
     ...(servingLabel === undefined ? {} : { servingLabel }),
     ...(servingSource === undefined ? {} : { servingSource }),
     ...(imageUri === undefined ? {} : { imageUri }),
+    ...(listed ? {} : { listed: false }),
   };
+}
+
+/** Si un alimento se muestra suelto. Ausente = sí, por lo dicho en `CatalogFood.listed`. */
+export function isListedFood(food: Pick<CatalogFood, 'listed'>): boolean {
+  return food.listed !== false;
 }
 
 /**
@@ -432,6 +460,8 @@ export function applyCatalogEdit(existing: CatalogFood, edit: CatalogFoodEdit): 
     ...(servingLabel === undefined ? {} : { servingLabel }),
     ...(servingSource === undefined ? {} : { servingSource }),
     ...(imageUri === undefined ? {} : { imageUri }),
+    // Corregir macros no cambia si el alimento está a la vista.
+    ...(existing.listed === false ? { listed: false } : {}),
   };
   return isPlausibleCatalogEntry(next) ? next : null;
 }
@@ -465,6 +495,7 @@ export function catalogEntryFromPortion(
     ...(base.servingGrams === undefined ? {} : { servingGrams: base.servingGrams }),
     ...(base.servingLabel === undefined ? {} : { servingLabel: base.servingLabel }),
     ...(base.imageUri === undefined ? {} : { imageUri: base.imageUri }),
+    ...(base.listed === false ? { listed: false } : {}),
   };
   return isPlausibleCatalogEntry(entry) ? entry : null;
 }

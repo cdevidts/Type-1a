@@ -3,12 +3,15 @@ import { describe, expect, it } from 'vitest';
 import type { CatalogFood } from '../src/food-catalog';
 import { cartTotals } from '../src/meal-cart';
 import {
+  addRecipeItem,
   applyRecipeFixPlan,
   isEmptyRecipe,
+  recipeToCartLines,
   recipeTotals,
   recipesUsingFood,
   removeRecipeItem,
   replaceRecipeItem,
+  setRecipeItemGrams,
   type Recipe,
 } from '../src/recipe';
 
@@ -176,5 +179,59 @@ describe('applyRecipeFixPlan — todo o nada sobre el alimento', () => {
     const outcome = applyRecipeFixPlan('arroz', [ajena], []);
     expect(outcome.canDeleteFood).toBe(true);
     expect(outcome.updated).toEqual([]);
+  });
+});
+
+describe('editar la composición de una receta', () => {
+  it('setRecipeItemGrams cambia solo esa línea, y rechaza gramos imposibles sin tocar nada', () => {
+    const r = setRecipeItemGrams(recipe(), 'arroz', 200);
+    expect(r.items).toEqual([{ foodKey: 'arroz', grams: 200 }, { foodKey: 'pollo', grams: 100 }]);
+    expect(setRecipeItemGrams(recipe(), 'arroz', 0)).toEqual(recipe());
+    expect(setRecipeItemGrams(recipe(), 'arroz', 99_999)).toEqual(recipe());
+  });
+
+  it('addRecipeItem agrega, y si ya estaba suma los gramos en vez de duplicar la línea', () => {
+    const conPan = addRecipeItem(recipe(), 'pan', 40);
+    expect(conPan.items).toHaveLength(3);
+    expect(conPan.items[2]).toEqual({ foodKey: 'pan', grams: 40 });
+    const masArroz = addRecipeItem(recipe(), 'arroz', 50);
+    expect(masArroz.items).toEqual([{ foodKey: 'arroz', grams: 200 }, { foodKey: 'pollo', grams: 100 }]);
+  });
+});
+
+describe('recipeToCartLines — reusar una receta en una comida', () => {
+  let seq = 0;
+  const nextId = (): string => `l-${++seq}`;
+
+  it('se expande a una línea POR COMPONENTE, en gramos, escalada por los platos comidos', () => {
+    const { lines, missingFoodKeys } = recipeToCartLines(recipe(), catalogo, 0.5, nextId);
+    expect(missingFoodKeys).toEqual([]);
+    expect(lines.map((l) => [l.food.key, l.mode, l.quantity])).toEqual([
+      ['arroz', 'grams', 75],
+      ['pollo', 'grams', 50],
+    ]);
+  });
+
+  it('el mismo plato da el mismo número en el carrito que como receta', () => {
+    // La invariante que ya fija `recipeTotals`, extendida al camino de reuso:
+    // si el carrito sumara distinto, "un plato de arroz con pollo" tendría
+    // dos verdades según por dónde entró.
+    const { lines } = recipeToCartLines(recipe(), catalogo, 1, nextId);
+    const cart = cartTotals(lines);
+    const totals = recipeTotals(recipe(), catalogo);
+    expect(cart.carbsG).toBe(totals.carbsG);
+    expect(cart.proteinG).toBe(totals.proteinG);
+    expect(cart.fatG).toBe(totals.fatG);
+    expect(cart.caloriesKcal).toBe(totals.caloriesKcal);
+  });
+
+  it('un componente que ya no está en el catálogo se declara, no se omite en silencio', () => {
+    const { lines, missingFoodKeys } = recipeToCartLines(recipe(), new Map([['arroz', catalogo.get('arroz')!]]), 1, nextId);
+    expect(lines).toHaveLength(1);
+    expect(missingFoodKeys).toEqual(['pollo']);
+  });
+
+  it('rechaza cero o negativo platos', () => {
+    expect(() => recipeToCartLines(recipe(), catalogo, 0, nextId)).toThrow();
   });
 });

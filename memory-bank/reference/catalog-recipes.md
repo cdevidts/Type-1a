@@ -1,9 +1,8 @@
-# Recetas en el catálogo — diseño pendiente
+# Recetas en el catálogo — diseño, y qué quedó construido
 
-_Escrito el 2026-09-01, a pedido de Verónica, para la corrida que lo implemente.
-**Nada de esto está construido.** Lo que sí se construyó ese día —porción
-propuesta por la IA y confirmada, y el rescate de los alimentos sin gramos—
-está en `activeContext.md`._
+_Escrito el 2026-09-01 a pedido de Verónica. **Construido el 2026-09-01 y
+terminado el 2026-09-02** tras probar el primer build: faltaban el detalle, que
+"solo receta" hiciera algo, la fusión a mano y el reuso en el carrito._
 
 ## El problema que lo origina
 
@@ -79,15 +78,17 @@ queda una sola receta en "dejar como está", el alimento no se borra. Dejar una
 receta usándolo y borrarlo igual es cómo se llega a un total que nadie puede
 reproducir. Una receta sin decisión explícita se conserva.
 
-## Lo que queda por construir
+## Construido (✅ 2026-09-02)
 
-- Tablas `recipes` y `recipe_items` + migración aditiva, y su CRUD en `db.ts`.
-- Tarjeta de receta en el catálogo, vista de detalle con sus componentes, y la
-  pregunta de tres salidas al guardar una comida de varios alimentos.
-- La pantalla de ayuda al borrar descrita arriba.
-- Reuso: una receta entra al carrito como una línea que se expande a sus
-  componentes, para que la porción siga siendo por alimento.
-- Porción propia de la receta ("un plato"), respetando `servingSource`.
+- Tablas `recipes` y `recipe_items` + CRUD; tarjeta en el catálogo; la
+  pregunta de tres salidas; `RecipeFixModal` al borrar.
+- **"Solo receta" ahora hace algo**: `food_catalog.listed`. Antes escribía lo
+  mismo que "las dos cosas". Un componente oculto vive y muere con sus
+  recetas y se muestra desde el detalle.
+- `RecipeDetail.tsx`: componentes con gramos editables, agregar/quitar, foto,
+  nombre, borrar, y "Usar en una comida" → `recipeToCartLines`, una línea por
+  componente. "Un plato" es la suma de sus gramos; `servings` lo escala.
+- Con receta, los componentes **no** heredan la foto del plato.
 
 ## Temas relacionados, de la misma conversación
 
@@ -120,23 +121,22 @@ compresión que los modales de comida. Acá la foto es **solo representación**,
 que —a diferencia de una comida— no se adopta junto a un análisis: nada se
 re-estima a partir de ella. Una foto elegida gana sobre "quitar foto".
 
-### 4. Que la IA no proponga duplicados — dominio listo, falta la UI
+### 4. Que la IA no proponga duplicados — ✅ **en dos mitades (2026-09-02)**
 
-Si ya existe la receta `arroz con pollo` y se fotografía lo mismo, la app
-debería ofrecer **usar la del catálogo** en vez de crear otra. Y si existen
-`arroz` y `pollo` sueltos, ofrecer **armar la receta con esos**, no con copias
-nuevas.
+"Pata de pollo" al lado de "Muslo de pollo" mostró el límite de la heurística:
+solo plural/singular y mismas palabras, a propósito — cada heurística nueva
+amplía la superficie de un error silencioso. Lo que se hizo:
 
-`catalog-similarity.ts` ya resuelve el emparejamiento, con dos heurísticas y
-ninguna más: singular/plural conservador, y mismas palabras significativas en
-cualquier orden ("arroz con pollo" = "pollo y arroz"). **No** empareja por
-subconjunto —"arroz integral" no es "arroz", y sus macros no lo son— ni por
-distancia de edición, que no distingue "pera" de "pena". Cada heurística nueva
-amplía la superficie de un error silencioso.
-
-Falta mostrarlo: marcar el candidato en `CatalogServingModal` y, cuando el
-análisis trae varios alimentos que ya existen, ofrecer armar la receta **con
-esos** (`matchAnalysedFoods`) en vez de con copias nuevas.
+- **Fusión a mano** en `CatalogServingModal` (`mergeInto`): ella busca en su
+  catálogo y elige; la entrada hereda clave y nombre del existente con los
+  macros de la propuesta. El parecido por nombre viene preseleccionado y
+  visible, con "es otro" al lado. Antes el texto prometía la fusión y la
+  entrada se guardaba con su propia clave.
+- **`knownFoodNames`** viaja con los tres modos de análisis: solo nombres,
+  máx. 300, los más vistos. El modelo reusa el exacto cuando es el mismo
+  alimento y el prompt (v3) lleva el freno: otro corte, preparación, variedad
+  o marca es otro alimento. Necesita redeploy. Es un dato personal nuevo que
+  sale del teléfono, dicho como costo aceptado en `knownFoods.ts`.
 
 ## Fronteras que no cambian
 

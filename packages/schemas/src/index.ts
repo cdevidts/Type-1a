@@ -300,9 +300,27 @@ export type MealSnapshot = z.infer<typeof MealSnapshotSchema>;
  * media porción"). La salida es una `MealAnalysis` completa, no un diff —
  * fusionar un diff en el cliente es donde se cuelan los errores.
  */
+/**
+ * Nombres de alimentos que la usuaria ya tiene en su catálogo, para que el
+ * modelo **reuse el nombre exacto** cuando identifica lo mismo (2026-09-02).
+ *
+ * Existe porque el emparejamiento por nombre del teléfono
+ * (`catalog-similarity.ts`) es deliberadamente tonto —plural/singular y
+ * mismas palabras— y no puede saber que "pata de pollo" es su "Muslo de
+ * pollo"; el modelo sí. Con el nombre exacto, el catálogo fusiona por clave y
+ * no nace un duplicado.
+ *
+ * **Solo nombres.** Ni macros, ni cuántas veces se comió, ni cuándo: es el
+ * mínimo que hace falta para deduplicar (`AGENTS.md`, "send the minimum
+ * necessary data"). Que el esquema no tenga dónde poner otra cosa es la
+ * frontera, no una instrucción del prompt.
+ */
+export const KnownFoodNamesSchema = z.array(z.string().trim().min(1).max(80)).max(300);
+
 export const MealEditInputSchema = z.object({
   instruction: z.string().trim().min(1).max(300),
   current: MealSnapshotSchema,
+  knownFoodNames: KnownFoodNamesSchema.optional(),
 });
 export type MealEditInput = z.infer<typeof MealEditInputSchema>;
 

@@ -10,12 +10,14 @@ import {
   resolveMacrosSource,
   scaleCatalogFood,
   type CartLine,
+  type Recipe,
   type CatalogFood,
 } from '@type1a/domain';
 import type { MealAnalysisResult } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, editMealWithInstruction, MobileApiError } from '../api';
 import { parseBlankAsUnset, parseNonNegativeNumber, parsePositiveNumber } from '../format';
+import { knownFoodNamesFrom } from '../knownFoods';
 import { logSaveError } from '../log';
 import { mealNoteFrom } from '../mealNote';
 import { MealAiFields } from './MealAiFields';
@@ -114,6 +116,8 @@ export function MealModal({
   onClose,
   onConfirm,
   catalogFoods,
+  recipes,
+  presetCartLines,
   carbRatio,
   therapyConfigured,
   targetGlucose,
@@ -125,6 +129,14 @@ export function MealModal({
   onConfirm: (draft: ConfirmedMealDraft) => Promise<void>;
   /** Alimentos ya conocidos, para reusar sin llamar a la IA (Fase 15). */
   catalogFoods: readonly CatalogFood[];
+  /** Recetas, para que el carrito pueda reusarlas. */
+  recipes?: readonly Recipe[] | undefined;
+  /**
+   * Líneas con las que arranca el carrito al abrir: es cómo "Usar en una
+   * comida" desde una receta llega acá. Se aplican al abrir y nada más; una
+   * comida siguiente vuelve a empezar vacía.
+   */
+  presetCartLines?: readonly CartLine[] | null | undefined;
   /**
    * Parámetros de terapia de la usuaria, para la calculadora por conteo.
    * `carbRatio` es opcional en el perfil: sin él la calculadora no aparece,
@@ -211,8 +223,9 @@ export function MealModal({
     setAiMacros(null);
     setMacrosOpen(false);
     // El carrito se vacía: heredar los alimentos de la comida anterior ya
-    // costó una corrida en este mismo modal.
-    setCartLines([]);
+    // costó una corrida en este mismo modal. Lo único que entra es lo que
+    // quien abre pidió explícitamente (una receta desde el catálogo).
+    setCartLines(presetCartLines === null || presetCartLines === undefined ? [] : [...presetCartLines]);
     setCatalogSuggestedCarbsG(null);
     setAppliedCatalog(null);
     setCatalogQuestion(null);
@@ -260,6 +273,7 @@ export function MealModal({
         throw new Error('No base64 image');
       }
       const nextAnalysis = await analyzeMealImage({
+        knownFoodNames: knownFoodNamesFrom(catalogFoods),
         imageBase64: compressed.base64,
         mimeType: 'image/jpeg',
         ...(description.trim() === '' ? {} : { description: description.trim() }),
@@ -356,7 +370,7 @@ export function MealModal({
     setBusy(true);
     setAnalysis(null);
     try {
-      const nextAnalysis = await analyzeMealDescription(description.trim());
+      const nextAnalysis = await analyzeMealDescription(description.trim(), knownFoodNamesFrom(catalogFoods));
       setAnalysis(nextAnalysis);
       prefillMacrosFrom(nextAnalysis);
       setMessage('Estimación lista desde el texto (sin foto, la incertidumbre es mayor). Proteína, grasa y fibra quedaron precargadas y puedes corregirlas; los carbohidratos los confirmas tú.');
@@ -388,6 +402,7 @@ export function MealModal({
     setBusy(true);
     try {
       const next = await editMealWithInstruction({
+        knownFoodNames: knownFoodNamesFrom(catalogFoods),
         instruction: instruction.trim(),
         current: {
           confirmedCarbsG: analysis.totals.carbsG,
@@ -667,6 +682,7 @@ export function MealModal({
       */}
       <MealCart
         foods={catalogFoods}
+        recipes={recipes ?? []}
         lines={cartLines}
         onChange={(next) => {
           setCartLines(next);

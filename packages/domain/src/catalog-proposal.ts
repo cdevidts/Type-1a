@@ -208,23 +208,59 @@ export function initialServingGrams(proposal: CatalogProposal): number | null {
  * de la IA sin cambiarlo: **lo miró y dijo que sí**, y eso es justo lo que
  * protege `blendCatalogEntry` de un análisis futuro.
  */
+export interface ProposalConfirmation {
+  servingGrams: number | null;
+  servingLabel: string | null;
+  /**
+   * `false` = "solo receta": el alimento se escribe como componente pero no se
+   * lista suelto. Ausente = a la vista, que es lo de siempre.
+   */
+  listed?: boolean | undefined;
+  /**
+   * Un alimento del catálogo con el que la usuaria decidió **fusionar** esta
+   * propuesta, porque son lo mismo aunque el nombre no coincida ("pata de
+   * pollo" → "Muslo de pollo"). La entrada hereda la clave **y el nombre** del
+   * existente; los macros son los de la propuesta y `blendCatalogEntry` los
+   * pondera con lo ya sabido.
+   *
+   * Es una decisión de ella, nunca de una heurística: emparejar mal mezcla
+   * macros de dos alimentos distintos y eso sugiere carbohidratos sin que
+   * nada lo delate. Por eso se ofrece (`similarTo`) y se elige (esto).
+   */
+  mergeInto?: Pick<CatalogFood, 'key' | 'name' | 'listed'> | null | undefined;
+  /**
+   * `true` = no arrastrar la foto del plato a este alimento. Es lo que pide
+   * una receta: la foto del plato es de la receta, y cada componente queda
+   * libre de recibir la suya. Sin esto, "arroz" quedaba con la miniatura de
+   * un arroz con pollo.
+   */
+  withoutPlatePhoto?: boolean | undefined;
+}
+
 export function confirmProposal(
   proposal: CatalogProposal,
-  confirmed: { servingGrams: number | null; servingLabel: string | null },
+  confirmed: ProposalConfirmation,
 ): Omit<CatalogFood, 'timesSeen'> | null {
+  const target = confirmed.mergeInto ?? null;
+  // Fusionar a mano con uno que ya está a la vista no lo esconde: la
+  // decisión de "solo receta" es sobre lo nuevo, no sobre lo que ella ya
+  // tenía suelto. `blendCatalogEntry` repite la misma regla al escribir.
+  const listed = confirmed.listed !== false || (target !== null && target.listed !== false);
+  const keepPhoto = confirmed.withoutPlatePhoto !== true && proposal.entry.imageUri !== undefined;
   // Los tres campos de porción se reconstruyen desde cero en vez de spreadear
   // y pisar: con `exactOptionalPropertyTypes`, "sin porción" tiene que dejar
   // la propiedad **fuera** del objeto, no puesta en `undefined`.
   const base: Omit<CatalogFood, 'timesSeen' | 'servingGrams' | 'servingLabel' | 'servingSource'> = {
-    key: proposal.entry.key,
-    name: proposal.entry.name,
+    key: target === null ? proposal.entry.key : target.key,
+    name: target === null ? proposal.entry.name : target.name,
     carbsPer100g: proposal.entry.carbsPer100g,
     proteinPer100g: proposal.entry.proteinPer100g,
     fatPer100g: proposal.entry.fatPer100g,
     fiberPer100g: proposal.entry.fiberPer100g,
     kcalPer100g: proposal.entry.kcalPer100g,
     lastSeenAt: proposal.entry.lastSeenAt,
-    ...(proposal.entry.imageUri === undefined ? {} : { imageUri: proposal.entry.imageUri }),
+    ...(keepPhoto ? { imageUri: proposal.entry.imageUri! } : {}),
+    ...(listed ? {} : { listed: false }),
   };
   const grams = confirmed.servingGrams;
   if (grams !== null && !isValidServingGrams(grams)) return null;
@@ -237,4 +273,23 @@ export function confirmProposal(
     ...(label === undefined ? {} : { servingLabel: label }),
   };
   return isPlausibleCatalogEntry(next) ? next : null;
+}
+
+/**
+ * Los componentes de una receta a partir de lo confirmado, **por clave final**.
+ *
+ * Dos propuestas fusionadas a mano con el mismo alimento existente ("pata" y
+ * "muslo" → "Muslo de pollo") no pueden ser dos líneas de la receta con la
+ * misma clave: `recipe_items` tiene clave primaria `(receta, alimento)` y la
+ * segunda pisaría a la primera en silencio. Se suman los gramos, igual que
+ * hace `replaceRecipeItem` cuando un reemplazo colisiona.
+ */
+export function recipeItemsFromConfirmed(
+  confirmed: readonly { key: string; basisGrams: number }[],
+): { foodKey: string; grams: number }[] {
+  const byKey = new Map<string, number>();
+  for (const item of confirmed) {
+    byKey.set(item.key, Number(((byKey.get(item.key) ?? 0) + item.basisGrams).toFixed(1)));
+  }
+  return [...byKey].map(([foodKey, grams]) => ({ foodKey, grams }));
 }
