@@ -26,11 +26,11 @@ divergir, **la medición manda sobre la tabla**. `pnpm verify` corre, en orden:
   rápido, calorías, fotos desde el editor y recetas.
 - 2026-09-02 (`4a660b8`, build `03fb5c6d`): campos de IA, cobertura de días,
   macros por porción, meta de fibra, hora local y el grupo de la comida rápida.
+- 2026-09-02 (`e85c760`, build `e93ce4a2`): recetas de verdad — "solo receta",
+  detalle, fusión a mano, reuso en el carrito. Huella verificada en el APK.
 
-**Sin build**: recetas de verdad ("solo receta", detalle, fusión a mano, reuso
-en el carrito) y `knownFoodNames`. **Backend**: `30a87fa` desplegado el
-2026-09-02 (hora local ✓), pero **el proxy responde 502 a cuerpos > 8 KB** —
-las fotos no se analizan— y `knownFoodNames` espera redeploy.
+**Backend**: `30a87fa` desplegado (hora local ✓), pero **el proxy responde 502 a
+cuerpos > 8 KB** —las fotos no se analizan— y `knownFoodNames` espera redeploy.
 
 ## Deuda conocida
 

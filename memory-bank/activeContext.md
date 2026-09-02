@@ -79,7 +79,7 @@ bug que originó todo el módulo.
 
 ⚠️ **Las fotos no se analizan en producción y no es la app**: el redeploy del
 2026-09-02 dejó el proxy respondiendo 502 a todo cuerpo mayor a ~8 KB. Repro y
-prompt en `docs/DEEPAGENT_REDEPLOY_PROMPT.md`.
+prompt en `docs/DEEPAGENT_REDEPLOY_PROMPT.md`, junto con `knownFoodNames`.
 
 ## Porción, fibra y la hora del resumen (2026-09-01)
 
@@ -110,7 +110,7 @@ estructura. Describir cuándo pasó algo sigue pasando; "cena más temprano", no
 a preguntar qué dosis fue con qué comida—, y si esa escritura fallaba el aviso
 de éxito la pisaba: se cerraba la app creyendo que la dosis había quedado.
 
-✅ En el teléfono (build `03fb5c6d`, huella verificada contra el APK). La hora del resumen espera además el redeploy.
+✅ En el teléfono (builds `03fb5c6d` y `e93ce4a2`, huella verificada en el APK).
 
 ## Reglas de proceso que sobreviven
 
