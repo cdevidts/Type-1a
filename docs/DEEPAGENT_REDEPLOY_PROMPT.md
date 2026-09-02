@@ -120,8 +120,8 @@ acá y commitea, o diagnostica el problema real primero.
 
 ## El prompt consolidado (copiar/pegar a DeepAgent tal cual)
 
-Actualizado el 2026-09-02 para la rama `claude/prompt-maestro-14-cambios-pa5ale`.
-**Completar el commit** con el último pusheado (`git log -1`).
+Actualizado el 2026-09-02 para la rama `claude/prompt-maestro-14-cambios-pa5ale`,
+commit `9f5251e`. Si se pushea algo más antes de mandarlo, actualizar el SHA.
 
 ```
 Dos cosas sobre el backend de Type 1A (apps/api de github.com/cdevidts/type-1a)
@@ -129,7 +129,7 @@ en https://237e8b7f1.abacusai.cloud. La primera es un bug de infraestructura
 que dejó el redeploy de hoy; la segunda es un redeploy más.
 
 Rama: claude/prompt-maestro-14-cambios-pa5ale
-Commit: <SHA>
+Commit: 9f5251e
 
 1) URGENTE: DESDE EL REDEPLOY, TODO CUERPO DE MÁS DE ~8 KB RESPONDE 502
 
@@ -167,7 +167,7 @@ curl de 200 KB: ahí está la causa escrita. Arregla eso, recarga nginx, y
 vuelve a correr el curl de 200 KB: tiene que responder 200 (el modelo dirá que
 no ve comida en ruido, y está bien; lo que se prueba es que el cuerpo llegue).
 
-2) REDEPLOY DESDE <SHA>
+2) REDEPLOY DESDE 9f5251e
 
 Trae una cosa: los tres modos de /v1/ai/meal-analysis aceptan un campo
 opcional knownFoodNames (arreglo de nombres, máx 300) y los prompts de comida
