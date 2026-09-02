@@ -44,49 +44,83 @@ en vez de abrir la pregunta de nuevo.
 | 2026-08-22 | Fase 19 (notificaciones por tipo) + Parte A (catálogo en "Nueva entrada") + Parte B (bug de input, sin código) | No — todo `apps/mobile`. |
 | 2026-08-22 | **Fase 23: el episodio captura todo su ventana + exclusión de episodios confundidos** | **SÍ, pero de bajo riesgo y NO urgente.** `apps/api/src/app.ts` no se tocó, pero sí `packages/ai/src/prompts.ts`: `glucoseInsightSystemPrompt` pasó de v2 a v3 para que el modelo pueda describir los `contextEvents` ("se registró una corrección de 2 U a las 2 h") sin evaluarlos. Hasta que se redespliegue, el backend sigue con el prompt v2: **el campo `contextEvents` viaja igual dentro de `MealEpisodeMetrics` pero el modelo no tiene instrucción sobre qué hacer con él**, así que probablemente lo ignore — no rompe nada, solo no aprovecha el dato. La parte que de verdad importaba de la Fase 23 (excluir episodios confundidos de las correlaciones) es **100 % cliente** y funciona con solo instalar el APK. Agrupar con el próximo redeploy en vez de gastar uno para esto. |
 | 2026-08-21 | **Catálogo de alimentos COMPARTIDO — backend completo** (`apps/api/src/food-catalog-store.ts`, endpoints `GET`/`POST /v1/food-catalog`, `docs/adr/0003-shared-food-catalog.md`) | **SÍ.** Primera vez que el backend gana un estado persistente (Postgres). Sin `DATABASE_URL`, los dos endpoints nuevos responden 503 y el resto del backend sigue exactamente igual — no es bloqueante para nada de lo que ya funciona, pero la función en sí no existe hasta el redeploy + la variable de entorno. |
+| 2026-08-25 | Fase 19 + Fase 23 + catálogo desde "Nueva entrada", y los 11 hallazgos de esa revisión | **SÍ.** `apps/api/src/*` no se tocó, pero sí `packages/ai/src/prompts.ts` y `packages/domain/src/ai-safety.ts`, que el backend importa. Ver la sección de abajo. |
+| 2026-08-31 | Modal Maestro, carrito, calendario, transacciones SQLite | No — `packages/domain`, `packages/schemas` y `apps/mobile`. |
+| 2026-09-01 | Porción propuesta por la IA, recetas, campos de IA separados, cobertura de días | **SÍ.** `FoodEstimateSchema` gana `servingGrams`/`servingLabel` y los tres prompts de comida pasan a v2. Sin redeploy la IA nunca propone porción. |
+| 2026-09-01 | Macros por porción, meta de fibra, hora local del resumen, y los hallazgos de su revisión | **SÍ, y es el que dispara este redeploy.** `glucose-insight` v6 + patrones nuevos en `ai-safety.ts`. |
 
 ## Qué cambió desde el último deploy
 
-Todo lo pendiente en producción, para no re-derivarlo — este es el que se
-junta en el prompt consolidado de más abajo:
+**Lo desplegado hoy es el commit `7fec114` (2026-08-21)**, verificado contra el
+servidor real el 2026-09-01: `GET /v1/food-catalog?q=arroz` responde `200
+{"foods":[]}` (o sea que ese deploy y su `DATABASE_URL` ya están hechos) y
+`POST /v1/ai/meal-analysis` con un cuerpo inválido responde `400
+invalid_meal_input` con el mensaje actual. Los dos pendientes que este
+documento arrastraba desde agosto —el tercer modo de la Fase 17 y el catálogo
+compartido— **están resueltos**.
 
-1. **Tercer modo de `/v1/ai/meal-analysis`: edición por instrucción (Fase 17).**
-   `MealAnalysisBodySchema` acepta `{ instruction, current }`;
-   `AbacusMealVisionService` tiene su prompt propio (`mealEditSystemPrompt`)
-   y su guardrail de entrada (`requestsInsulinAdvice`). Sin redeploy, el
-   botón "Explícale el cambio" (comidas y catálogo, Fase 17/18) recibe
-   **HTTP 400 `invalid_meal_input`**.
-2. **Catálogo de alimentos compartido (backend completo, sin cliente aún).**
-   `GET`/`POST /v1/food-catalog`. Necesita `DATABASE_URL` apuntando al
-   Postgres que ya viene con esta instancia de app — sin esa variable, los
-   endpoints existen pero responden 503. El esquema se auto-provee solo al
-   arrancar: no hay SQL que correr a mano.
-3. **`glucoseInsightSystemPrompt` v3 (Fase 23, 2026-08-22)**: instrucción
-   para describir los `contextEvents` del episodio sin evaluarlos. Sin
-   redeploy el campo viaja y el modelo no sabe qué hacer con él — no rompe,
-   solo no lo aprovecha. Riesgo bajo, no urgente.
-   (El punto de "mg/dL" pendiente desde la Fase 13 quedó resuelto en el
-   redeploy del 2026-08-21.)
-4. **Diferido a propósito, no pendiente de confirmación.** Quitar
-   `LIBRELINKUP_EMAIL`/`LIBRELINKUP_PASSWORD` del entorno — Verónica ya
-   confirmó (2026-08-21) que su cuenta propia funciona conectada desde la
-   app, pero pidió dejarlo para el día que se vaya a producción real, no
-   para este redeploy. Ver la nota al final del prompt consolidado. No
-   preguntar de nuevo salvo que ella lo traiga.
+`apps/api/src/*` no ha cambiado desde entonces. Lo que quedó atrás son los dos
+paquetes que el backend **importa**: `packages/ai` (los prompts) y
+`packages/domain` (el filtro de salida). Por eso este redeploy no toca
+configuración ni variables de entorno: es traer el código nuevo y nada más.
 
-Cómo verificar, contra el servidor real, qué tan atrás está el deploy:
+### 1. El filtro de seguridad de salida está desactualizado en producción 🔴
 
-```bash
-# Modo de edición por instrucción (Fase 17) — 400 = servidor viejo.
-curl -X POST https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
-  -H 'Content-Type: application/json' \
-  -d '{"instruction":"era media porción","current":{"confirmedCarbsG":30}}'
+Es lo más importante y no es cosmético. `AbacusGlucoseInsightService.summarize`
+pasa toda respuesta del modelo por `containsTherapyRecommendation`
+(`packages/domain/src/ai-safety.ts`). **En producción corre la versión de 4
+patrones**; la de hoy tiene 14. Faltan, entre otros:
 
-# Catálogo compartido — 404 (ruta no existe) = servidor viejo;
-# 503 food_catalog_not_configured = servidor nuevo sin DATABASE_URL;
-# 200 con {"foods":[]} = servidor nuevo y ya configurado.
-curl https://237e8b7f1.abacusai.cloud/v1/food-catalog?q=arroz
-```
+- los de **insulina activa (IOB)**, agregados el 2026-08-22 tras la revisión de
+  la Fase 23 — y son los que más importan, porque desde el build del
+  2026-08-31 la app **sí manda** `contextEvents` (las dosis de la ventana),
+  mientras el prompt desplegado (v2) no dice nada sobre qué hacer con ellas;
+- los de **juicio de suficiencia** sobre una dosis ("fue insuficiente", "se
+  quedó corta"), del 2026-08-25;
+- los de **juicio o consejo sobre la hora de comer**, del 2026-09-01.
+
+O sea: hoy el modelo recibe dosis con sus unidades y sus minutos, sin
+instrucción de prompt y sin la mitad del filtro. No hay evidencia de que haya
+producido una salida así, pero la barrera que debía atraparla no está puesta.
+
+### 2. `glucoseInsightSystemPrompt`: v2 desplegado, v6 en el repo
+
+El prompt en producción tiene dos párrafos: unidades en mg/dL y las
+prohibiciones básicas. Le faltan cuatro bloques:
+
+- **v3** — describir los `contextEvents` sin evaluarlos, y que
+  `minutesAfterAnchor` **puede ser negativo** (una dosis *antes* de la comida).
+  Sin esto, el modelo puede leer `-45` como "45 minutos después" e invertir la
+  lectura clínica del episodio.
+- **v4/v5** — no describir insulina como todavía activa, acumulándose o
+  solapándose (es una estimación de IOB, que el MVP no computa); no juzgar si
+  un evento fue apropiado; una nota no lleva texto, no especular sobre él.
+- **v6** — **el arreglo del bug que reportó Verónica**: las marcas de tiempo
+  ahora viajan en hora local con desfase explícito
+  (`2026-09-01T17:30:00.000-04:00`) y el prompt prohíbe convertir de zona.
+  Sin redeploy, el resumen puede seguir diciendo "el episodio empezó a las
+  21:30" para una comida de las 17:30. Incluye además la prohibición de juzgar
+  o aconsejar la hora de comer, que existe justamente porque la hora local le
+  da al modelo material para hacerlo.
+
+### 3. Los tres prompts de comida: v1 desplegado, v2 en el repo
+
+`FoodEstimateSchema` gana `servingGrams` y `servingLabel`, y los tres prompts
+piden la porción típica del alimento con su etiqueta en lenguaje natural. El
+JSON Schema que se le manda al modelo se deriva de ese Zod **en el servidor**,
+así que hasta el redeploy el modelo **no tiene dónde devolver la porción**: la
+pantalla de confirmación aparece igual, pero siempre con el default de 100 g y
+sin propuesta que confirmar. Es la otra mitad del bug del catálogo.
+
+No rompe nada: los dos campos son `.default(null)` en el cliente, así que una
+respuesta vieja parsea bien y solo pierde la porción.
+
+### 4. Diferido a propósito, no pendiente de confirmación
+
+Quitar `LIBRELINKUP_EMAIL`/`LIBRELINKUP_PASSWORD` del entorno — Verónica ya
+confirmó (2026-08-21) que su cuenta propia funciona conectada desde la app,
+pero pidió dejarlo para el día que se vaya a producción real. No preguntar de
+nuevo salvo que ella lo traiga.
 
 ## Cuándo usarlo
 
@@ -107,56 +141,88 @@ Si el fallo resulta ser otra cosa (bug real de código, error del cliente,
 CGM/Junction caído, etc.), **no** dispares este prompt — arregla el código
 acá y commitea, o diagnostica el problema real primero.
 
-## El prompt consolidado (copiar/pegar a DeepAgent tal cual, completando rama y commit)
+## El prompt consolidado (copiar/pegar a DeepAgent tal cual)
 
-Junta el redeploy y el catálogo compartido en un solo pedido — es
-deliberado, ver la nota del principio de este documento.
+Actualizado el 2026-09-01 para la rama `claude/prompt-maestro-14-cambios-pa5ale`,
+commit `6849f11`. **Ya no pide variables de entorno**: `DATABASE_URL` quedó
+configurada en el deploy del 2026-08-21 y el catálogo compartido responde 200.
 
 ```
 Necesito que redespliegues el backend de Type 1A (apps/api de
-github.com/cdevidts/type-1a) a producción, en el host que ya está
-sirviendo https://237e8b7f1.abacusai.cloud, y que fijes una variable de
-entorno nueva. No hay código que escribir de tu lado — ya está todo en el
-repo.
+github.com/cdevidts/type-1a) a producción, en el mismo host que ya está
+sirviendo https://237e8b7f1.abacusai.cloud.
 
-Rama: <RAMA>. Commit: <SHA>.
+Rama: claude/prompt-maestro-14-cambios-pa5ale
+Commit: 6849f11
 
-Contexto de lo que trae este código nuevo:
-1. Un tercer modo del endpoint /v1/ai/meal-analysis (edición de una comida
-   por instrucción en lenguaje natural).
-2. Un catálogo de alimentos COMPARTIDO nuevo, en dos endpoints:
-   GET /v1/food-catalog y POST /v1/food-catalog. Usa Postgres. La tabla se
-   auto-crea sola la primera vez que el proceso arranca con DATABASE_URL
-   configurada (CREATE TABLE IF NOT EXISTS en el código) — no hace falta que
-   corras ninguna migración ni SQL a mano.
+No hay código que escribir ni variables de entorno que tocar. El deploy
+actual es del commit 7fec114 (21 de agosto) y apps/api/src/ no ha cambiado
+desde entonces: lo que quedó atrás son dos paquetes del monorepo que el
+backend importa, packages/ai (los prompts que se le mandan al modelo) y
+packages/domain (el filtro que revisa lo que el modelo responde). Traer el
+código nuevo es todo.
 
-Por favor:
-1. Redespliega apps/api desde la rama <RAMA> (commit <SHA>) al mismo host
-   que ya sirve producción — no cambies el dominio ni la URL que usa la app
-   móvil (apps/mobile apunta a EXPO_PUBLIC_API_BASE_URL, ya configurada
-   contra ese host).
-2. Agrega la variable de entorno DATABASE_URL, apuntando al Postgres que ya
-   viene incluido con esta instancia de app (no crees una base nueva ni
-   contrates nada — es la que ya está provisionada). El resto de las
-   variables de entorno siguen igual: no las hardcodees ni las cambies (ver
-   apps/api/src/config.ts y .env.example en el repo).
-3. Después del deploy, confirma con estos dos curl que ambos cambios están
-   activos:
+Por qué importa, en orden:
+
+1. SEGURIDAD. El backend pasa toda respuesta del modelo por
+   containsTherapyRecommendation (packages/domain/src/ai-safety.ts). En
+   producción corre la versión con 4 patrones; la del repo tiene 14. Faltan
+   los que detectan afirmaciones de insulina activa (IOB), los de juicio
+   sobre si una dosis fue suficiente, y los de consejo sobre la hora de
+   comer. Mientras tanto la app sí le manda al modelo las dosis registradas
+   en la ventana del episodio, con sus unidades y sus minutos.
+
+2. UN BUG REPORTADO POR LA USUARIA. El resumen post-comida cita la hora en
+   UTC: dice "el episodio empezó a las 21:30" para una comida de las 17:30.
+   La app ya manda las marcas de tiempo en hora local con desfase explícito
+   (2026-09-01T17:30:00.000-04:00), pero la instrucción de no convertir de
+   zona vive en el prompt, que está en el servidor. La mitad del arreglo
+   está esperando este deploy.
+
+3. OTRO BUG REPORTADO. Los prompts de análisis de comida pasaron a pedir la
+   porción típica de cada alimento (servingGrams / servingLabel). El JSON
+   Schema que se le manda al modelo se deriva en el servidor, así que hasta
+   el redeploy el modelo no tiene dónde devolver la porción y todo el
+   catálogo queda con 100 g por defecto.
+
+Importante: no cambies el dominio ni la URL. La app móvil apunta a
+EXPO_PUBLIC_API_BASE_URL, ya configurada contra ese host, y cambiarla
+obligaría a un build nuevo del APK. Las variables de entorno actuales quedan
+como están: no las hardcodees, no las rotes, no agregues ninguna (ver
+apps/api/src/config.ts y .env.example en el repo).
+
+Después del deploy, confirma con estos tres curl:
+
+A) El servidor arriba y respondiendo:
+
+   curl https://237e8b7f1.abacusai.cloud/health
+   (200 con {"status":"ok","version":"0.1.0"})
+
+B) La hora local — es la verificación que de verdad importa. Este episodio
+   es de las 13:00 hora local; en UTC serían las 17:00:
+
+   curl -X POST https://237e8b7f1.abacusai.cloud/v1/ai/glucose-insight \
+     -H 'Content-Type: application/json' \
+     -d '{"mealTimestamp":"2026-09-01T13:00:00.000-04:00","startingGlucose":110,"glucose60":170,"glucose120":150,"peakGlucose":180,"peakDelta":70,"timeToPeakMinutes":75,"minGlucose":108,"timeAboveRangeMinutes":10,"timeBelowRangeMinutes":0,"confirmedCarbsG":45,"readingCount":24}'
+
+   Debe responder 200 con un resumen en español. Si menciona una hora, tiene
+   que ser las 13:00 y NUNCA las 17:00. Si dice 17:00, el deploy no tomó el
+   prompt nuevo — avísame antes de dar el trabajo por terminado.
+
+C) La porción propuesta por la IA:
 
    curl -X POST https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
      -H 'Content-Type: application/json' \
-     -d '{"instruction":"era media porción","current":{"confirmedCarbsG":30}}'
-   (debe dejar de responder 400 invalid_meal_input)
+     -d '{"description":"una lata de bebida cola de 350 ml"}'
 
-   curl https://237e8b7f1.abacusai.cloud/v1/food-catalog?q=arroz
-   (debe responder 200 con {"foods":[]} — no 404 ni 503)
+   Debe responder 200 y cada alimento del arreglo "foods" debe traer las
+   claves servingGrams y servingLabel. Si esas claves no aparecen, el deploy
+   quedó con el schema viejo.
 
-Nota de arquitectura, por si es relevante para cómo lo despliegas: hasta
-ahora este backend era un proxy sin estado (ver docs/adr/0001-local-first.md
-del repo) — el catálogo de alimentos es la PRIMERA tabla que persiste datos,
-y está documentado en docs/adr/0003-shared-food-catalog.md. Es deliberadamente
-anónima: solo nombres de alimentos y macros por 100 g, ningún dato de
-usuaria, glucosa, insulina ni fotos pasa nunca por esos dos endpoints.
+Contexto de arquitectura por si influye en cómo lo despliegas: es el mismo
+servicio Fastify de siempre, con la única tabla Postgres del catálogo
+compartido que ya existe y se auto-provee al arrancar (CREATE TABLE IF NOT
+EXISTS). No hay migración que correr.
 ```
 
 ### Diferido a propósito — NO agregar todavía
