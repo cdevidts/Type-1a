@@ -48,7 +48,8 @@ en vez de abrir la pregunta de nuevo.
 | 2026-08-31 | Modal Maestro, carrito, calendario, transacciones SQLite | No — `packages/domain`, `packages/schemas` y `apps/mobile`. |
 | 2026-09-01 | Porción propuesta por la IA, recetas, campos de IA separados, cobertura de días | **SÍ.** `FoodEstimateSchema` gana `servingGrams`/`servingLabel` y los tres prompts de comida pasan a v2. Sin redeploy la IA nunca propone porción. |
 | 2026-09-01 | Macros por porción, meta de fibra, hora local del resumen, y los hallazgos de su revisión | **SÍ** — desplegado el 2026-09-02 como `30a87fa` (DeepAgent, verificado con los tres curl: hora local 13:00 ✓, `servingGrams` ✓). |
-| 2026-09-02 | Recetas completas (detalle, "solo receta", fusión a mano, reuso en el carrito) + `knownFoodNames` | **SÍ, dos cosas.** (1) 🔴 **Bug de infraestructura del deploy anterior**: todo cuerpo > ~8 KB responde 502 — las fotos no se analizan. (2) `knownFoodNames` en los tres modos de análisis, prompts de comida v3. Ver abajo. |
+| 2026-09-02 | Recetas completas + `knownFoodNames` | **SÍ** — desplegado como `9f5251e`: v3 y `knownFoodNames` verificados. |
+| 2026-09-02 | El 502 de las fotos: `exclusiveMinimum` fuera del saneado del esquema | **SÍ, y es el que dispara este redeploy.** Sin él las fotos no se analizan. Ver abajo. |
 
 ## Qué cambió desde el último deploy
 
@@ -57,30 +58,43 @@ por Claude Code: la hora local del resumen tomó y `servingGrams` viene. Pero el
 deploy trajo un problema de infraestructura que el anterior no tenía, y el repo
 avanzó una vez más.
 
-### 1. 🔴 Cuerpos de más de ~8 KB responden 502: las fotos no se analizan
+### 1. ✅ El 502 de las fotos: no era el proxy, era el esquema
 
-Verificado contra el servidor real el 2026-09-02, con `curl`:
+Diagnóstico de DeepAgent (2026-09-02), verificado contra el código. **La
+hipótesis del `client_max_body_size` era falsa** y vale la pena guardar por qué:
 
-| Cuerpo de `POST /v1/ai/meal-analysis` | Respuesta |
-|---|---|
-| `{"description":"una manzana"}` (texto) | 200 en 4,6 s |
-| imagen PNG de 1×1 px (~70 bytes en base64) | 200 en 5,4 s — el camino de visión funciona |
-| 8 KB de base64 | **502 en 0,5 s** |
-| 200 KB de base64 | **502 en 0,9 s** |
-| 525 KB (una foto real comprimida) | **502 en 1,9 s** |
+- Con la foto real de 379 KB, **saltándose nginx** (directo a `127.0.0.1:4188`),
+  también daba 502, y con cuerpo JSON: `AIServiceError: "Abacus RouteLLM
+  returned HTTP 400"`. El cuerpo **sí llegaba** a Fastify.
+- El 400 lo devuelve **RouteLLM**, y su motivo es el esquema, no el tamaño: el
+  validador de **`gemini-2.5-flash` rechaza `exclusiveMinimum`** ("Extra inputs
+  are not permitted"). Habla OpenAPI 3.0, donde la exclusividad es un booleano
+  al lado de `minimum`, no un número aparte.
+- **`route-llm` reparte por tamaño del payload**: fotos chicas → un GPT (200),
+  fotos grandes → Gemini (400). Por eso *parecía* un límite de ~8 KB.
 
-Con o sin `Expect: 100-continue`, da lo mismo. Una foto del teléfono pesa
-300–550 KB en base64, así que **ninguna foto llega**: la app muestra "no se
-pudo analizar la foto" y solo funciona estimar por texto.
+| Payload | `route-llm` | `gpt-5.6-sol` | `gemini-2.5-flash` |
+|---|---|---|---|
+| pequeño | 200 | 200 | 400 |
+| foto real grande | **400** | **200** | 400 |
 
-No es el código: `apps/api/src/app.ts` fija `bodyLimit: 12_000_000` y no cambió
-desde el deploy del 21 de agosto, que sí analizaba fotos. Un 502 en medio
-segundo es la capa de proxy (nginx / el ingreso del host) cortando el cuerpo o
-la conexión al proceso antes de que Fastify responda — Fastify contestaría 413,
-no 502. Candidatos típicos: `client_max_body_size` chico en el sitio nuevo,
-`client_body_buffer_size`/`client_body_temp_path` sin permisos tras el
-redeploy, o `proxy_request_buffering` contra un upstream que cierra. El
-proceso mismo acepta 12 MB; la reja está antes.
+**Quién lo introdujo**: el `z.number().positive()` de `servingGrams`
+(2026-09-01) — el único campo del esquema que emite `exclusiveMinimum`. La
+lista `UNSUPPORTED_STRICT_JSON_SCHEMA_KEYWORDS` filtraba `minimum`, `maximum`,
+`minItems`, `maxItems` y `$schema`: cuatro de las cinco que importaban.
+
+**Arreglado en el repo** (opción A, la de código): se filtran también
+`exclusiveMinimum`, `exclusiveMaximum` y `default`. No debilita nada — el
+saneado solo afecta al esquema que se le **pide** al modelo; la respuesta se
+re-valida entera contra el Zod real, cotas incluidas. Y ahora hay un test que
+enumera lo que **sobrevive** al saneado contra una lista blanca, que fue el que
+encontró `default` antes de que llegara al teléfono.
+
+**No se fijó el modelo** (opción B): hardcodear `gpt-5.6-sol` deja el sistema
+atado a un nombre que puede desaparecer, pierde el enrutador, y no arregla la
+fragilidad — el próximo esquema podría romper también ese modelo. El
+endurecimiento de nginx que DeepAgent dejó (`client_max_body_size 15m`) es
+razonable y se conserva, aunque no era la causa.
 
 ### 2. `knownFoodNames`: la IA reusa el nombre exacto de lo que ya existe
 
@@ -120,88 +134,61 @@ acá y commitea, o diagnostica el problema real primero.
 
 ## El prompt consolidado (copiar/pegar a DeepAgent tal cual)
 
-Actualizado el 2026-09-02 para la rama `claude/prompt-maestro-14-cambios-pa5ale`,
-commit `9f5251e`. Si se pushea algo más antes de mandarlo, actualizar el SHA.
+Actualizado el 2026-09-02 tras el diagnóstico de DeepAgent. Solo queda
+**desplegar**: la causa del 502 ya está arreglada en el repo.
 
 ```
-Dos cosas sobre el backend de Type 1A (apps/api de github.com/cdevidts/type-1a)
-en https://237e8b7f1.abacusai.cloud. La primera es un bug de infraestructura
-que dejó el redeploy de hoy; la segunda es un redeploy más.
+Tenías razón y yo estaba equivocado: el 502 no era nginx. Tu diagnóstico dio en
+el clavo y lo confirmé contra el código.
+
+El validador de gemini-2.5-flash rechaza exclusiveMinimum, route-llm manda las
+fotos grandes a Gemini y las chicas a un GPT, y por eso parecía un límite de
+tamaño. Lo introdujo un z.number().positive() nuevo en el campo servingGrams:
+era el único del esquema que emitía esa palabra, y la lista de palabras que
+saneábamos tenía cuatro de las cinco que importaban.
+
+Fui por tu opción A, la de código, y ya está arreglada y pusheada. Descarté la
+opción B (fijar ABACUS_ROUTE_LLM_MODEL) porque ata el sistema a un nombre de
+modelo que puede desaparecer y no arregla la fragilidad de fondo. Deja tu
+endurecimiento de nginx como está: no era la causa, pero es razonable.
+
+Necesito un redeploy más, el mismo procedimiento de siempre.
 
 Rama: claude/prompt-maestro-14-cambios-pa5ale
-Commit: 9f5251e
+Commit: <SHA>
 
-1) URGENTE: DESDE EL REDEPLOY, TODO CUERPO DE MÁS DE ~8 KB RESPONDE 502
+Qué trae: sanitizeForStrictJsonSchema ahora filtra también exclusiveMinimum,
+exclusiveMaximum y default. No debilita nada — eso solo afecta al esquema que
+se le PIDE al modelo; la respuesta se sigue re-validando entera contra el Zod
+real, con todas sus cotas. Y hay un test nuevo que enumera lo que SOBREVIVE al
+saneado contra una lista blanca, para que la próxima palabra rara falle ahí y
+no en el teléfono.
 
-Reproducción exacta, desde cualquier máquina:
+Checkout, pnpm install --frozen-lockfile, reiniciar el servicio. Sin tocar
+dominio, puerto ni variables de entorno.
 
-   # texto: funciona
-   curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" -X POST \
-     https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
-     -H 'Content-Type: application/json' -d '{"description":"una manzana"}'
-   → 200
+Verificación, dos curl:
 
-   # 200 KB de cuerpo: 502 en menos de un segundo
-   python3 -c "import json,base64,os;json.dump({'imageBase64':base64.b64encode(os.urandom(150000)).decode(),'mimeType':'image/jpeg'},open('/tmp/big.json','w'))"
-   curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" -X POST \
-     https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
-     -H 'Content-Type: application/json' --data-binary @/tmp/big.json
-   → 502 (error code: 502) en ~0.9 s
+   A) La foto grande, que es lo que estaba roto. Usa una imagen real de al
+      menos 300 KB en base64 (la que usaste para diagnosticar sirve):
 
-   # una imagen PNG de 1x1 px sí responde 200: el camino de visión funciona,
-   # lo que falla es el TAMAÑO del cuerpo.
+      curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" -X POST \
+        https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
+        -H 'Content-Type: application/json' --data-binary @/tmp/foto.json
 
-Una foto real del teléfono pesa 300-550 KB en base64, así que ninguna foto
-llega al análisis: la usuaria ve "no se pudo analizar la foto" y solo puede
-estimar por texto. Antes del redeploy del 2026-09-02 las fotos funcionaban.
+      → 200. Si sigue en 502, mándame el cuerpo del error completo (el JSON
+        de la app, no el "error code: 502" de Cloudflare).
 
-No es el código de la app: apps/api/src/app.ts fija bodyLimit: 12_000_000 y no
-ha cambiado desde agosto. Un 502 en medio segundo viene de la capa de proxy
-(nginx o el ingreso del host) rechazando el cuerpo o cerrando la conexión al
-proceso antes de que Fastify responda; Fastify respondería 413, no 502. Revisa
-en ese orden: client_max_body_size del server/location de este sitio (debe
-permitir al menos 15m), client_body_buffer_size y los permisos de
-client_body_temp_path para el usuario con el que corre nginx, y
-proxy_request_buffering. Mira el error log de nginx justo después de correr el
-curl de 200 KB: ahí está la causa escrita. Arregla eso, recarga nginx, y
-vuelve a correr el curl de 200 KB: tiene que responder 200 (el modelo dirá que
-no ve comida en ruido, y está bien; lo que se prueba es que el cuerpo llegue).
+   B) Que no se haya roto lo de texto:
 
-2) REDEPLOY DESDE 9f5251e
-
-Trae una cosa: los tres modos de /v1/ai/meal-analysis aceptan un campo
-opcional knownFoodNames (arreglo de nombres, máx 300) y los prompts de comida
-pasan a v3 para que el modelo reuse el nombre exacto de un alimento que la
-usuaria ya tiene en vez de crear un duplicado. Es compatible hacia atrás.
-Mismo procedimiento que hoy: checkout del commit, pnpm install
---frozen-lockfile, reiniciar el servicio. No toques dominio, puerto, nginx
-(salvo lo del punto 1) ni variables de entorno.
-
-Verificación final, los cuatro curl:
-
-   A) curl https://237e8b7f1.abacusai.cloud/health
-      → 200 {"status":"ok","version":"0.1.0"}
-
-   B) el curl de 200 KB del punto 1
-      → 200 (o 4xx del modelo, NUNCA 502)
-
-   C) curl -s -X POST https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
+      curl -s -X POST https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
         -H 'Content-Type: application/json' \
-        -d '{"description":"un trozo de pollo, la pierna","knownFoodNames":["Muslo de pollo","Arroz"]}'
-      → 200, y el alimento del arreglo "foods" debe llamarse exactamente
-        "Muslo de pollo" (el modelo reusó el nombre conocido). El analysisId
-        debe empezar con meal-analysis-text.v3.
+        -d '{"description":"una manzana"}'
 
-   D) curl -s -X POST https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
-        -H 'Content-Type: application/json' \
-        -d '{"description":"arroz integral","knownFoodNames":["Arroz"]}'
-      → 200, y el alimento NO debe llamarse "Arroz": es otro alimento y el
-        prompt le prohíbe fusionarlos. Si lo llama "Arroz", avísame.
+      → 200, analysisId empezando con meal-analysis-text.v3.
 
-Si el punto 1 no se puede arreglar en la configuración que tienes a mano,
-dime exactamente qué capa devuelve el 502 y con qué límite, antes de dar el
-trabajo por terminado. Sin el punto 1 la app no analiza fotos, que es su
-función principal.
+Y gracias por no aplicar A ni B sin preguntar. Fue lo correcto: la opción A
+toca código versionado y tenía que salir del repo, con su test.
 ```
 
 ### Diferido a propósito — NO agregar todavía

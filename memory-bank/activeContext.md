@@ -77,9 +77,12 @@ alimento. El carrito también la encuentra al buscar.
 **Los componentes ya no heredan la foto del plato** cuando hay receta: era el
 bug que originó todo el módulo.
 
-⚠️ **Las fotos no se analizan en producción y no es la app**: el redeploy del
-2026-09-02 dejó el proxy respondiendo 502 a todo cuerpo mayor a ~8 KB. Repro y
-prompt en `docs/DEEPAGENT_REDEPLOY_PROMPT.md`, junto con `knownFoodNames`.
+⚠️ **Las fotos daban 502 y no era el proxy.** `route-llm` reparte por tamaño
+—las chicas a un GPT, las grandes a Gemini— y el validador de Gemini habla
+OpenAPI 3.0, donde `exclusiveMinimum` no existe suelto. El
+`z.number().positive()` de `servingGrams` bastó para romper todas las fotos. La
+lista de palabras filtradas tenía cuatro de cinco; ahora un test enumera lo que
+**sobrevive**, y encontró `default` antes de que llegara al teléfono.
 
 ## Porción, fibra y la hora del resumen (2026-09-01)
 

@@ -7,14 +7,13 @@ _Última actualización: 2026-09-02._
 | | |
 |---|---|
 | `pnpm verify` | Verde; el wrapper local de Windows conserva su fallo de rutas preexistente. CI Linux es la verificación integral |
-| Tests | **749** — domain 443, mobile 252, ai 21, schemas 13, cgm 10, api 10 |
+| Tests | **753** — domain 443, mobile 252, ai 25, schemas 13, cgm 10, api 10 |
 | Bundle de Metro | **1.364 módulos** medidos (+3: `RecipeDetail`, `knownFoods`, iconos) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
-⚠️ La base del último build es **1.361**; lo que suma el trabajo desde
-entonces son subpaths de Lucide y módulos nuevos, ningún barrel. Si vuelve a
-divergir, **la medición manda sobre la tabla**. `pnpm verify` corre, en orden:
-`verify:contracts`, `lint`, `typecheck`, `test`, `verify:bundle` (Metro real).
+⚠️ La base del último build es **1.364**; si vuelve a divergir, **la medición
+manda sobre la tabla**. `pnpm verify` corre, en orden: `verify:contracts`,
+`lint`, `typecheck`, `test`, `verify:bundle` (Metro real).
 
 ## Entregado y en el dispositivo
 
@@ -29,8 +28,9 @@ divergir, **la medición manda sobre la tabla**. `pnpm verify` corre, en orden:
 - 2026-09-02 (`e85c760`, build `e93ce4a2`): recetas de verdad — "solo receta",
   detalle, fusión a mano, reuso en el carrito. Huella verificada en el APK.
 
-**Backend**: `30a87fa` desplegado (hora local ✓), pero **el proxy responde 502 a
-cuerpos > 8 KB** —las fotos no se analizan— y `knownFoodNames` espera redeploy.
+**Backend**: `9f5251e` desplegado (v3 y `knownFoodNames` ✓). El 502 de las fotos
+**no era el proxy**: `route-llm` manda las grandes a Gemini, que rechaza
+`exclusiveMinimum`. Arreglado en el saneado; espera un redeploy más.
 
 ## Deuda conocida
 
@@ -75,8 +75,8 @@ en el mismo commit; quedan tres, declarados a propósito:
 
 ### 🟡 Menores
 
-- **Ni la UI ni `db.ts` tienen test de ejecución**: el repo no monta React y
-  `db.ts` importa nativos de Expo. El cableado se comprobó leyendo el diff.
+- **Ni la UI ni `db.ts` tienen test de ejecución**: React no se monta y `db.ts`
+  importa nativos de Expo. El cableado se comprobó leyendo el diff.
 - Una escritura **suelta** (`runAsync` fuera de transacción) puede caer dentro
   de la de otro y volver atrás con ella. Daño bajo: ajustes, no historial.
 - `README.md` sigue en pie (63 líneas). Se **reescribe a ~30**, no se elimina.
@@ -140,7 +140,8 @@ Cada uno costó un build, una corrida o un número falso; detalle en `git log`.
 | "Solo receta" y "las dos cosas" escribían exactamente lo mismo: la elección existía en la pantalla y en ningún dato | una opción que no cambia ninguna fila es una mentira con botón; si se ofrece, hay una columna que la recuerda |
 | La confirmación decía "se fusiona con ese" y guardaba con su propia clave | el texto de una pantalla se verifica contra lo que **escribe** |
 | El estado cargaba 60 alimentos y las recetas sumaban contra esos 60 | un `LIMIT` de presentación no puede ser la fuente de un total |
-| El redeploy dejó el proxy respondiendo 502 a cuerpos > 8 KB y la app decía "no se pudo analizar la foto" | se reproduce contra el servidor real ANTES de tocar la app: un 502 en medio segundo nunca es el código |
+| El "502 sobre 8 KB" no era el proxy: `route-llm` reparte por tamaño y las fotos grandes iban a Gemini, cuyo validador rechaza `exclusiveMinimum`. Un `z.number().positive()` nuevo rompió TODAS las fotos mientras el texto seguía bien | un umbral de tamaño puede ser un cambio de modelo disfrazado; se prueba el mismo payload contra cada modelo antes de culpar a la capa de red |
+| La lista de palabras que el saneado filtra tenía **cuatro de las cinco** que importaban, y nada lo delataba | se enumera lo que **sobrevive** contra una lista blanca, no lo que se filtra: así una palabra nueva falla en el test y no en el teléfono |
 
 ## Redeploy del backend
 
