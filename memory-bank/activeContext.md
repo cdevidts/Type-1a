@@ -114,7 +114,7 @@ estructura. Describir cuándo pasó algo sigue pasando; "cena más temprano", no
 a preguntar qué dosis fue con qué comida—, y si esa escritura fallaba el aviso
 de éxito la pisaba: se cerraba la app creyendo que la dosis había quedado.
 
-⚠️ Nada desde el build `9bdc3d95` está en el teléfono: falta un `preview`.
+✅ En el teléfono (build `03fb5c6d`, huella verificada contra el APK). La hora del resumen espera además el redeploy.
 
 ## Reglas de proceso que sobreviven
 
@@ -143,8 +143,8 @@ de éxito la pisaba: se cerraba la app creyendo que la dosis había quedado.
 
 ## Fuera de foco pero pendiente
 
-- **Fase 22** — swipe animado entre pantallas. JS puro, sin build.
-- **Fase 20** — widget de pantalla de inicio. **Sí** necesita build.
+- **Fase 22** — swipe animado. JS puro, sin build. **Fase 20** — widget de
+  pantalla de inicio, sí necesita build.
 - Decisión pendiente de Verónica: qué tan agresiva debe ser la exclusión de
   episodios confundidos. Hoy se eximen los bolos atribuibles a una comida para
   que Patrones no se vacíe; el criterio estricto se cambia en una línea.

@@ -6,7 +6,7 @@ _Última actualización: 2026-09-01._
 
 | | |
 |---|---|
-| `pnpm verify` | Etapas verdes; el wrapper local de Windows conserva su fallo de rutas preexistente. CI Linux es la verificación integral |
+| `pnpm verify` | Verde; el wrapper local de Windows conserva su fallo de rutas preexistente. CI Linux es la verificación integral |
 | Tests | **724** — domain 426, mobile 248, ai 17, schemas 13, cgm 10, api 10 |
 | Bundle de Metro | **1.361 módulos** medidos (+1: `episode-local-time.ts`) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
@@ -24,9 +24,10 @@ divergir, **la medición manda sobre la tabla**. `pnpm verify` corre, en orden:
   arreglo de las transacciones SQLite.
 - 2026-09-01 (`6f1c2cd`, build `9bdc3d95`): porción confirmada, nota del botón
   rápido, calorías, fotos desde el editor y recetas.
+- 2026-09-02 (`4a660b8`, build `03fb5c6d`): campos de IA, cobertura de días,
+  macros por porción, meta de fibra, hora local y el grupo de la comida rápida.
 
-**Sin build**: campos de IA separados, cobertura de días, macros por porción,
-meta de fibra, hora local del resumen y el grupo de la comida rápida.
+⚠️ La hora del resumen necesita **además** el redeploy: su regla vive en el prompt.
 
 ## Deuda conocida
 
@@ -84,8 +85,7 @@ en el mismo commit; quedan tres, declarados a propósito:
 - Una escritura **suelta** (`runAsync` fuera de transacción) puede caer dentro de
   la transacción de otro y volver atrás con ella. Ventana angosta y de bajo daño
   —ajustes, no historial—; cerrarla exige encolar también las sueltas.
-- `README.md` sigue en pie (63 líneas). La decisión es **reescribirlo a ~30
-  líneas** como puerta de entrada, no eliminarlo. Fase 4.
+- `README.md` sigue en pie (63 líneas). Se **reescribe a ~30**, no se elimina.
 
 ## Historial de fallos que definieron las reglas
 
