@@ -155,7 +155,7 @@ endurecimiento de nginx como está: no era la causa, pero es razonable.
 Necesito un redeploy más, el mismo procedimiento de siempre.
 
 Rama: claude/prompt-maestro-14-cambios-pa5ale
-Commit: <SHA>
+Commit: fd3ad1a
 
 Qué trae: sanitizeForStrictJsonSchema ahora filtra también exclusiveMinimum,
 exclusiveMaximum y default. No debilita nada — eso solo afecta al esquema que
