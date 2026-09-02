@@ -10,18 +10,18 @@
  * cuánto dura la insulina que la persona realmente usa. Con Fiasp (~5 h) y
  * con insulina regular (~8 h) la ventana no es la misma.
  *
- * **Esto NO es insulina activa (IOB) y no puede convertirse en eso.**
- * `AGENTS.md` prohíbe IOB y dosificación automática en el MVP. La diferencia
- * no es de matiz:
+ * **Este módulo no calcula insulina activa (IOB)** — pero desde el 2026-09-02
+ * la app sí lo hace, en `iob.ts`, y este catálogo es de donde salen sus dos
+ * parámetros. Ver `docs/adr/0005`. La diferencia de responsabilidades sigue en
+ * pie y conviene no borrarla:
  *
- * - IOB estima **cuántas unidades siguen actuando** y se usa para decidir una
- *   dosis. Prohibido.
+ * - `iob.ts` estima **cuántas unidades siguen actuando** y eso sí entra a una
+ *   calculadora de dosis, bajo las cinco condiciones del ADR.
  * - Esto responde **sí/no: ¿había una dosis dentro de su ventana?**, y se usa
- *   solo para decidir si un episodio entra o no a un promedio descriptivo.
- *   Nunca se muestra, nunca se resta de nada, nunca toca una calculadora.
+ *   para decidir si un episodio entra o no a un promedio descriptivo.
  *
- * Si alguna vez alguien necesita multiplicar una duración por unas unidades,
- * eso ya es IOB y no va acá.
+ * Si alguien necesita multiplicar una duración por unas unidades, eso es IOB
+ * y va en `iob.ts`, no acá.
  *
  * ── Por qué la elige la usuaria y no la adivina la app ─────────────────────
  *
@@ -160,18 +160,38 @@ export function rapidInsulinLookbackMinutes(profile: {
  * registro nuevo, o un cambio explícito de tipo (rápida ↔ basal) dentro de
  * una edición, vuelve a pasar por acá.
  *
- * Devuelve `undefined` si no hay nada configurado. **No inventa un nombre**:
- * `AGENTS.md` prohíbe inferir parámetros de terapia, y un "Insulina rápida"
- * de relleno en el reporte se lee como un dato que nadie escribió.
+ * ## De dónde sale el nombre (arreglado el 2026-09-02)
+ *
+ * De dos sitios, en este orden: lo que ella **escribió a mano**, y si no, la
+ * marca de la insulina que **eligió del catálogo** (`rapidInsulinId`).
+ *
+ * Ese segundo camino faltaba, y era un bug con dos caras. Ajustes guarda el
+ * `id` del catálogo y su duración; `rapidInsulinName` es un campo aparte que
+ * **ninguna pantalla llenaba nunca**. Así que quien elegía "Fiasp" de la
+ * lista veía "sin configurar" en Nueva entrada, y —peor— sus dosis quedaban
+ * guardadas sin marca, con lo cual el reporte médico no decía qué insulina
+ * era. Derivarlo del `id` no es inferir nada: es leer lo que ella eligió.
+ *
+ * Devuelve `undefined` solo si de verdad no hay nada configurado. **No
+ * inventa un nombre**: `AGENTS.md` prohíbe inferir parámetros de terapia, y
+ * un "Insulina rápida" de relleno se lee como un dato que nadie escribió.
  */
 export function insulinNameForType(
-  profile: { rapidInsulinName?: string | undefined; basalInsulinName?: string | undefined },
+  profile: {
+    rapidInsulinName?: string | undefined;
+    basalInsulinName?: string | undefined;
+    rapidInsulinId?: string | undefined;
+    basalInsulinId?: string | undefined;
+  },
   type: InsulinCategory,
 ): string | undefined {
   const name = type === 'rapid' ? profile.rapidInsulinName : profile.basalInsulinName;
-  if (name === undefined) return undefined;
-  const trimmed = name.trim();
-  return trimmed === '' ? undefined : trimmed;
+  const trimmed = name?.trim() ?? '';
+  if (trimmed !== '') return trimmed;
+  // Lo elegido del catálogo. `brand` y no `generic`: es lo que dice la caja
+  // que ella tiene en la mano, y es lo que reconoce su equipo clínico.
+  const chosen = findCatalogInsulin(type === 'rapid' ? profile.rapidInsulinId : profile.basalInsulinId);
+  return chosen?.category === type ? chosen.brand : undefined;
 }
 
 /**

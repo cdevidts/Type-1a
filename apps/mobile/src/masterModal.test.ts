@@ -330,7 +330,9 @@ describe('la calculadora histórica', () => {
     const warning = historicCalculatorWarning('27 ago, 13:00');
     expect(warning).toContain('27 ago, 13:00');
     expect(warning).toContain('NO es una sugerencia para inyectarte ahora');
-    expect(warning).toContain('IOB');
+    // Y aclara el límite del desglose en una reconstrucción: la insulina
+    // activa que se descuenta es la de AHORA, no la que había ese día.
+    expect(warning).toContain('la de AHORA');
   });
 
   it('sin fecha conocida no inventa una', () => {

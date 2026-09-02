@@ -6,10 +6,10 @@ acá; si no está, no se cambia el número.
 
 ## Duración de acción de las insulinas
 
-Respaldan `packages/domain/src/insulin-catalog.ts`. Se usan **solo para higiene
-de datos** —decidir si una dosis anterior todavía podía estar actuando dentro de
-la ventana de un episodio— nunca para estimar insulina activa ni para ningún
-cálculo de dosis.
+Respaldan `packages/domain/src/insulin-catalog.ts`. Sirven para higiene de datos
+—si una dosis anterior podía estar actuando dentro de un episodio— y, desde el
+2026-09-02, alimentan la curva de insulina activa (abajo). Nunca fijan una dosis
+sola: lo que calculan se resta de la corrección y se muestra desglosado.
 
 - [Cleveland Clinic — Injectable insulin medications](https://my.clevelandclinic.org/health/drugs/13902-injectable-insulin-medications):
   inicio/pico/duración por insulina. De ahí salen lispro (Humalog), aspart
@@ -25,15 +25,27 @@ cálculo de dosis.
   lispro.
 
 **Por qué el extremo alto del rango** (5 h y no 4, 42 h y no 40): para marcar un
-episodio como confundido conviene errar por exceso. Marcar de más cuesta
-precisión —y el `n` se muestra en pantalla y en el reporte—; marcar de menos
-publica como patrón un promedio contaminado, que es el daño que esto existe para
-evitar.
+episodio como confundido conviene errar por exceso. Marcar de más cuesta precisión
+—y el `n` se muestra en pantalla y en el reporte—; marcar de menos publica como
+patrón un promedio contaminado, que es el daño que esto existe para evitar.
 
 **Y por qué las elige la usuaria y no la app**: `AGENTS.md` prohíbe inferir
 parámetros de terapia. Estos números son el dato del fabricante, no una
 estimación de la app sobre esa persona, y se sobrescriben con lo que haya
 indicado su equipo clínico.
+
+## Insulina activa (IOB) — curva exponencial
+
+`packages/domain/src/iob.ts`. Modelo de LoopKit/OpenAPS, el estándar de los
+sistemas de código abierto. Con `td` = duración y `tp` = pico:
+`τ = tp(1 − tp/td)/(1 − 2tp/td)`, `a = 2τ/td`, `S = 1/(1 − a + (1+a)e^(−td/τ))`,
+`restante(t) = 1 − S(1−a)((t²/(τ·td(1−a)) − t/τ − 1)e^(−t/τ) + 1)`.
+Picos (presets de Loop): análogas rápidas 75 min, aceleradas 55, regular 150.
+[OpenAPS](https://openaps.readthedocs.io/en/latest/docs/While%20You%20Wait%20For%20Gear/understanding-insulin-on-board-calculations.html)
+
+Se eligió sobre la lineal porque la insulina no se agota a ritmo constante: una
+recta sobreestima lo activo temprano y lo subestima tarde. Las cinco condiciones
+bajo las que la app puede usarlo están en `docs/adr/0005`.
 
 ## Umbrales de glucosa
 
@@ -53,25 +65,16 @@ la app se lo hubiera fijado a la usuaria.
 
 ## Meta de fibra — 14 g por cada 1000 kcal
 
-`FIBER_G_PER_1000_KCAL` en `nutrition-targets.ts`. Es la Ingesta Adecuada del
-IOM (Dietary Reference Intakes, 2005), que la ADA recomienda también para
-personas con diabetes: el estándar dice "al menos lo de la población general",
-no un objetivo aparte. Se escala con la energía porque quien come 1400 kcal y
-quien come 2800 no tienen la misma capacidad de llegar a los mismos gramos.
+`FIBER_G_PER_1000_KCAL` en `nutrition-targets.ts`: la Ingesta Adecuada del IOM
+(DRI 2005), que la ADA recomienda también en diabetes. Se escala con la energía.
 
-- [Dietary Reference Intakes, cap. 7: Dietary, Functional and Total Fiber (IOM)](https://nap.nationalacademies.org/read/10490/chapter/9)
-- [ADA Standards of Care — Facilitating Positive Health Behaviors (nutrición)](https://diabetesjournals.org/care/article/48/Supplement_1/S86/157558)
+- [Dietary Reference Intakes, cap. 7 (IOM)](https://nap.nationalacademies.org/read/10490/chapter/9)
+- [ADA Standards of Care — nutrición](https://diabetesjournals.org/care/article/48/Supplement_1/S86/157558)
 
-Tres cosas que la implementación fija a propósito:
-
-1. **Es un piso, no un techo.** Pasarse es lo que se buscaba, así que la barra
-   lo dice en positivo. El molde de las otras metas —"te pasaste"— habría
-   desaconsejado algo deseable.
-2. **No se descuenta de los carbohidratos.** Los "carbohidratos netos" son una
-   decisión clínica del equipo tratante y `AGENTS.md` prohíbe inferirla.
-3. **No entra en el reparto 4/4/9**: la fibra ya está contada dentro de los
-   carbohidratos, y sumarla aparte descuadraría la energía.
-
+Tres cosas que la implementación fija: es un **piso, no un techo** (la barra lo
+dice en positivo); **no se descuenta de los carbohidratos** —los "netos" los
+define el equipo tratante y `AGENTS.md` prohíbe inferirlo—; y **no entra en el
+reparto 4/4/9**, porque ya está contada dentro de los carbohidratos.
 ## Respuesta post-prandial con comidas solapadas
 
 Respaldan el rediseño de `macro-glucose.ts` y `nutrition-insights.ts`. Verónica
@@ -103,8 +106,6 @@ cualquier dato que no venga en formato fácil"*.
   `MIN_OBSERVATIONS_FOR_ADJUSTMENT = 8`, y que `fitOls` devuelva `null` ante una
   covariable constante o un sistema mal condicionado: **cuando el ajuste no se
   sostiene se muestra el promedio crudo y se declara.**
-
-Cómo quedó aplicado:
 
 | Pantalla | Salida | Qué pasa con un episodio confundido |
 |---|---|---|

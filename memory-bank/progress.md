@@ -7,11 +7,11 @@ _Última actualización: 2026-09-02._
 | | |
 |---|---|
 | `pnpm verify` | Verde; el wrapper local de Windows conserva su fallo de rutas preexistente. CI Linux es la verificación integral |
-| Tests | **753** — domain 443, mobile 252, ai 25, schemas 13, cgm 10, api 10 |
-| Bundle de Metro | **1.364 módulos** medidos (+3: `RecipeDetail`, `knownFoods`, iconos) |
+| Tests | **818** — domain 500, mobile 260, ai 25, schemas 13, cgm 10, api 10 |
+| Bundle de Metro | **1.367 módulos** medidos (+3: `iob`, `insulin-duration`, `InsulinBreakdown`) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
-⚠️ La base del último build es **1.364**; si vuelve a divergir, **la medición
+⚠️ La base del último build es **1.367**; si vuelve a divergir, **la medición
 manda sobre la tabla**. `pnpm verify` corre, en orden: `verify:contracts`,
 `lint`, `typecheck`, `test`, `verify:bundle` (Metro real).
 
@@ -38,25 +38,23 @@ manda sobre la tabla**. `pnpm verify` corre, en orden: `verify:contracts`,
 
 `packages/ai/src/abacus.ts:23` y `packages/ai/src/index.ts:1-2` usan extensión
 `.js` en imports relativos — **la trampa de Metro que rompió dos builds**. No
-explota solo porque `apps/mobile/package.json` no depende de `@type1a/ai`; el
-día que dependa —el chat de IA— el bundle rompe. Cuesta tres líneas.
+explota solo porque `apps/mobile/package.json` no depende de `@type1a/ai`; el día
+que dependa —el chat de IA— el bundle rompe. Cuesta tres líneas.
 
 ### 🔴 Dos hallazgos vivos de la revisión repuntada (2026-08-26)
 
-Del `domain-safety-reviewer` contra `d868ece` y `c4ca192`. Los dos que
-corrompían datos y los dos del guardado de comida ya están cerrados; siguen
-abiertos los dos de `macro-glucose.ts`:
+Del `domain-safety-reviewer` contra `d868ece` y `c4ca192`. Cerrados los que
+corrompían datos y los del guardado de comida; siguen abiertos los dos de
+`macro-glucose.ts`:
 
 1. **La basal es invisible al modelo** (`macro-glucose.ts:281-287`, sin rama
    para `basal_insulin`): 20 U de Tresiba no entran como covariable.
 2. **Cantidad ausente = "no pasó nada"** (`event.amount ?? 0` con `> 0`): una
    comida real sin carbos confirmados desaparece del conteo.
 
-Cerrados el 2026-09-01: el fallo de la insulina que se pisaba con "Comida
-guardada", y la dosis del botón rápido escrita sin `entryGroupId`.
-
-Menores: `MealModal` no recibe glucosa (`isHypoglycemic` nunca dispara);
-`attachEntryToReading` no valida cetonas ni macros.
+Cerrados el 2026-09-01: la insulina que se pisaba con "Comida guardada", y la
+dosis del botón rápido sin `entryGroupId`. Menores: `MealModal` no recibe
+glucosa (`isHypoglycemic` nunca dispara); `attachEntryToReading` no valida macros.
 
 ### 🟠 Hallazgos de la revisión de seguridad del 2026-08-27, no corregidos
 
@@ -80,8 +78,8 @@ en el mismo commit; quedan tres, declarados a propósito:
 - Una escritura **suelta** (`runAsync` fuera de transacción) puede caer dentro
   de la de otro y volver atrás con ella. Daño bajo: ajustes, no historial.
 - `README.md` sigue en pie (63 líneas). Se **reescribe a ~30**, no se elimina.
-- Un alimento `listed = 0` fuera de toda receta queda invisible e inalcanzable
-  (`deleteRecipe` solo limpia los de su receta). No suma en ningún total.
+- Un alimento `listed = 0` fuera de toda receta queda invisible (`deleteRecipe`
+  solo limpia los de su receta). No suma en ningún total.
 
 ## Historial de fallos que definieron las reglas
 
@@ -131,20 +129,22 @@ Cada uno costó un build, una corrida o un número falso; detalle en `git log`.
 | El cuadro de texto del botón rápido alimentaba a la IA y se tiraba, así que la comida quedaba sin nota mientras el maestro sí la guardaba | una capacidad que solo tiene un camino es una asimetría: el texto que describe la comida se escribe venga de donde venga |
 | Una foto de arroz con pollo dejaba dos alimentos sueltos y **los dos con la foto del plato entero** | el contenedor que faltaba es la receta: guarda la foto del plato y cada componente queda libre de tener la suya |
 | La cobertura de días solo se mostraba bajo el umbral clínico de 14, así que a 30 y 90 días desaparecía y el promedio se leía como si cubriera el rango entero | "cuánto está cubierto" y "alcanza para la métrica" son dos afirmaciones distintas: la primera va siempre |
-| El catálogo se guarda por 100 g y la tarjeta lo mostraba así: una cucharada de aceite aparecía con 100 g de grasa, y son esos números los que después sugieren carbohidratos | cómo se **guarda** un número no es cómo se **lee**: la tarjeta muestra la porción y la leyenda dice el denominador |
+| El catálogo se guarda por 100 g y la tarjeta lo mostraba así: una cucharada de aceite aparecía con 100 g de grasa | cómo se **guarda** un número no es cómo se **lee** |
 | El resumen post-comida citaba "empezó a las 21:30" para una comida de las 17:30: la app guarda UTC, el timeline formatea local y las métricas viajaban a la IA en UTC crudo | lo que sale a un tercero lleva su zona escrita; y el desfase se pide **por marca**, porque el horario de verano existe |
-| Una meta de fibra copiada del molde de las otras habría dicho "te pasaste" al superarla | una referencia es un piso o un techo, y el texto tiene que saber cuál: pasarse de fibra es lo que se buscaba |
+| Una meta de fibra copiada del molde de las otras habría dicho "te pasaste" | una referencia es un piso o un techo, y el texto tiene que saber cuál |
 | Mandar la hora **local** al modelo no agregó un campo, pero sí volvió citable un dato sobre su vida: con UTC no podía juzgar a qué hora cenaba, con hora de pared sí | el filtro crece cuando crece lo que el modelo **puede decir**, no solo cuando crece el payload |
 | El aviso de éxito corría siempre y pisaba al de "no se pudo registrar la insulina": se cerraba la app creyendo que la dosis había quedado | un `catch` que solo escribe un mensaje no arregla nada si el camino feliz lo reemplaza después; el fallo se lleva a la decisión final, no a un `setState` intermedio |
 | El botón rápido guardaba la comida y su dosis **sin `entryGroupId`**, y el timeline agrupa solo por esa columna | una facultad que el maestro tiene y el acceso rápido no es una asimetría, no una simplificación — tercera vez que muerde |
 | "Solo receta" y "las dos cosas" escribían exactamente lo mismo: la elección existía en la pantalla y en ningún dato | una opción que no cambia ninguna fila es una mentira con botón; si se ofrece, hay una columna que la recuerda |
 | La confirmación decía "se fusiona con ese" y guardaba con su propia clave | el texto de una pantalla se verifica contra lo que **escribe** |
-| El estado cargaba 60 alimentos y las recetas sumaban contra esos 60 | un `LIMIT` de presentación no puede ser la fuente de un total |
+| `rapidInsulinName` solo se leía: ninguna pantalla lo escribía, así que decía "sin configurar" con la insulina ya elegida y las dosis quedaban sin marca | un campo que nadie escribe es un campo muerto; el que se muestra se deriva del que sí se guarda |
+| `purpose` decía para qué fue una dosis y nadie guardaba de cuánto se compuso | etiquetar no es desglosar |
 | El "502 sobre 8 KB" no era el proxy: `route-llm` reparte por tamaño y las fotos grandes iban a Gemini, cuyo validador rechaza `exclusiveMinimum`. Un `z.number().positive()` nuevo rompió TODAS las fotos mientras el texto seguía bien | un umbral de tamaño puede ser un cambio de modelo disfrazado; se prueba el mismo payload contra cada modelo antes de culpar a la capa de red |
 | La lista de palabras que el saneado filtra tenía **cuatro de las cinco** que importaban, y nada lo delataba | se enumera lo que **sobrevive** contra una lista blanca, no lo que se filtra: así una palabra nueva falla en el test y no en el teléfono |
+| Seis pantallas prometían "Type 1A no calcula insulina activa" el día que empezó a calcularla; una en la pantalla que descuenta, otra impresa en el reporte clínico | una promesa vieja no rompe nada, solo miente: la copia de seguridad se afirma en un test (`safetyCopy.test.ts`) igual que el saneado |
+| La consulta de dosis recientes traía 6 h fijas; la regular humana dura 8, así que el activo salía **de menos** — y el activo de menos sube la dosis propuesta | una ventana que alimenta un cálculo se deriva del modelo, nunca de una constante escrita al lado |
 
 ## Redeploy del backend
-
-`30a87fa` está desplegado (hora local ✓). Pendiente: **el 502 del proxy** (bug
-de infraestructura, urgente: sin él no se analizan fotos) y `knownFoodNames`
-(prompts de comida v3). Prompt listo en `docs/DEEPAGENT_REDEPLOY_PROMPT.md`.
+`30a87fa` está desplegado. **Falta desplegar `fd3ad1a`**: sin él las fotos
+siguen dando 502 (`exclusiveMinimum`). También lleva `knownFoodNames`. Prompt
+en `docs/DEEPAGENT_REDEPLOY_PROMPT.md`.

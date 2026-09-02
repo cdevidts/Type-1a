@@ -4,7 +4,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { Image, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import {
-  calculateMealBolus,
+  activeInsulinUnits,
+  type InsulinActionModel,  calculateMealBolus,
   cartLineGrams,
   catalogEntryFromPortion,
   resolveMacrosSource,
@@ -13,13 +14,14 @@ import {
   type Recipe,
   type CatalogFood,
 } from '@type1a/domain';
-import type { MealAnalysisResult } from '@type1a/schemas';
+import type { InsulinEvent, MealAnalysisResult } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, editMealWithInstruction, MobileApiError } from '../api';
 import { parseBlankAsUnset, parseNonNegativeNumber, parsePositiveNumber } from '../format';
 import { knownFoodNamesFrom } from '../knownFoods';
 import { logSaveError } from '../log';
 import { mealNoteFrom } from '../mealNote';
+import { InsulinBreakdown } from './InsulinBreakdown';
 import { MealAiFields } from './MealAiFields';
 import { colors, radius, spacing } from '../theme';
 import { MealCart } from './MealCart';
@@ -116,6 +118,8 @@ export function MealModal({
   onClose,
   onConfirm,
   catalogFoods,
+  recentRapid,
+  actionModel,
   recipes,
   presetCartLines,
   carbRatio,
@@ -129,6 +133,18 @@ export function MealModal({
   onConfirm: (draft: ConfirmedMealDraft) => Promise<void>;
   /** Alimentos ya conocidos, para reusar sin llamar a la IA (Fase 15). */
   catalogFoods: readonly CatalogFood[];
+  /**
+   * Dosis rápidas recientes: de ahí sale la insulina activa que el conteo
+   * descuenta de la corrección.
+   */
+  recentRapid?: readonly InsulinEvent[] | undefined;
+  /**
+   * La curva de acción de su insulina rápida, ya resuelta por `App` (este
+   * modal recibe los parámetros de terapia sueltos, no el perfil entero).
+   * `undefined` = no eligió insulina, y entonces no hay insulina activa que
+   * mostrar ni descontar.
+   */
+  actionModel?: InsulinActionModel | undefined;
   /** Recetas, para que el carrito pueda reusarlas. */
   recipes?: readonly Recipe[] | undefined;
   /**
@@ -180,6 +196,17 @@ export function MealModal({
    * calculadora sin la salvaguarda.
    */
   const [calcBasisCarbsG, setCalcBasisCarbsG] = useState<number | null>(null);
+  /**
+   * El desglose del último conteo, para mostrarlo. Desde que se descuenta
+   * insulina activa el total no se puede rehacer con lo que está en pantalla.
+   */
+  const [doseBreakdown, setDoseBreakdown] = useState<{
+    mealUnits: number;
+    correctionUnits: number;
+    activeInsulinUnits: number | undefined;
+    activeDoseCount: number;
+    totalUnits: number;
+  } | null>(null);
   const [proteinInput, setProteinInput] = useState('');
   const [fatInput, setFatInput] = useState('');
   const [fiberInput, setFiberInput] = useState('');
@@ -239,6 +266,7 @@ export function MealModal({
     setSaveToCatalog(true);
     setRapidInput('');
     setCalcBasisCarbsG(null);
+    setDoseBreakdown(null);
   }, [visible]);
 
   async function captureAndAnalyze(): Promise<void> {
@@ -912,6 +940,13 @@ export function MealModal({
                   setMessage('Escribe primero los carbohidratos confirmados.');
                   return;
                 }
+                // Sin glucosa actual acá no hay corrección que calcular, así
+                // que tampoco hay de qué descontar el activo: este botón
+                // cuenta carbohidratos. El activo se muestra igual, porque
+                // saber que tienes 3 U actuando cambia lo que decides hacer.
+                const active = actionModel === undefined
+                  ? undefined
+                  : activeInsulinUnits(recentRapid ?? [], new Date().toISOString(), actionModel);
                 const result = calculateMealBolus({
                   carbsG: carbsNow,
                   carbRatio,
@@ -927,17 +962,34 @@ export function MealModal({
                 }
                 setRapidInput(String(result.totalRoundedUnits));
                 setCalcBasisCarbsG(carbsNow);
+                setDoseBreakdown({
+                  mealUnits: result.mealUnits,
+                  correctionUnits: 0,
+                  activeInsulinUnits: active?.units,
+                  activeDoseCount: active?.doseCount ?? 0,
+                  totalUnits: result.totalRoundedUnits,
+                });
                 setMessage(`Por conteo: ${result.mealFormula} = ${result.totalRoundedUnits} U. Revísalo antes de guardar.`);
               }}
             >
               <Text style={styles.calcButtonText}>Calcular por conteo</Text>
             </Pressable>
           )}
+          {doseBreakdown === null ? null : (
+            <InsulinBreakdown
+              {...doseBreakdown}
+              insulinConfigured={actionModel !== undefined}
+              // Acá no se restó: este botón cuenta carbohidratos y no calcula
+              // corrección. El activo se informa, no se descuenta.
+              activeWasSubtracted={false}
+            />
+          )}
           <Text style={styles.insulinFoot}>
             Type 1A no decide ni sugiere dosis: solo aplica los valores que cargaste. Confirma la cantidad antes
             de guardar.{'\n\n'}
-            El conteo no descuenta insulina que siga actuando de una dosis anterior — la app no calcula insulina
-            activa. Si te pinchaste hace poco, tenlo en cuenta antes de confirmar.
+            {actionModel === undefined
+              ? 'Este conteo no descuenta insulina que siga actuando, porque todavía no elegiste tu insulina rápida en Ajustes → Terapia. Si te pinchaste hace poco, tenlo en cuenta.'
+              : 'Este botón cuenta carbohidratos: no corrige glucosa, así que no hay corrección de la cual descontar el activo. Lo que ya tienes actuando se muestra arriba para que lo tengas presente.'}
           </Text>
         </View>
       ) : null}

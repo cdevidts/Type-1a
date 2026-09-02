@@ -17,9 +17,15 @@ const THERAPY_PATTERNS = [
   // superposición: "la segunda dosis se solapó con la primera, que todavía
   // estaba activa". Eso NO es una recomendación —los cuatro patrones de
   // arriba no lo tocan— pero sí es una estimación de insulina activa
-  // presentada a la usuaria, y `AGENTS.md` prohíbe IOB en el MVP tanto como
-  // prohíbe recomendar dosis. Al crecer lo que el modelo puede decir, tiene
-  // que crecer el filtro.
+  // presentada a la usuaria por un modelo de lenguaje.
+  //
+  // El 2026-09-02 la app SÍ empezó a estimar insulina activa (ADR 0005), y
+  // esto **no se relaja por eso**: al contrario. La estimación válida es la
+  // de `iob.ts` —determinista, con un modelo citado, sobre la duración que
+  // ella configuró, y mostrada con su desglose—. Una frase generada que diga
+  // lo mismo con otras palabras no tiene ninguna de esas propiedades y sería
+  // indistinguible para quien la lee. Al crecer lo que el modelo puede decir,
+  // tiene que crecer el filtro.
   /\binsulina\s+activa(?![a-záéíóúñ])/iu,
   /\b(?:dosis|bolo|insulina|correcci[oó]n|unidades?)\b.{0,60}\b(?:todav[ií]a|a[uú]n|segu[ií]a|sigue|seguía)\b.{0,25}\b(?:activ[ao]s?|actuando|haciendo efecto)/iu,
   /\bse\s+solap(?:o|ó|aba|aban|aron|an)(?![a-záéíóúñ]).{0,50}\b(?:dosis|bolo|insulina|correcci[oó]n)/iu,

@@ -3,12 +3,23 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { AppState, Image, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
-import { assessFreshness, calculateCorrection, calculateMealBolus, convertGlucose, isSensorReading, resolveMacrosSource, type CartLine, type CatalogFood,
+import {
+  activeInsulinUnits,
+  rapidInsulinActionModel,  assessFreshness,
+  calculateCorrection,
+  calculateMealBolus,
+  convertGlucose,
+  insulinNameForType,
+  isSensorReading,
+  resolveMacrosSource,
+  type CartLine,
+  type CatalogFood,
   type Recipe,
 } from '@type1a/domain';
-import type { CGMReading, MealAnalysisResult, MealEvent, TherapyProfile } from '@type1a/schemas';
+import type { CGMReading, InsulinEvent, MealAnalysisResult, MealEvent, TherapyProfile } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, editMealWithInstruction, MobileApiError } from '../api';
+import { InsulinBreakdown } from './InsulinBreakdown';
 import { MealAiFields } from './MealAiFields';
 import { combineDayAndTime, dayOfMonthISO, isFutureDay, parseDayISO, timeOfDay } from '../entryTime';
 import { formatDayTime, parseBlankAsUnset, parseBlankAsUnsetPositive, parseNonNegativeNumber } from '../format';
@@ -39,6 +50,18 @@ const HYPO_WARNING = 'Estás en hipoglucemia. Trata la hipoglucemia primero y ca
  */
 interface DoseSuggestion {
   units: number;
+  /**
+   * De dónde sale el número, para `InsulinBreakdown`. Desde que se descuenta
+   * insulina activa, el total ya no se puede rehacer de cabeza con lo que hay
+   * en pantalla: hay un término que no se ve si no se muestra.
+   */
+  breakdown: {
+    mealUnits?: number | undefined;
+    correctionUnits: number;
+    activeInsulinUnits: number | undefined;
+    activeDoseCount: number;
+    totalUnits: number;
+  };
   lines: string[];
   belowTargetNote: string | null;
   hypoWarning: string | null;
@@ -196,6 +219,7 @@ export function UnifiedEntryModal({
   profile,
   therapyConfigured,
   catalogFoods,
+  recentRapid,
   recipes,
   focus = 'all',
   onClose,
@@ -209,6 +233,12 @@ export function UnifiedEntryModal({
   therapyConfigured: boolean;
   /** Alimentos ya conocidos, para reusar sin llamar a la IA (Fase 15). */
   catalogFoods: readonly CatalogFood[];
+  /**
+   * Dosis rápidas recientes: es de donde sale la insulina activa que la
+   * calculadora descuenta de la corrección. Sin insulina configurada no se
+   * usan para calcular, solo para mostrar contexto.
+   */
+  recentRapid?: readonly InsulinEvent[] | undefined;
   /** Recetas, para que el carrito pueda reusarlas. */
   recipes?: readonly Recipe[] | undefined;
   /**
@@ -269,6 +299,40 @@ export function UnifiedEntryModal({
   const [saveToCatalog, setSaveToCatalog] = useState(true);
   const [catalogSuggestedCarbsG, setCatalogSuggestedCarbsG] = useState<number | null>(null);
   const [suggestion, setSuggestion] = useState<DoseSuggestion | null>(null);
+
+  const actionModel = rapidInsulinActionModel(profile);
+
+  /**
+   * Insulina rápida que sigue actuando ahora. `undefined` sin insulina
+   * configurada: entonces no se resta nada y la pantalla lo dice.
+   */
+  /**
+   * El desglose que se guarda con la dosis, **solo si el número en pantalla
+   * salió de la calculadora**. Si lo escribió a mano, no hay desglose que
+   * contar: ausencia significa "no se sabe", nunca cero.
+   *
+   * Se guarda lo calculado aunque después ella redondee el total con su
+   * pluma: el desglose describe el cálculo, y forzarlo a cuadrar con otra
+   * cifra sería reescribir un dato para que se vea bien.
+   */
+  function adoptedBreakdown(): {
+    rapidMealUnits?: number;
+    rapidCorrectionUnits?: number;
+    rapidIobUnits?: number;
+  } {
+    if (!rapidFromCalculator || suggestion === null) return {};
+    const { breakdown } = suggestion;
+    return {
+      ...(breakdown.mealUnits === undefined ? {} : { rapidMealUnits: Number(breakdown.mealUnits.toFixed(2)) }),
+      rapidCorrectionUnits: Number(breakdown.correctionUnits.toFixed(2)),
+      ...(breakdown.activeInsulinUnits === undefined ? {} : { rapidIobUnits: breakdown.activeInsulinUnits }),
+    };
+  }
+
+  function activeInsulin(): { units: number; doseCount: number } | undefined {
+    if (actionModel === undefined) return undefined;
+    return activeInsulinUnits(recentRapid ?? [], new Date().toISOString(), actionModel);
+  }
   const [correctionIncluded, setCorrectionIncluded] = useState(false);
   const [rapidFromCalculator, setRapidFromCalculator] = useState(false);
   const [rapidStale, setRapidStale] = useState(false);
@@ -660,6 +724,10 @@ export function UnifiedEntryModal({
         setMessage('Falta "Carbs por unidad" en Ajustes → Parámetros de terapia. Sin ese valor no se puede calcular el bolo de comida.');
         return;
       }
+      // La insulina activa se resuelve en el momento de calcular. Sin
+      // insulina configurada, `active` es `undefined`, no se resta nada, y el
+      // desglose lo dice — ver `iob.ts`.
+      const active = activeInsulin();
       const result = calculateMealBolus({
         carbsG,
         carbRatio,
@@ -667,9 +735,17 @@ export function UnifiedEntryModal({
         correctionFactor: profile.correctionFactor,
         doseIncrement: profile.doseIncrement,
         ...(currentGlucose === undefined ? {} : { currentGlucose }),
+        ...(active === undefined || currentGlucose === undefined ? {} : { activeInsulinUnits: active.units }),
       });
       setSuggestion({
         units: result.totalRoundedUnits,
+        breakdown: {
+          mealUnits: result.mealUnits,
+          correctionUnits: result.correctionUnits,
+          activeInsulinUnits: result.activeInsulinUnits,
+          activeDoseCount: active?.doseCount ?? 0,
+          totalUnits: result.totalRoundedUnits,
+        },
         lines: [
           `Comida: ${result.mealFormula} = ${result.mealUnits.toFixed(2)} U`,
           result.correctionFormula === null
@@ -691,14 +767,22 @@ export function UnifiedEntryModal({
       setMessage('Para calcular necesitas carbohidratos, una glucosa actual, o ambos.');
       return;
     }
+    const activeForCorrection = activeInsulin();
     const result = calculateCorrection({
       currentGlucose,
       targetGlucose: profile.targetGlucose,
       correctionFactor: profile.correctionFactor,
       doseIncrement: profile.doseIncrement,
+      ...(activeForCorrection === undefined ? {} : { activeInsulinUnits: activeForCorrection.units }),
     });
     setSuggestion({
       units: result.roundedUnits,
+      breakdown: {
+        correctionUnits: result.beforeActiveUnits,
+        activeInsulinUnits: result.activeInsulinUnits,
+        activeDoseCount: activeForCorrection?.doseCount ?? 0,
+        totalUnits: result.roundedUnits,
+      },
       lines: [
         `Corrección: ${result.formula} = ${result.rawUnits.toFixed(2)} U`,
         `Redondeado al incremento de ${profile.doseIncrement} U.`,
@@ -925,6 +1009,7 @@ export function UnifiedEntryModal({
           ...(rapidUnits === undefined ? {} : { rapidUnits }),
           ...(basalUnits === undefined ? {} : { basalUnits }),
           rapidIncludesCorrection: rapidFromCalculator && correctionIncluded,
+          ...adoptedBreakdown(),
           ...(Object.keys(vitals).length === 0 ? {} : { vitals }),
           ...(note.trim() === '' ? {} : { note: note.trim() }),
         });
@@ -941,6 +1026,7 @@ export function UnifiedEntryModal({
         await mode.onSave({
           timestamp,
           rapidIncludesCorrection: rapidFromCalculator && correctionIncluded,
+          ...adoptedBreakdown(),
           // Only a hand-typed glucose becomes a new stored reading; an
           // untouched prefill is already in the database and must not be
           // duplicated. Same invariant as in `calculate()`: `prefilled` is
@@ -1368,7 +1454,9 @@ export function UnifiedEntryModal({
           <Text style={styles.warningTitle}>Aritmética con tus parámetros, no una recomendación</Text>
           <Text style={styles.warningText}>
             Usa el objetivo, el factor de corrección y los carbs por unidad que configuraste con tu equipo clínico.
-            No descuenta insulina activa (IOB) de dosis anteriores: si te pinchaste hace poco, este número queda alto.
+            {actionModel === undefined
+              ? ' No descuenta insulina activa: todavía no elegiste tu insulina rápida en Ajustes → Terapia, así que si te pinchaste hace poco este número queda alto.'
+              : ' Descuenta la insulina que sigue activa de dosis anteriores, solo de la parte de corrección, y te muestra el desglose completo abajo.'}
           </Text>
         </View>
         <Pressable style={[styles.calculateButton, busy && styles.disabled]} disabled={busy} onPress={calculate}>
@@ -1384,6 +1472,10 @@ export function UnifiedEntryModal({
             {suggestion.lines.map((line) => (
               <Text key={line} style={styles.formula}>{line}</Text>
             ))}
+            <InsulinBreakdown
+              {...suggestion.breakdown}
+              insulinConfigured={actionModel !== undefined}
+            />
             <Text style={styles.parameterSummary}>Con: {suggestion.parameterSummary}</Text>
             {suggestion.belowTargetNote === null ? null : (
               <Text style={styles.below}>{suggestion.belowTargetNote}</Text>
@@ -1444,12 +1536,12 @@ export function UnifiedEntryModal({
         */}
         <View style={styles.insulinNames}>
           <Text style={styles.insulinNameLine}>
-            Rápida: {seed?.rapidInsulinName ?? profile.rapidInsulinName ?? 'sin configurar'}
+            Rápida: {seed?.rapidInsulinName ?? insulinNameForType(profile, 'rapid') ?? 'sin configurar'}
           </Text>
           <Text style={styles.insulinNameLine}>
-            Basal: {seed?.basalInsulinName ?? profile.basalInsulinName ?? 'sin configurar'}
+            Basal: {seed?.basalInsulinName ?? insulinNameForType(profile, 'basal') ?? 'sin configurar'}
           </Text>
-          {profile.rapidInsulinName === undefined && profile.basalInsulinName === undefined ? (
+          {insulinNameForType(profile, 'rapid') === undefined && insulinNameForType(profile, 'basal') === undefined ? (
             <Text style={styles.hint}>
               Todavía no configuraste tus insulinas, así que el registro se guarda sin nombre. La app no inventa uno.
             </Text>

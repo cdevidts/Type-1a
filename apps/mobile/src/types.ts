@@ -330,6 +330,16 @@ export interface TimelineEntryGroupRaw {
    * que una actualización parcial la borrara en silencio.
    */
   rapidInsulinName?: string;
+  /**
+   * Propósito y desglose de la rápida del grupo (2026-09-02). La fila del
+   * timeline mostraba solo el total: no decía cuánto cubría los
+   * carbohidratos, cuánto corregía la glucosa, ni cuánta insulina activa se
+   * descontó. Ausentes en toda dosis escrita a mano.
+   */
+  rapidPurpose?: 'meal' | 'correction' | 'combined';
+  rapidMealUnits?: number;
+  rapidCorrectionUnits?: number;
+  rapidIobUnits?: number;
   basalInsulinName?: string;
   /** Calorías de la comida del grupo, si las tiene. */
   caloriesKcal?: number;

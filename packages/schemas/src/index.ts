@@ -100,17 +100,39 @@ export const TherapyProfileSchema = z.object({
   // Qué insulina usa la persona, elegida de `INSULIN_CATALOG` (domain), y
   // cuánto dura según la ficha técnica del fabricante.
   //
-  // ⚠️ Estos campos existen SOLO para higiene de datos: decidir si había otra
-  // dosis actuando dentro de la ventana de un episodio, y por lo tanto si ese
-  // episodio entra a un promedio descriptivo. **No son insulina activa (IOB)
-  // y no pueden alimentar ninguna calculadora de dosis** — `AGENTS.md`
-  // prohíbe IOB y dosificación automática en el MVP. Ver la cabecera de
-  // `packages/domain/src/insulin-catalog.ts`.
+  // Desde el 2026-09-02 estos campos hacen **dos** trabajos: higiene de datos
+  // (decidir si había otra dosis actuando dentro de la ventana de un
+  // episodio) y, ahora también, alimentar la curva de insulina activa que la
+  // calculadora descuenta de la corrección — `packages/domain/src/iob.ts`,
+  // bajo las condiciones de `docs/adr/0005`. Sigue prohibida la dosificación
+  // automática: la app propone y la usuaria confirma.
+  //
+  // ⚠️ Consecuencia de ese cambio: una duración mal configurada ya no solo
+  // excluye un episodio de un promedio, **cambia una dosis propuesta**.
   //
   // Opcionales a propósito: sin elegir, no se supone ninguna. Un default
   // silencioso excluiría episodios por una suposición que nadie confirmó.
   rapidInsulinId: z.string().trim().max(40).optional(),
   basalInsulinId: z.string().trim().max(40).optional(),
+  /**
+   * Duración de la insulina rápida **por tramo del día**, cuando ella decidió
+   * fijar una distinta (2026-09-02).
+   *
+   * Nace de una observación real: la curva de efecto puede alargarse en la
+   * mañana. La app la **mide** (`insulin-duration.ts`) y se la muestra en
+   * Resumen → Insulina; adoptarla es un acto explícito de ella. Un tramo sin
+   * override usa `rapidInsulinDurationHours`, la duración general.
+   *
+   * `AGENTS.md`: never infer therapy parameters. La app puede decir "en tus
+   * datos la mañana dura 6 h"; no puede escribirlo sola en el parámetro que
+   * después descuenta unidades de una dosis.
+   */
+  segmentDurationHours: z.object({
+    madrugada: z.number().min(1).max(72).finite().optional(),
+    manana: z.number().min(1).max(72).finite().optional(),
+    tarde: z.number().min(1).max(72).finite().optional(),
+    noche: z.number().min(1).max(72).finite().optional(),
+  }).optional(),
   // `.min(1)` y no solo `.positive()`: el mismo piso que
   // `MIN_INSULIN_DURATION_HOURS` en `packages/domain`. La UI ya lo validaba y
   // el esquema no, así que un camino de guardado que se saltara la UI (el
@@ -131,6 +153,29 @@ export const InsulinEventSchema = z.object({
   // (e.g. for CSV imports that separate meal vs. correction boluses); it
   // never feeds back into any dose calculation.
   purpose: z.enum(['meal', 'correction', 'combined']).optional(),
+  /**
+   * El **desglose** de una dosis calculada: cuántas unidades cubrían los
+   * carbohidratos, cuántas corregían la glucosa, y cuánta insulina activa se
+   * descontó al proponerla (2026-09-02).
+   *
+   * `purpose` decía *para qué* fue la dosis; esto dice *cuánto de cada cosa*,
+   * que no es lo mismo y faltaba. Una dosis `combined` de 5,5 U no guardaba si
+   * eran 4 de comida y 1,5 de corrección o al revés, así que ni la pantalla de
+   * detalle ni el reporte médico podían decirlo, y no había forma de mirar
+   * después qué tan bien funcionaron **las correcciones** por separado.
+   *
+   * Son **lo que la calculadora propuso**, no lo que ella se inyectó: `units`
+   * sigue siendo el número real y manda siempre. Si los edita y dejan de
+   * sumar, la pantalla muestra las dos cosas en vez de reescribir el desglose
+   * — un cálculo no se corrige solo para que cuadre con otra cifra.
+   *
+   * Ausentes en toda dosis escrita a mano y en todo registro anterior a este
+   * campo. Ausencia = "no se sabe el desglose", nunca cero.
+   */
+  mealUnits: z.number().nonnegative().max(100).finite().optional(),
+  correctionUnits: z.number().nonnegative().max(100).finite().optional(),
+  /** Insulina activa que se restó de la corrección al proponer esta dosis. */
+  iobUnits: z.number().nonnegative().max(100).finite().optional(),
   source: z.enum(['manual', 'imported']),
   createdAt: IsoTimestampSchema,
 });

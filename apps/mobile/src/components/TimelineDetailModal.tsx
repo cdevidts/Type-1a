@@ -97,6 +97,12 @@ function rowsFor(item: TimelineItem): { label: string; value: string }[] {
         { label: 'Unidades', value: `${item.raw.units} U` },
         ...(item.raw.insulinName === undefined ? [] : [{ label: 'Insulina', value: item.raw.insulinName }]),
         ...(item.raw.purpose === undefined ? [] : [{ label: 'Propósito', value: { meal: 'Comida', correction: 'Corrección', combined: 'Combinado' }[item.raw.purpose] }]),
+        // El desglose de una dosis calculada. `purpose` decía para qué fue;
+        // esto dice de cuánto se compuso, que es otra pregunta y la que
+        // permite mirar después qué tan bien funcionaron las correcciones.
+        ...(item.raw.mealUnits === undefined ? [] : [{ label: 'De comida', value: `${item.raw.mealUnits} U` }]),
+        ...(item.raw.correctionUnits === undefined ? [] : [{ label: 'De corrección', value: `${item.raw.correctionUnits} U` }]),
+        ...(item.raw.iobUnits === undefined ? [] : [{ label: 'Insulina activa descontada', value: `− ${item.raw.iobUnits} U` }]),
         { label: 'Origen', value: item.raw.source === 'imported' ? 'Importado desde CSV' : 'Ingresado a mano' },
         { label: 'Hora', value: formatDayTime(item.raw.timestamp) },
       ];
@@ -179,6 +185,13 @@ function rowsFor(item: TimelineItem): { label: string; value: string }[] {
           ? []
           : [{ label: 'Presión', value: `${item.raw.systolicBP}/${item.raw.diastolicBP} mmHg` }]),
         ...(item.raw.rapidUnits === undefined ? [] : [{ label: 'Insulina rápida', value: `${item.raw.rapidUnits} U` }]),
+        // Una entrada agrupada mostraba SOLO el total: no decía cuánto de esa
+        // rápida cubría los carbohidratos y cuánto corregía la glucosa, ni
+        // siquiera para qué fue. Con el IOB en juego eso importa el doble.
+        ...(item.raw.rapidPurpose === undefined ? [] : [{ label: 'Propósito', value: { meal: 'Comida', correction: 'Corrección', combined: 'Comida + corrección' }[item.raw.rapidPurpose] }]),
+        ...(item.raw.rapidMealUnits === undefined ? [] : [{ label: 'De comida', value: `${item.raw.rapidMealUnits} U` }]),
+        ...(item.raw.rapidCorrectionUnits === undefined ? [] : [{ label: 'De corrección', value: `${item.raw.rapidCorrectionUnits} U` }]),
+        ...(item.raw.rapidIobUnits === undefined ? [] : [{ label: 'Insulina activa descontada', value: `− ${item.raw.rapidIobUnits} U` }]),
         ...(item.raw.rapidInsulinName === undefined ? [] : [{ label: 'Rápida usada', value: item.raw.rapidInsulinName }]),
         ...(item.raw.basalUnits === undefined ? [] : [{ label: 'Insulina basal', value: `${item.raw.basalUnits} U` }]),
         ...(item.raw.basalInsulinName === undefined ? [] : [{ label: 'Basal usada', value: item.raw.basalInsulinName }]),

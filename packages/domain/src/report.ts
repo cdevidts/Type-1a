@@ -108,6 +108,14 @@ export function buildReportRows(input: ReportInput): ReportRow[] {
   for (const dose of input.insulin) {
     const parts = [`${dose.units} U`, INSULIN_TYPE_LABEL[dose.type]];
     if (dose.purpose !== undefined) parts.push(INSULIN_PURPOSE_LABEL[dose.purpose]);
+    // El desglose de una dosis calculada, para que el equipo clínico no vea
+    // solo un total: cuánto cubría el plato, cuánto corregía la glucosa, y
+    // cuánta insulina activa se descontó al proponerla. Cada parte se agrega
+    // solo si se sabe — una dosis escrita a mano no tiene desglose, y un cero
+    // inventado ahí se leería como un dato.
+    if (dose.mealUnits !== undefined) parts.push(`${dose.mealUnits} U de comida`);
+    if (dose.correctionUnits !== undefined) parts.push(`${dose.correctionUnits} U de corrección`);
+    if (dose.iobUnits !== undefined) parts.push(`menos ${dose.iobUnits} U activas`);
     if (dose.insulinName !== undefined) parts.push(dose.insulinName);
     rows.push({
       timestamp: dose.timestamp,

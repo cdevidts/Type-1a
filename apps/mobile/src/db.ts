@@ -392,10 +392,29 @@ export async function saveCarbEvent(
   );
 }
 
-/** Los nombres configurados en Ajustes → Terapia, para estampar y reestampar. */
+/**
+ * Lo configurado en Ajustes → Terapia que sirve para estampar y reestampar el
+ * nombre de una dosis.
+ *
+ * Lleva los **ids del catálogo** además de los nombres escritos a mano: elegir
+ * "Fiasp" de la lista guarda el id, no el nombre, y sin esto
+ * `insulinNameForType` no tenía de dónde sacarlo — las dosis quedaban sin
+ * marca y la pantalla decía "sin configurar". Ver esa función.
+ */
 export interface ProfileInsulinNames {
   rapidInsulinName?: string | undefined;
+  /**
+   * El propósito y el desglose de la rápida del grupo. La fila del timeline
+   * mostraba solo el total: no decía cuánto cubría los carbohidratos, cuánto
+   * corregía la glucosa, ni cuánta insulina activa se descontó al proponerla.
+   */
+  rapidPurpose?: 'meal' | 'correction' | 'combined' | undefined;
+  rapidMealUnits?: number | undefined;
+  rapidCorrectionUnits?: number | undefined;
+  rapidIobUnits?: number | undefined;
   basalInsulinName?: string | undefined;
+  rapidInsulinId?: string | undefined;
+  basalInsulinId?: string | undefined;
 }
 
 /**
@@ -1008,6 +1027,19 @@ export interface UnifiedEntryInput {
   caloriesKcal?: number;
   aiAnalysisId?: string;
   rapidUnits?: number;
+  /**
+   * El desglose de la rápida, cuando salió de la calculadora: cuánto cubría
+   * los carbohidratos, cuánto corregía la glucosa, y cuánta insulina activa
+   * se descontó al proponerla (2026-09-02).
+   *
+   * Ausentes cuando la escribió a mano — y ausencia es "no se sabe", nunca
+   * cero. Se guardan **como se calcularon**: si después edita el total, el
+   * desglose sigue describiendo el cálculo, no el número final, y la pantalla
+   * muestra las dos cosas en vez de reescribir uno para que cuadre con otro.
+   */
+  rapidMealUnits?: number;
+  rapidCorrectionUnits?: number;
+  rapidIobUnits?: number;
   basalUnits?: number;
   note?: string;
   /**
@@ -1204,6 +1236,9 @@ export async function saveUnifiedEntry(
         source: 'manual',
         createdAt: timestamp,
         purpose: hasMeal ? (includesCorrection ? 'combined' : 'meal') : 'correction',
+        ...(input.rapidMealUnits === undefined ? {} : { mealUnits: input.rapidMealUnits }),
+        ...(input.rapidCorrectionUnits === undefined ? {} : { correctionUnits: input.rapidCorrectionUnits }),
+        ...(input.rapidIobUnits === undefined ? {} : { iobUnits: input.rapidIobUnits }),
         // El nombre se estampa al crear y queda congelado: si mañana cambia
         // de tratamiento, lo de hoy siguió siendo lo de hoy.
         ...(insulinNameForType(input.profileInsulinNames ?? {}, 'rapid') === undefined
@@ -2269,10 +2304,19 @@ export async function importMySugrCsv(db: SQLiteDatabase, csvText: string): Prom
   return outcome;
 }
 
+/**
+ * La ventana por defecto de dosis rápidas recientes, en horas.
+ *
+ * Alcanza para el contexto en pantalla con cualquier análoga (3-5 h), pero
+ * **no** para la insulina activa de una insulina más larga: `App.tsx` la
+ * ensancha a la duración del modelo cuando hace falta. Ver ahí el porqué.
+ */
+export const DEFAULT_RAPID_LOOKBACK_HOURS = 6;
+
 export async function getRecentRapidInsulin(
   db: SQLiteDatabase,
   before = new Date(),
-  lookbackHours = 6,
+  lookbackHours = DEFAULT_RAPID_LOOKBACK_HOURS,
   tally?: DecodeTally,
 ): Promise<InsulinEvent[]> {
   const from = new Date(before.getTime() - lookbackHours * 60 * 60_000).toISOString();
@@ -2806,6 +2850,10 @@ function entryGroupRaw(entryGroupId: string, group: EntryGroupAccumulator): Time
     // El nombre estampado viaja de vuelta al editor. Sin esto el formulario
     // no sabía que existía, y una actualización parcial lo borraba.
     ...(group.rapid?.insulinName === undefined ? {} : { rapidInsulinName: group.rapid.insulinName }),
+    ...(group.rapid?.purpose === undefined ? {} : { rapidPurpose: group.rapid.purpose }),
+    ...(group.rapid?.mealUnits === undefined ? {} : { rapidMealUnits: group.rapid.mealUnits }),
+    ...(group.rapid?.correctionUnits === undefined ? {} : { rapidCorrectionUnits: group.rapid.correctionUnits }),
+    ...(group.rapid?.iobUnits === undefined ? {} : { rapidIobUnits: group.rapid.iobUnits }),
     ...(group.basal?.insulinName === undefined ? {} : { basalInsulinName: group.basal.insulinName }),
     ...(group.note === undefined ? {} : { note: group.note.text }),
     ...(group.vitals?.ketonesMmolL === undefined ? {} : { ketonesMmolL: group.vitals.ketonesMmolL }),

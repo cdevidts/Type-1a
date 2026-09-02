@@ -41,7 +41,7 @@ Puro, determinístico, con test. **Ningún `.tsx` calcula una métrica de salud.
 
 | Archivo | Qué resuelve |
 |---|---|
-| `correction.ts`, `bolus.ts` | aritmética de dosis sobre parámetros que cargó la usuaria. Nunca IOB |
+| `correction.ts`, `bolus.ts` | aritmética de dosis sobre parámetros que cargó la usuaria. Descuentan IOB **solo de la corrección** |
 | `ai-safety.ts` | `containsTherapyRecommendation` — el filtro por el que pasa toda salida de IA |
 | `freshness.ts` | `assessFreshness`; distingue `sourceTimestamp` de `ingestedAt` |
 | `glucose-thresholds.ts` | 54/70/180/250 mg/dL. Nadie los redeclara |
@@ -53,11 +53,13 @@ Puro, determinístico, con test. **Ningún `.tsx` calcula una métrica de salud.
 | `nutrition-insights.ts`, `nutrition-targets.ts` | patrones de comida y metas. La de fibra es un **piso** (14 g/1000 kcal) y nunca se descuenta de los carbohidratos |
 | `macros-source.ts` | `resolveMacrosSource()` — quién puso los macros de una comida. Se imprime en el reporte médico; ningún `.tsx` lo decide |
 | `vitals-summary.ts` | cómo se lee un registro de vitales, con la banda de `assessKetones`. El componente elige el color; no decide qué es urgente |
-| `insulin-catalog.ts` | catálogo de insulinas, su duración y su nombre por configuración. Devuelve `undefined` si no está configurada — nunca un default silencioso. Nunca calcula dosis |
+| `insulin-catalog.ts` | catálogo de insulinas, su duración y su nombre. `undefined` si no está configurada — nunca un default silencioso |
 | `food-catalog.ts` | `foodKey`, `blendCatalogEntry`; misma implementación en teléfono y servidor. `imageUri` es representación, nunca base de un macro. `listed` = "solo receta": ausente es visible, y visible gana al fusionar |
 | `meal-cart.ts` | el carrito multi-alimento: suma líneas y declara qué macro falta. Su total es **estimación**; confirmarlo es un acto de la usuaria |
 | `recipe.ts` | una receta y sus componentes. **Los totales se derivan, nunca se guardan**: corregir un alimento corrige todas las recetas que lo usan. Redondea igual que el carrito a propósito |
 | `catalog-similarity.ts` | qué alimento del catálogo ya cubre uno recién identificado. **Solo propone**: emparejar mal mezcla macros de dos alimentos y eso sugiere carbohidratos sin delatarse |
+| `iob.ts` | insulina activa: curva exponencial de LoopKit/OpenAPS. Se descuenta **solo de la corrección**, nunca de la comida. Sin insulina configurada devuelve `undefined`, no cero. Ver `docs/adr/0005` |
+| `insulin-duration.ts` | cuánto dura de verdad su insulina, medido en correcciones aisladas y agrupado por tramo del día. Mide y propone; **adoptar es de la usuaria** |
 | `coverage.ts` | cuánto del rango elegido tiene datos. Separa "faltan días" (descriptivo) de "no alcanza para la HbA1c estimada" (clínico, 14 días de consenso) |
 | `report.ts`, `units.ts`, `ketones.ts`, `meal.ts`, `mysugr-import.ts` | reporte, conversión, cetonas, comida, importación |
 
@@ -92,23 +94,24 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
 - **Navegación**: no hay librería. Una pantalla es un `Modal` vía `ModalShell`;
   sub-páginas son pestañas (`SummaryModal.tsx`). `BottomNav.tsx` +
   `useSwipeNavigation.ts` + `swipeOrder.ts`.
-- **Modal Maestro**: `UnifiedEntryModal.tsx` crea **y** edita (`mode` dice
-  cuál). Sus reglas puras están en `masterModal.ts`: dónde escribe cada tipo
-  (`masterTargetOf`), qué carga (`masterSeedFrom`), qué se abre
-  (`masterSectionsFor`, **por contenido**). `TimelineDetailModal.tsx` solo lee.
-- **Formularios de comida**: el maestro, `MealModal` (rápido) y `MealEditModal`
-  (editor con IA). **Lo que comparten se comparte** —`MacroFields.tsx`,
-  `MealCart.tsx`, `MealAiFields.tsx`—: un campo nuevo va ahí, no en un modal.
+- **Modal Maestro**: `UnifiedEntryModal.tsx` crea **y** edita (`mode` dice cuál).
+  Sus reglas puras están en `masterModal.ts`: dónde escribe cada tipo (`masterTargetOf`),
+  qué carga (`masterSeedFrom`), qué se abre (`masterSectionsFor`, **por contenido**).
+  `TimelineDetailModal.tsx` solo lee.
+- **Formularios de comida**: el maestro, `MealModal` (rápido) y `MealEditModal` (con
+  IA). **Lo que comparten se comparte** —`MacroFields.tsx`, `MealCart.tsx`,
+  `MealAiFields.tsx`—: un campo nuevo va ahí, no en un modal.
 - **Accesos rápidos**: `MealModal`, `CorrectionModal` y `QuickNumericModal.tsx`
   (uno solo, para Basal y Cetonas). Breves a propósito, con salida al maestro.
-- `FoodCard.tsx` — la tarjeta de un alimento, **la misma** en catálogo y
-  carrito; solo cambia el control de la derecha (lápiz o X) y tocar el
-  contenedor no edita. Las calorías van en chip neutro: no son un macro. En el
-  catálogo los chips son **por porción**, y `macrosCaption` dice el
-  denominador: los mismos cinco números sobre otra base son otros cinco.
-- `RecipeFixModal.tsx` — la salida al "no se puede borrar", receta por receta,
-  **todo o nada**. `RecipeDetail.tsx` — el detalle, **en lugar de** la lista y
-  no encima; "Usar en una comida" la expande al carrito, una línea por componente.
+- `FoodCard.tsx` — la tarjeta de un alimento, **la misma** en catálogo y carrito;
+  solo cambia el control de la derecha (lápiz o X) y tocar el contenedor no edita.
+  Calorías en chip neutro: no son un macro. En el catálogo los chips son **por
+  porción** y `macrosCaption` dice el denominador: otra base, otros cinco números.
+- `RecipeFixModal.tsx` — la salida al "no se puede borrar", **todo o nada**.
+  `RecipeDetail.tsx` — el detalle, **en lugar de** la lista; "Usar en una
+  comida" la expande al carrito, una línea por componente.
+- `InsulinBreakdown.tsx` — de dónde sale la dosis propuesta, en los tres modales
+  que calculan: con IOB descontada el total ya no se rehace con lo que se ve.
 - `knownFoods.ts` — qué nombres del catálogo viajan con un análisis (solo
   nombres, máx. 300) para que la IA reuse el exacto y no nazca un duplicado.
 - `MealAiFields.tsx` — los **dos** cuadros de texto de la IA, en los tres
@@ -120,31 +123,28 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
   historial. `promotesLooseCarbToMeal` decide cuándo un carbohidrato suelto pasa
   a ser un plato — o sea cuándo nace un episodio y suenan alarmas.
 - `mealNote.ts` — la nota de una comida. `note` es `max(300)`: pasarse hace que Zod rechace la comida entera.
-- `mealCarbMirror.ts` — qué carbohidrato **es** una comida ya visible; de menos se cuenta dos veces en el reporte médico.
+- `mealCarbMirror.ts` — qué carbohidrato **es** una comida visible; de menos se cuenta dos veces.
 - `entryTime.ts` — días, meses y la hora de un registro histórico (y la
   aritmética de `StripCalendar.tsx`). "Cuándo pasó" agrupa episodios y recorta
   ventanas; sus casos son de calendario, no de vista.
 - `dbWriteQueue.ts` — la **única** cola FIFO por la que pasa toda transacción de
-  `db.ts`. Puro y con test. `expo-sqlite` abre el `BEGIN` dentro del `try`, así
-  que dos transacciones solapadas no fallan limpio: la segunda hace un
-  `ROLLBACK` ajeno y la primera termina escribiendo suelta. Dos colas no sirven;
-  contra una conexión se anidan igual. La tarea de fondo abre la suya
-  (`backgroundSync.ts`, `useNewConnection`).
+  `db.ts`. Puro y con test. `expo-sqlite` abre el `BEGIN` dentro del `try`: dos
+  transacciones solapadas no fallan limpio — la segunda hace un `ROLLBACK` ajeno
+  y la primera escribe suelta. Dos colas no sirven; contra una conexión se anidan
+  igual. La tarea de fondo abre la suya (`backgroundSync.ts`, `useNewConnection`).
 - `catalog-proposal.ts` (dominio) — qué propone la IA guardar al catálogo y
-  **qué se rechaza con su razón**; puro y con test. Escribir directo daba dos
-  fallas opuestas: alimentos descartados en silencio y porción siempre en 100 g.
-  `normalizationBasis` usa la porción típica de denominador cuando no hay gramos
-  del plato; `confirmProposal` marca lo confirmado `'user'`, que es lo que
+  **qué se rechaza con su razón**. Escribir directo daba dos fallas opuestas:
+  alimentos descartados en silencio y porción siempre en 100 g.
+  `confirmProposal` marca lo confirmado `'user'`, que es lo que
   `blendCatalogEntry` protege. Pantalla: `CatalogServingModal.tsx`.
-- `entryGroupClaim.ts` — promoción + edición como una sola transacción:
-  relectura del grupo ganador, alineación del espejo y rollback conjunto. Puro y
-  con tests de fallo, idempotencia y carrera; el adaptador SQLite lo pone `db.ts`.
+- `entryGroupClaim.ts` — promoción + edición en una sola transacción: relectura del
+  grupo ganador, alineación del espejo y rollback conjunto. Puro, con tests de fallo,
+  idempotencia y carrera; el adaptador SQLite lo pone `db.ts`.
 - En `db.ts`: `promoteEventToEntryGroup` (evento suelto → grupo, idempotente y
   sin perder identidad), `moveEntryGroupRows` (mover la hora, sin tocar
   `ingestedAt` ni una lectura externa) y `applyVitalsPatchRows` (parche, no
   reemplazo: corregir una cetona no borra el peso).
-- `theme.ts` — todos los tokens. `branding.ts` — el logo. `sensorConnection.ts` — cada usuaria conecta su propia cuenta LibreLinkUp.
+- `theme.ts` — los tokens. `branding.ts` — el logo. `sensorConnection.ts` — cada usuaria conecta su cuenta LibreLinkUp.
 
 ## `docs/adr`
-
 Append-only. `README.md` es el índice; nunca se renumera ni se borra un ADR.

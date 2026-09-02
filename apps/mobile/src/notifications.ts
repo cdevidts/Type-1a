@@ -531,7 +531,7 @@ export async function scheduleCorrectionReminder(timestamp: string, offsetMinute
   await Notifications.scheduleNotificationAsync({
     content: {
       title: `${look.emoji} Revisa tu glucosa tras la corrección · +${offsetMinutes} min`,
-      body: 'Revisa tu glucosa. Type 1A no calcula insulina activa: si hace poco te corregiste, tenlo en cuenta antes de una nueva dosis.',
+      body: 'Revisa tu glucosa antes de decidir otra dosis: la corrección anterior puede seguir actuando. La calculadora la descuenta si configuraste tu insulina rápida.',
       // Deliberately no `categoryIdentifier`/quick-action buttons here —
       // this is a checkpoint before a possible second dose, not a shortcut
       // to log one. Tapping opens the app to Corrección, which already

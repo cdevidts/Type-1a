@@ -8,6 +8,8 @@ export * from './freshness';
 export * from './glucose-metrics';
 export * from './glucose-thresholds';
 export * from './insulin-catalog';
+export * from './insulin-duration';
+export * from './iob';
 export * from './ketones';
 export * from './catalog-proposal';
 export * from './coverage';

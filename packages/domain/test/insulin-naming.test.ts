@@ -166,3 +166,29 @@ describe('resolveInsulinPurposeForEdit', () => {
     })).toBe('combined');
   });
 });
+
+describe('el nombre sale del catálogo cuando se eligió de la lista (2026-09-02)', () => {
+  // El bug: Ajustes guarda `rapidInsulinId`, y `rapidInsulinName` era un campo
+  // que ninguna pantalla llenaba. Quien elegía Fiasp de la lista veía "sin
+  // configurar" en Nueva entrada, y sus dosis quedaban guardadas sin marca.
+  it('deriva la marca del id elegido', () => {
+    expect(insulinNameForType({ rapidInsulinId: 'fiasp' }, 'rapid')).toBe('Fiasp');
+    expect(insulinNameForType({ basalInsulinId: 'tresiba' }, 'basal')).toBe('Tresiba');
+  });
+
+  it('lo escrito a mano manda sobre el catálogo', () => {
+    expect(insulinNameForType({ rapidInsulinId: 'fiasp', rapidInsulinName: 'La mía' }, 'rapid')).toBe('La mía');
+    // Un nombre en blanco no cuenta como escrito: cae al catálogo.
+    expect(insulinNameForType({ rapidInsulinId: 'fiasp', rapidInsulinName: '   ' }, 'rapid')).toBe('Fiasp');
+  });
+
+  it('no cruza categorías: una basal no se estampa como rápida', () => {
+    expect(insulinNameForType({ rapidInsulinId: 'tresiba' }, 'rapid')).toBeUndefined();
+    expect(insulinNameForType({ basalInsulinId: 'fiasp' }, 'basal')).toBeUndefined();
+  });
+
+  it('sin nada configurado sigue devolviendo undefined: no inventa un nombre', () => {
+    expect(insulinNameForType({}, 'rapid')).toBeUndefined();
+    expect(insulinNameForType({ rapidInsulinId: 'no-existe' }, 'rapid')).toBeUndefined();
+  });
+});

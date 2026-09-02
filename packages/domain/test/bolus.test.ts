@@ -105,3 +105,62 @@ describe('meal + correction bolus calculator', () => {
     expect(() => calculateMealBolus({ ...BASE, doseIncrement: 2, carbsG: 30 })).toThrow();
   });
 });
+
+describe('IOB: el bolo descuenta la insulina activa (2026-09-02)', () => {
+  const base = { carbsG: 60, carbRatio: 10, targetGlucose: 110, correctionFactor: 50, doseIncrement: 0.5 };
+
+  it('EL CASO QUE ORIGINÓ ESTO: la segunda comida no vuelve a corregir entera', () => {
+    // Comida chica + corrección a las 13:00 → deja ~2,7 U activas.
+    // Comida grande a las 13:05 con la glucosa todavía alta.
+    const sinIob = calculateMealBolus({ ...base, currentGlucose: 260 });
+    const conIob = calculateMealBolus({ ...base, currentGlucose: 260, activeInsulinUnits: 2.7 });
+    // Antes proponía la corrección completa otra vez: eso es stacking.
+    expect(sinIob.totalRawUnits).toBeCloseTo(9, 5);
+    expect(conIob.totalRawUnits).toBeCloseTo(6.3, 5);
+    expect(conIob.totalRoundedUnits).toBe(6.5);
+  });
+
+  it('LA REGLA DURA: el IOB sale de la corrección, NUNCA de la comida', () => {
+    // 60 g siguen necesitando sus 6 U aunque haya 10 U activas. Restarlas de
+    // los carbohidratos dejaría corta la cobertura del plato.
+    const result = calculateMealBolus({ ...base, currentGlucose: 110, activeInsulinUnits: 10 });
+    expect(result.mealUnits).toBe(6);
+    // La corrección era 0 y queda en −10, así que el total baja... pero por
+    // la corrección, no porque se haya tocado la comida.
+    expect(result.correctionUnits).toBe(0);
+    expect(result.correctionAfterActiveUnits).toBe(-10);
+  });
+
+  it('el total nunca baja de 0 por mucha insulina activa que haya', () => {
+    const result = calculateMealBolus({ ...base, currentGlucose: 120, activeInsulinUnits: 50 });
+    expect(result.totalRawUnits).toBe(0);
+    expect(result.totalRoundedUnits).toBe(0);
+  });
+
+  it('sin insulina configurada no se resta nada y el resultado es el de siempre', () => {
+    // "No sé cuánta hay activa" nunca puede convertirse en "hay 0".
+    const desconocido = calculateMealBolus({ ...base, currentGlucose: 200 });
+    const cero = calculateMealBolus({ ...base, currentGlucose: 200, activeInsulinUnits: 0 });
+    expect(desconocido.totalRawUnits).toBe(cero.totalRawUnits);
+    expect(desconocido.activeInsulinUnits).toBeUndefined();
+    expect(cero.activeInsulinUnits).toBe(0);
+  });
+
+  it('expone el desglose entero para que la pantalla pueda mostrarlo', () => {
+    const result = calculateMealBolus({ ...base, currentGlucose: 210, activeInsulinUnits: 1.5 });
+    expect(result.mealUnits).toBe(6);
+    expect(result.correctionUnits).toBe(2);
+    expect(result.activeInsulinUnits).toBe(1.5);
+    expect(result.correctionAfterActiveUnits).toBe(0.5);
+    expect(result.totalRawUnits).toBe(6.5);
+    expect(result.correctionFormula).toContain('1.5 U activas');
+  });
+
+  it('isBelowTarget sigue describiendo la GLUCOSA, no el resultado de la resta', () => {
+    // Estar en objetivo con insulina activa no es "estar bajo objetivo": son
+    // dos avisos distintos y la pantalla los dice distinto.
+    const result = calculateMealBolus({ ...base, currentGlucose: 110, activeInsulinUnits: 3 });
+    expect(result.isBelowTarget).toBe(false);
+    expect(result.correctionAfterActiveUnits).toBeLessThan(0);
+  });
+});

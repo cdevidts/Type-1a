@@ -7,11 +7,21 @@ const CorrectionInputSchema = z.object({
   targetGlucose: z.number().positive().finite(),
   correctionFactor: z.number().positive().finite(),
   doseIncrement: z.number().positive().max(1).finite(),
+  /**
+   * Insulina rápida que sigue actuando (`activeInsulinUnits` en `iob.ts`).
+   * Omitida = no se sabe, y entonces no se resta nada. Ver la nota de
+   * `bolus.ts`: sin insulina configurada el resultado es el de siempre.
+   */
+  activeInsulinUnits: z.number().nonnegative().max(100).finite().optional(),
 });
 
 export interface CorrectionResult {
   rawUnits: number;
   roundedUnits: number;
+  /** La corrección antes de descontar el IOB, para poder mostrar el desglose. */
+  beforeActiveUnits: number;
+  /** Lo descontado, o `undefined` si no se sabía cuánta insulina hay activa. */
+  activeInsulinUnits: number | undefined;
   isBelowTarget: boolean;
   /**
    * Glucose is in hypoglycemic range — a different situation from merely
@@ -45,14 +55,25 @@ export function roundToIncrement(value: number, increment: number): number {
  */
 export function calculateCorrection(input: z.input<typeof CorrectionInputSchema>): CorrectionResult {
   const parsed = CorrectionInputSchema.parse(input);
-  const raw = (parsed.currentGlucose - parsed.targetGlucose) / parsed.correctionFactor;
+  const beforeActive = (parsed.currentGlucose - parsed.targetGlucose) / parsed.correctionFactor;
+  // Acá sí se resta del total, porque acá el total **es** la corrección: no
+  // hay carbohidratos que cubrir. Sigue con piso en 0 — una corrección
+  // negativa no tiene nada que compensar, y ese es justo el caso en que ya
+  // tienes suficiente insulina actuando.
+  const raw = beforeActive - (parsed.activeInsulinUnits ?? 0);
   const nonNegativeRaw = Math.max(0, raw);
 
   return {
     rawUnits: nonNegativeRaw,
     roundedUnits: roundToIncrement(nonNegativeRaw, parsed.doseIncrement),
-    isBelowTarget: raw < 0,
+    beforeActiveUnits: beforeActive,
+    activeInsulinUnits: parsed.activeInsulinUnits,
+    // Describe la GLUCOSA, no el resultado de la resta: "estás bajo objetivo"
+    // y "ya tienes insulina de sobra" son dos cosas distintas y la pantalla
+    // las dice distinto.
+    isBelowTarget: beforeActive < 0,
     isHypoglycemic: isHypoglycemic(parsed.currentGlucose),
-    formula: `(${parsed.currentGlucose} − ${parsed.targetGlucose}) ÷ ${parsed.correctionFactor}`,
+    formula: `(${parsed.currentGlucose} − ${parsed.targetGlucose}) ÷ ${parsed.correctionFactor}`
+      + (parsed.activeInsulinUnits === undefined ? '' : ` − ${parsed.activeInsulinUnits} U activas`),
   };
 }

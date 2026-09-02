@@ -343,5 +343,5 @@ export function historicCalculatorWarning(glucoseTimestamp: string | null): stri
   const when = glucoseTimestamp === null ? 'de ese momento' : `del ${glucoseTimestamp}`;
   return `Este cálculo reconstruye lo que la fórmula habría dado con la glucosa ${when}. `
     + 'NO es una sugerencia para inyectarte ahora: sirve para anotar la dosis que te pusiste y no recordabas. '
-    + 'Tampoco descuenta insulina activa (IOB).';
+    + 'La insulina activa que descuenta es la de AHORA, no la de ese momento, así que el desglose es orientativo.';
 }

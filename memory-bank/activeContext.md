@@ -1,6 +1,43 @@
 # Active Context
 
-_Última actualización: 2026-09-02 (recetas de verdad, duplicados, el 502)._
+_Última actualización: 2026-09-02 (insulina activa y el desglose de cada dosis)._
+
+## Insulina activa (IOB), que era el riesgo mayor (2026-09-02)
+
+`AGENTS.md` prohibía IOB. Se levantó **a propósito** (`docs/adr/0005`) porque
+no tenerlo era peor: registrar una comida chica con corrección y otra comida
+cinco minutos después producía **dos correcciones completas** por la misma
+glucosa alta. La app proponía stacking con toda confianza. Lo encontró
+Verónica, y su argumento era más fuerte que la prohibición.
+
+Cinco condiciones, todas en el código: modelo publicado y citado
+(exponencial de LoopKit/OpenAPS, `iob.ts`), parámetros que ella configuró,
+resta **solo de la mitad de corrección** —los carbohidratos llevan siempre su
+dosis completa—, desglose entero en pantalla (`InsulinBreakdown.tsx`), y sin
+insulina elegida **no hay estimación**: `undefined`, no cero.
+
+Además, cada dosis ahora **guarda de cuánto se compuso** (`mealUnits`,
+`correctionUnits`, `iobUnits`) y lo muestra: en el detalle del evento, en el
+reporte del día y en el Excel. Antes `purpose` decía para qué fue una dosis y
+nadie guardaba su composición — etiquetar no es desglosar.
+
+**Duración por tramo horario.** `insulin-duration.ts` mide en correcciones
+aisladas cuánto dura de verdad su insulina en madrugada / mañana / tarde /
+noche (mediana, mínimo 3 episodios por tramo) y lo propone en Resumen →
+Insulina. **Adoptar es de ella**, nunca automático: `AGENTS.md` prohíbe
+inferir parámetros de terapia. Adoptado, ese tramo cambia la curva a esa hora.
+
+Dos cosas salieron de la revisión clínica hecha a mano (el subagente se cortó
+por límite de gasto de la cuenta):
+
+- **La ventana de dosis no cubría el modelo.** La consulta traía 6 h fijas y la
+  regular humana dura 8. Una dosis de hace 7 h quedaba fuera, el activo salía
+  de menos, y el activo de menos **sube** la dosis propuesta. Ahora la ventana
+  se deriva del modelo y el rótulo la dice.
+- **Seis pantallas prometían que la app no calcula insulina activa.** Una vivía
+  en la pantalla que ahora sí descuenta; otra iba impresa en el reporte al
+  equipo clínico. Ninguna prueba lo detectó: una promesa vieja no rompe nada,
+  solo miente. `safetyCopy.test.ts` es el test que faltaba.
 
 ## Lo que cambió el foco
 
@@ -35,54 +72,13 @@ por una sola cola FIFO (`dbWriteQueue.ts`).
 ## El catálogo y los campos de IA (2026-09-01)
 
 **Faltaba saber cuánto pesa una porción**: una Monster Zero no llegaba al
-catálogo (`toCatalogEntry` exigía `estimatedGrams`, que el prompt devuelve
-`null` cuando no puede estimar) y todo lo demás quedaba en 100 g. Ahora la IA
-propone `servingGrams`/`servingLabel`, `CatalogServingModal` lo confirma y lo
-rechazado se muestra **con su razón**. Confirmar lo vuelve `'user'`, y solo
-otro `'user'` lo reemplaza. Además: nota del botón rápido (`mealNote.ts`,
-techo 300), calorías en chip neutro, fotos desde el editor del catálogo.
-
-`MealAiFields.tsx` separa la **pista para la foto** de la **corrección sobre
-lo ya propuesto** (sin reenviar la imagen), en los tres modales. Adoptar una
-propuesta invalida la dosis. Y la cobertura de días volvió a verse en 30 y 90:
-`coverage.ts` separa "cuánto está cubierto" de "alcanza para la HbA1c".
-
-## Recetas, ahora sí completas (2026-09-02)
-
-Verónica probó el build y encontró que "completas" era generoso. Cuatro cosas:
-
-**"Solo receta" listaba los alimentos igual.** La elección escribía las filas
-—una receta no guarda macros, los deriva— pero nada las distinguía de "las dos
-cosas". Ahora `food_catalog.listed` (ausente = visible): un componente oculto
-no aparece en la grilla ni en el buscador, sale a la luz desde el detalle de
-la receta, `blendCatalogEntry` hace OR (visible gana) y `deleteRecipe` borra
-los ocultos que ninguna otra receta use, porque nadie más podría.
-
-**Duplicados: "pata de pollo" al lado de "muslo de pollo".** La heurística no
-puede saberlo y no debe adivinarlo. Dos mitades: ella **fusiona a mano** desde
-la confirmación (`mergeInto`: hereda clave y nombre del existente, macros de
-la propuesta; el parecido por nombre viene preseleccionado y visible — antes
-el texto prometía la fusión y no la hacía), y la IA recibe `knownFoodNames`
-—solo nombres, máx. 300— para reusar el exacto cuando es el mismo alimento,
-con el freno escrito: otro corte o preparación es otro alimento. Esa mitad
-espera redeploy (prompts de comida v3).
-
-**El detalle de una receta no existía.** `RecipeDetail.tsx`, en lugar de la
-lista y no encima: totales con la misma fila de chips de la tarjeta, cada
-componente con sus gramos **en este plato** editables, agregar y quitar, foto,
-nombre, borrar, y "Usar en una comida", que la expande al carrito **una línea
-por componente** (`recipeToCartLines`) para que la porción siga siendo por
-alimento. El carrito también la encuentra al buscar.
-
-**Los componentes ya no heredan la foto del plato** cuando hay receta: era el
-bug que originó todo el módulo.
-
-⚠️ **Las fotos daban 502 y no era el proxy.** `route-llm` reparte por tamaño
-—las chicas a un GPT, las grandes a Gemini— y el validador de Gemini habla
-OpenAPI 3.0, donde `exclusiveMinimum` no existe suelto. El
-`z.number().positive()` de `servingGrams` bastó para romper todas las fotos. La
-lista de palabras filtradas tenía cuatro de cinco; ahora un test enumera lo que
-**sobrevive**, y encontró `default` antes de que llegara al teléfono.
+catálogo y todo lo demás quedaba en 100 g. Ahora la IA propone `servingGrams`,
+`CatalogServingModal` lo confirma, y lo rechazado se muestra con su razón.
+Confirmar lo vuelve `'user'`, y solo otro `'user'` lo reemplaza. Además:
+nota del botón rápido, calorías en chip neutro, fotos desde el editor.
+`MealAiFields` separa la pista para la foto de la corrección sobre lo
+propuesto, en los tres modales. Y la cobertura de días volvió a verse en 30 y
+90 (`coverage.ts`).
 
 ## Porción, fibra y la hora del resumen (2026-09-01)
 

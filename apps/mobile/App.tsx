@@ -21,7 +21,7 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import {
-  basalInsulinLookbackMinutes,
+  rapidInsulinActionModel,  basalInsulinLookbackMinutes,
   buildReportRows,
   buildCatalogProposals,
   type CatalogProposalSet,
@@ -131,7 +131,9 @@ import {
   getPendingInsulinAssociations,
   createDecodeTally,
   deleteSensorReadings,
+  DEFAULT_RAPID_LOOKBACK_HOURS,
   getRecentRapidInsulin,
+  type ProfileInsulinNames,
   getReminderAlertStyle,
   getSetting,
   getTherapyProfile,
@@ -211,6 +213,8 @@ function Type1AApp() {
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
   const [recentRapid, setRecentRapid] = useState<InsulinEvent[]>([]);
   const [recentRapidUnreadable, setRecentRapidUnreadable] = useState(0);
+  /** Cuántas horas cubre `recentRapid`: la lista lo dice y no puede mentir. */
+  const [recentRapidWindowHours, setRecentRapidWindowHours] = useState(DEFAULT_RAPID_LOOKBACK_HOURS);
   const [readingsUnreadable, setReadingsUnreadable] = useState(0);
   const [profileUnreadable, setProfileUnreadable] = useState(false);
   const [pendingAssociations, setPendingAssociations] = useState<PendingInsulinAssociation[]>([]);
@@ -327,7 +331,26 @@ function Type1AApp() {
     setProfileUnreadable(nextProfile.kind === 'unreadable');
     setProfile(nextProfile.kind === 'ok' ? nextProfile.profile : PLACEHOLDER_THERAPY_PROFILE);
     setTherapyConfigured(nextProfile.kind === 'ok' && configured);
-    setRecentRapid(rapid);
+    // La ventana de 6 h alcanza para el panel de contexto con cualquier
+    // análoga (3-5 h), pero NO siempre para la insulina activa: con regular
+    // humana (8 h), o con una duración más larga escrita a mano o adoptada
+    // por tramo, una dosis fuera de esa ventana **todavía está actuando**.
+    // Dejarla fuera hace que el activo salga de menos, y el activo de menos
+    // empuja la dosis propuesta hacia ARRIBA. Es el error que este trabajo
+    // existe para evitar, así que la ventana se ensancha a lo que exige el
+    // modelo. Solo se conoce con el perfil ya cargado, de ahí la segunda
+    // lectura; sale gratis en el caso normal, donde no ocurre.
+    const iobModel = nextProfile.kind === 'ok'
+      ? rapidInsulinActionModel(nextProfile.profile)
+      : undefined;
+    const neededHours = iobModel === undefined ? 0 : Math.ceil(iobModel.durationMinutes / 60);
+    const rapidWindowHours = Math.max(DEFAULT_RAPID_LOOKBACK_HOURS, neededHours);
+    setRecentRapid(
+      rapidWindowHours <= DEFAULT_RAPID_LOOKBACK_HOURS
+        ? rapid
+        : await getRecentRapidInsulin(db, undefined, rapidWindowHours, rapidTally),
+    );
+    setRecentRapidWindowHours(rapidWindowHours);
     setRecentRapidUnreadable(rapidTally.unreadable);
     setShowGlucoseOnLockScreen(privacy === 'true');
     setPendingAssociations(pending);
@@ -499,11 +522,21 @@ function Type1AApp() {
   }, [refresh, openQuickRoute]);
 
 
-  async function registerCorrection(units: number): Promise<void> {
+  async function registerCorrection(dose: {
+    units: number;
+    correctionUnits: number;
+    iobUnits: number | undefined;
+  }): Promise<void> {
     const timestamp = new Date().toISOString();
     // Una corrección SÍ es una fila suelta legítima: no pertenece a ninguna
     // comida, y marcarla con `purpose: 'correction'` es justamente lo que
     // permite después distinguirla del bolo de un plato.
+    //
+    // El desglose se guarda además de la etiqueta: `purpose` dice para qué
+    // fue, `correctionUnits`/`iobUnits` dicen de cuánto se compuso. Sin eso,
+    // mirando la fila mañana no hay forma de saber por qué la app propuso 2 U
+    // y no 3,5.
+    const { units } = dose;
     await saveInsulinEvent(db, {
       id: Crypto.randomUUID(),
       timestamp,
@@ -512,6 +545,8 @@ function Type1AApp() {
       source: 'manual',
       createdAt: timestamp,
       purpose: 'correction',
+      correctionUnits: dose.correctionUnits,
+      ...(dose.iobUnits === undefined ? {} : { iobUnits: dose.iobUnits }),
       ...(insulinNameForType(profile, 'rapid') === undefined
         ? {}
         : { insulinName: insulinNameForType(profile, 'rapid')! }),
@@ -1087,10 +1122,14 @@ function Type1AApp() {
    * `resolveInsulinNameForEdit` en `packages/domain`. La app no infiere
    * ninguno: si no hay configuración, el registro se guarda sin nombre.
    */
-  function profileInsulinNames(): { rapidInsulinName?: string; basalInsulinName?: string } {
+  function profileInsulinNames(): ProfileInsulinNames {
     return {
       ...(profile.rapidInsulinName === undefined ? {} : { rapidInsulinName: profile.rapidInsulinName }),
       ...(profile.basalInsulinName === undefined ? {} : { basalInsulinName: profile.basalInsulinName }),
+      // Los ids van también: es de donde sale el nombre cuando ella eligió su
+      // insulina de la lista en vez de escribirla.
+      ...(profile.rapidInsulinId === undefined ? {} : { rapidInsulinId: profile.rapidInsulinId }),
+      ...(profile.basalInsulinId === undefined ? {} : { basalInsulinId: profile.basalInsulinId }),
     };
   }
 
@@ -1464,6 +1503,7 @@ function Type1AApp() {
         therapyConfigured={therapyConfigured}
         recentRapid={recentRapid}
         recentRapidUnreadable={recentRapidUnreadable}
+        recentRapidWindowHours={recentRapidWindowHours}
         onClose={() => { setQuickRoute(null); }}
         onSaveProfile={async (nextProfile) => {
           // Deliberately not `markConfigured` — see saveTherapyProfile.
@@ -1484,6 +1524,8 @@ function Type1AApp() {
         profile={profile}
         therapyConfigured={therapyConfigured}
         catalogFoods={catalogFoods}
+        recentRapid={recentRapid}
+        {...(rapidInsulinActionModel(profile) === undefined ? {} : { actionModel: rapidInsulinActionModel(profile)! })}
         recipes={recipes}
         onClose={() => { setMasterMode(null); }}
         onOpenTherapySettings={() => { setMasterMode(null); setSettingsOpen(true); }}
@@ -1525,6 +1567,7 @@ function Type1AApp() {
         onClose={() => { setMealOpen(false); setMealPreset(null); }}
         onConfirm={confirmMeal}
         catalogFoods={catalogFoods}
+        recentRapid={recentRapid}
         recipes={recipes}
         presetCartLines={mealPreset}
         carbRatio={profile.carbRatio}
@@ -1534,6 +1577,14 @@ function Type1AApp() {
         doseIncrement={profile.doseIncrement}
       />
       <SettingsModal
+        onClearSegmentDuration={async (segment) => {
+          const current = { ...(profile.segmentDurationHours ?? {}) };
+          delete current[segment];
+          const next: TherapyProfile = { ...profile, segmentDurationHours: current };
+          if (Object.keys(current).length === 0) delete next.segmentDurationHours;
+          await saveTherapyProfile(db, next);
+          setProfile(next);
+        }}
         visible={settingsOpen}
         onClose={() => { setSettingsOpen(false); }}
         status={status}
@@ -1631,6 +1682,22 @@ function Type1AApp() {
         }}
       />
       <SummaryModal
+        therapy={profile}
+        onAdoptSegmentDuration={async (segment, hours) => {
+          // La app mide y propone; fijar el parámetro es un acto de ella.
+          // `null` quita el override y devuelve el tramo a la duración
+          // general, que es la salida de "me arrepentí".
+          const current = { ...(profile.segmentDurationHours ?? {}) };
+          if (hours === null) delete current[segment];
+          else current[segment] = hours;
+          // Sin ningún tramo, la propiedad se quita del objeto en vez de
+          // quedar en `{}`: con `exactOptionalPropertyTypes`, "no hay
+          // overrides" es la ausencia del campo, no un objeto vacío.
+          const next: TherapyProfile = { ...profile, segmentDurationHours: current };
+          if (Object.keys(current).length === 0) delete next.segmentDurationHours;
+          await saveTherapyProfile(db, next);
+          setProfile(next);
+        }}
         visible={summaryOpen}
         onClose={() => { setSummaryOpen(false); }}
         onLoadSummary={loadSummary}

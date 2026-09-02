@@ -16,6 +16,7 @@ tomó; su valor está justamente en que sobrevive a la decisión.
 | [0002](0002-ai-boundary.md) | La IA interpreta; el código determinístico calcula | Accepted (2026-08-12) |
 | [0003](0003-shared-food-catalog.md) | Catálogo de alimentos compartido — el backend gana estado, acotado | Accepted (2026-08-21) |
 | [0004](0004-cgm-provider-librelinkup.md) | LibreLinkUp es la ruta de CGM; Junction queda como alternativa | Accepted (2026-08-26) |
+| [0005](0005-insulin-on-board.md) | Insulina activa (IOB): se levanta la prohibición, con cinco condiciones | Accepted (2026-09-02) |
 
 ## Cuándo escribir uno
 
