@@ -30,9 +30,9 @@ El "no se puede guardar" sumaba dos causas: la tarea de fondo recibía la **mism
 conexión nativa** que la pantalla (Android cachea por ruta+opciones) y le corría
 un `BEGIN` encima cada ~15 min, y `refresh()` escribe CGM en cada vuelta a
 primer plano. No fallaba limpio porque `expo-sqlite` pone el `BEGIN` **dentro**
-del `try`: la segunda falla al abrir y su `catch` ejecuta un `ROLLBACK` **ajeno**
+del `try`: la segunda falla al abrir y su `catch` hace un `ROLLBACK` **ajeno**
 mientras la primera sigue escribiendo suelta. Hoy el fondo abre con
-`useNewConnection` y **toda** transacción de `db.ts` pasa por una sola cola FIFO
+`useNewConnection` y **toda** transacción pasa por una sola cola FIFO
 (`dbWriteQueue.ts`): dos colas contra una conexión se anidan igual.
 
 ## El catálogo, cerrado en cuatro frentes (2026-09-01)
@@ -40,22 +40,19 @@ mientras la primera sigue escribiendo suelta. Hoy el fondo abre con
 **El grande: faltaba saber cuánto pesa una porción**, con dos síntomas opuestos.
 Una Monster Zero no llegaba al catálogo —`toCatalogEntry` exigía
 `estimatedGrams` y el prompt le pide devolverlo `null` cuando no puede estimar
-la porción— y todo lo demás quedaba con porción de 100 g. Ahora la IA propone
-`servingGrams` y `servingLabel`, eso sirve de denominador cuando no hay gramos
-del plato, y `CatalogServingModal` lo muestra para confirmar antes de guardar.
-Lo rechazado se muestra **con su razón**: un descarte silencioso es un dato
-perdido que nadie va a buscar.
+la porción— y todo lo demás quedaba en 100 g. Ahora la IA propone `servingGrams`
+y `servingLabel`, y `CatalogServingModal` lo muestra para confirmar. Lo
+rechazado se muestra **con su razón**: un descarte silencioso es un dato perdido
+que nadie va a buscar.
 
-Se confirma en vez de aplicarse solo porque la porción multiplica los cuatro
-macros. Confirmar lo vuelve dato de la usuaria (`servingSource: 'user'`) y
-`blendCatalogEntry` protege eso: **solo otro `'user'` lo reemplaza**, o cada
-foto nueva le borraría su "una taza son 150 g". Una fila sin `servingSource` se
-trata como suya, porque lo es.
+Se confirma porque la porción multiplica los cuatro macros. Confirmar la vuelve
+dato de la usuaria (`servingSource: 'user'`) y `blendCatalogEntry` protege eso:
+**solo otro `'user'` lo reemplaza**, o cada foto nueva le borraría su "una taza
+son 150 g". Una fila sin `servingSource` se trata como suya, porque lo es.
 
 Y tres huecos chicos: **la nota del botón rápido** (`mealNote.ts` respeta el
 techo de 300 del esquema, donde pasarse hace que Zod rechace la comida entera),
-**calorías en chip neutro** —un quinto hue categórico habría exigido revalidar
-la paleta— y **fotos desde el editor del catálogo**.
+**calorías en chip neutro** y **fotos desde el editor del catálogo**.
 
 ## Los dos cuadros de texto de la IA, y la cobertura (2026-09-01)
 
@@ -95,11 +92,10 @@ mezcla macros de dos alimentos y eso sugiere carbohidratos sin delatarse.
 aceite aparecía con 100 g de grasa, y son esos números los que después sugieren
 carbohidratos. La leyenda dice el denominador.
 
-**La fibra tiene meta**, la decisión que faltaba: 14 g por cada 1000 kcal, la
-Ingesta Adecuada del IOM que la ADA recomienda también en diabetes. Es un
-**piso, no un techo** —su barra dice "por sobre la referencia", no "te
-pasaste"— y **no se descuenta de los carbohidratos**: los "carbohidratos netos"
-los define el equipo tratante, no una meta de nutrición.
+**La fibra tiene meta**, la decisión que faltaba: 14 g por cada 1000 kcal (IOM,
+respaldada por la ADA en diabetes). Es un **piso, no un techo** —su barra dice
+"por sobre la referencia", no "te pasaste"— y **no se descuenta de los
+carbohidratos**: los "netos" los define el equipo tratante.
 
 **El resumen post-comida citaba la hora en UTC.** El timeline siempre estuvo
 bien porque formatea en la zona del teléfono; las métricas viajaban al modelo en
@@ -112,6 +108,11 @@ Lo que crece con eso es **lo que el modelo puede decir**: una hora en UTC no
 significaba nada sobre su vida y una local sí, así que el mismo cambio le
 prohíbe juzgar o aconsejar la hora de comer y `ai-safety.ts` lo respalda en
 estructura. Describir cuándo pasó algo sigue pasando; "cena más temprano", no.
+
+**Y dos bugs viejos del botón rápido.** La dosis se escribía sin
+`entryGroupId` —el timeline agrupa solo por esa columna, así que la app volvía
+a preguntar qué dosis fue con qué comida—, y si esa escritura fallaba el aviso
+de éxito la pisaba: se cerraba la app creyendo que la dosis había quedado.
 
 ⚠️ Nada desde el build `9bdc3d95` está en el teléfono: falta un `preview`.
 
@@ -131,15 +132,14 @@ estructura. Describir cuándo pasó algo sigue pasando; "cena más temprano", no
 ## Backlog de producto priorizado
 
 1. **Reportes PDF más ricos**: legibilidad, **iconografía** y una síntesis
-   clínica al cierre. Una conclusión describe lo que pasó, **nunca** evalúa si
-   una dosis fue adecuada (`contracts/safety-acceptance.md`), y las marcas
-   nuevas no pueden distinguirse solo por color. El Excel va en el mismo cambio.
+   clínica al cierre. Una conclusión describe lo que pasó, **nunca** evalúa una
+   dosis (`contracts/safety-acceptance.md`), y las marcas nuevas no pueden
+   distinguirse solo por color. El Excel va en el mismo cambio.
 2. **Los tres hallazgos declarados del 2026-08-27** y **los cuatro vivos de la
    repuntada**: ver `progress.md`. El del `source` de un carbohidrato importado
    necesita decisión de producto.
-3. **Chat de IA**, sin construir. Antes, los imports `.js` de `@type1a/ai`
-   (`progress.md` § Bomba): el día que `apps/mobile` dependa de ese paquete, el
-   bundle rompe.
+3. **Chat de IA**, sin construir. No hay endpoint ni tool calling, y falta
+   confirmar si RouteLLM lo soporta — preguntado a DeepAgent junto al redeploy.
 
 ## Fuera de foco pero pendiente
 

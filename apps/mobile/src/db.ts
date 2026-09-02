@@ -918,10 +918,25 @@ async function writeMirrorCarbRow(db: SQLiteDatabase, meal: MealEvent, entryGrou
   }, entryGroupId);
 }
 
-export async function saveMealWithEpisode(db: SQLiteDatabase, meal: MealEvent): Promise<string> {
+/**
+ * Una comida con su episodio, por el camino del botón rápido.
+ *
+ * `entryGroupId` es opcional pero **el llamador debería darlo siempre que la
+ * comida venga acompañada de algo más** —una dosis, típicamente—. El timeline
+ * agrupa exclusivamente por esa columna: sin ella, la comida y su insulina se
+ * dibujan como dos hechos sueltos que pasaron a la misma hora, y la app vuelve
+ * a preguntar qué dosis fue con qué comida, que es justo lo que la Fase 21
+ * dijo que eliminaba. `saveUnifiedEntry` (el maestro) ya lo hacía; este camino
+ * no, y por eso la asimetría se notaba solo desde el acceso rápido.
+ */
+export async function saveMealWithEpisode(
+  db: SQLiteDatabase,
+  meal: MealEvent,
+  entryGroupId?: string,
+): Promise<string> {
   let episodeId = '';
   await serializedTransaction(db, async () => {
-    episodeId = await writeMealWithEpisode(db, meal);
+    episodeId = await writeMealWithEpisode(db, meal, entryGroupId);
   });
   return episodeId;
 }

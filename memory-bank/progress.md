@@ -25,8 +25,8 @@ divergir, **la medición manda sobre la tabla**. `pnpm verify` corre, en orden:
 - 2026-09-01 (`6f1c2cd`, build `9bdc3d95`): porción confirmada, nota del botón
   rápido, calorías, fotos desde el editor y recetas.
 
-**Sin build**: campos de IA separados, cobertura de días, macros por porción en
-el catálogo, meta de fibra y la hora local del resumen.
+**Sin build**: campos de IA separados, cobertura de días, macros por porción,
+meta de fibra, hora local del resumen y el grupo de la comida rápida.
 
 ## Deuda conocida
 
@@ -39,20 +39,19 @@ explota solo porque `apps/mobile/package.json` no depende de `@type1a/ai`;
 dependa de ese paquete —el chat de IA— el bundle rompe. `verify:bundle` lo
 atraparía, pero la causa sigue ahí y cuesta tres líneas.
 
-### 🔴 Cuatro hallazgos vivos de la revisión repuntada (2026-08-26)
+### 🔴 Dos hallazgos vivos de la revisión repuntada (2026-08-26)
 
 Del `domain-safety-reviewer` contra `d868ece` y `c4ca192`. Los dos que
-corrompían datos ya están cerrados; estos siguen abiertos:
+corrompían datos y los dos del guardado de comida ya están cerrados; siguen
+abiertos los dos de `macro-glucose.ts`:
 
 1. **La basal es invisible al modelo** (`macro-glucose.ts:281-287`, sin rama
    para `basal_insulin`): 20 U de Tresiba no entran como covariable.
 2. **Cantidad ausente = "no pasó nada"** (`event.amount ?? 0` con `> 0`): una
    comida real sin carbos confirmados desaparece del conteo.
-3. **Un fallo al registrar la insulina se pisa con "Comida guardada"**
-   (`App.tsx:620` y `:636`): cierra la app creyendo que la dosis quedó.
-4. **La insulina de la comida se escribe sin `entryGroupId`** (`App.tsx:608`):
-   el timeline agrupa solo por esa columna, así que después vuelve a preguntar
-   qué dosis fue con qué comida — lo que la Fase 21 dijo que eliminaba.
+
+Cerrados el 2026-09-01: el fallo de la insulina que se pisaba con "Comida
+guardada", y la dosis del botón rápido escrita sin `entryGroupId`.
 
 Menores: `MealModal` no recibe glucosa (`isHypoglycemic` nunca dispara); las
 unidades se descartan al apagar "Registrarla como comida de ahora";
@@ -81,8 +80,7 @@ en el mismo commit; quedan tres, declarados a propósito:
 ### 🟡 Menores
 
 - **Ni la UI ni `db.ts` tienen test de ejecución**: el repo no monta React y
-  `db.ts` importa nativos de Expo. Cada decisión vive en un módulo puro con
-  test; el cableado se comprobó leyendo el diff.
+  `db.ts` importa nativos de Expo. El cableado se comprobó leyendo el diff.
 - Una escritura **suelta** (`runAsync` fuera de transacción) puede caer dentro de
   la transacción de otro y volver atrás con ella. Ventana angosta y de bajo daño
   —ajustes, no historial—; cerrarla exige encolar también las sueltas.
@@ -142,6 +140,8 @@ detalle vive en `git log --format=full`.
 | El resumen post-comida citaba "empezó a las 21:30" para una comida de las 17:30: la app guarda UTC, el timeline formatea local y las métricas viajaban a la IA en UTC crudo | lo que sale a un tercero lleva su zona escrita; y el desfase se pide **por marca**, porque el horario de verano existe |
 | Una meta de fibra copiada del molde de las otras habría dicho "te pasaste" al superarla | una referencia es un piso o un techo, y el texto tiene que saber cuál: pasarse de fibra es lo que se buscaba |
 | Mandar la hora **local** al modelo no agregó un campo, pero sí volvió citable un dato sobre su vida: con UTC no podía juzgar a qué hora cenaba, con hora de pared sí | el filtro crece cuando crece lo que el modelo **puede decir**, no solo cuando crece el payload |
+| El aviso de éxito corría siempre y pisaba al de "no se pudo registrar la insulina": se cerraba la app creyendo que la dosis había quedado | un `catch` que solo escribe un mensaje no arregla nada si el camino feliz lo reemplaza después; el fallo se lleva a la decisión final, no a un `setState` intermedio |
+| El botón rápido guardaba la comida y su dosis **sin `entryGroupId`**, y el timeline agrupa solo por esa columna | una facultad que el maestro tiene y el acceso rápido no es una asimetría, no una simplificación — tercera vez que muerde |
 
 ## Redeploy del backend
 

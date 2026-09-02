@@ -705,13 +705,25 @@ function Type1AApp() {
       return;
     }
 
-    const episodeId = await saveMealWithEpisode(db, meal);
+    // Un id de grupo compartido por las dos filas que este guardado produce.
+    // El timeline agrupa **solo** por esta columna: sin ella la comida y su
+    // dosis quedan como dos hechos sueltos de la misma hora, y la app vuelve
+    // a preguntar cuál fue con cuál. `saveUnifiedEntry` (el maestro) ya lo
+    // hacía desde siempre; el botón rápido no, y esa asimetría era el bug.
+    //
+    // Se mintea aunque no haya dosis, igual que en el maestro: si mañana se
+    // edita la comida para agregarle una, la dosis se suma a ESTE grupo en
+    // vez de abrir uno segundo y desconectado.
+    const entryGroupId = Crypto.randomUUID();
+    const episodeId = await saveMealWithEpisode(db, meal, entryGroupId);
 
     // La insulina de esta comida va con el MISMO timestamp que la comida.
     // Es el arreglo estructural de la Fase 21: el botón "Rápida" suelto
     // escribía una fila con su propia hora, y por eso el emparejamiento
     // insulina↔comida fallaba. Va después de guardar la comida y en su propio
-    // try: si falla la dosis, lo comido ya quedó registrado.
+    // try: si falla la dosis, lo comido ya quedó registrado, y agregarla
+    // después es una edición retroactiva que el maestro ya soporta.
+    let insulinFailed = false;
     if (draft.rapidUnits !== undefined) {
       try {
         await saveInsulinEvent(db, {
@@ -725,10 +737,10 @@ function Type1AApp() {
           ...(insulinNameForType(profile, 'rapid') === undefined
             ? {}
             : { insulinName: insulinNameForType(profile, 'rapid')! }),
-        });
+        }, entryGroupId);
       } catch (error) {
         logSaveError('App.confirmMealInsulin', error);
-        setNotice('La comida quedó guardada, pero no se pudo registrar la insulina.');
+        insulinFailed = true;
       }
     }
 
@@ -744,7 +756,19 @@ function Type1AApp() {
       proposeCatalog(draft.analysis, timestamp, draft.imageUri);
     }
     await scheduleEpisodeNotifications(episodeId, timestamp, mealAlarmOffsets, reminderAlertStyle);
-    setNotice(`Comida guardada. El episodio se completará con CGM a ${mealAlarmOffsets.map((minutes) => `+${minutes}`).join(', ')} minutos.`);
+    // El aviso de éxito NO puede pisar el del fallo de la insulina.
+    //
+    // Ese era el bug: el `catch` de arriba ponía "no se pudo registrar la
+    // insulina" y esta línea, que corría siempre, lo reemplazaba por "Comida
+    // guardada" antes de que alcanzara a leerse. Se cerraba la app creyendo
+    // que la dosis había quedado — y una dosis que se cree registrada y no lo
+    // está es peor que no haber intentado guardarla.
+    //
+    // El texto dice qué pasó y qué hacer (`contracts/ux-checklist.md`): lo
+    // comido está a salvo, falta la dosis, y se agrega editando la comida.
+    setNotice(insulinFailed
+      ? 'La comida quedó guardada, pero NO se pudo registrar la insulina. Ábrela desde el timeline y agrégala con "Editar".'
+      : `Comida guardada. El episodio se completará con CGM a ${mealAlarmOffsets.map((minutes) => `+${minutes}`).join(', ')} minutos.`);
     await loadLocalState();
   }
 
