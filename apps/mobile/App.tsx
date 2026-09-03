@@ -1089,7 +1089,7 @@ function Type1AApp() {
 
   async function exportReport(range: { from: Date; to: Date }): Promise<ReportExport> {
     const tally = createDecodeTally();
-    const [readings, insulin, carbs, meals, activities, notes, vitals, hba1c] = await Promise.all([
+    const [readings, insulin, carbs, meals, activities, notes, vitals, hba1c, water] = await Promise.all([
       getCGMReadings(db, range.from, range.to, tally),
       getInsulinEvents(db, range.from, range.to, tally),
       getCarbEvents(db, range.from, range.to, tally),
@@ -1098,6 +1098,7 @@ function Type1AApp() {
       getNoteEvents(db, range.from, range.to),
       getVitalsEvents(db, range.from, range.to),
       getHbA1cResults(db, range.from, range.to),
+      getWaterEvents(db, range.from, range.to, tally),
     ]);
     return {
       readings,
@@ -1106,7 +1107,7 @@ function Type1AApp() {
       meals,
       // Ver la nota de `loadSummary`: solo para descartar confundidos.
       activity: activities,
-      rows: buildReportRows({ readings, insulin, carbs, meals, activities, notes, vitals, hba1c }),
+      rows: buildReportRows({ readings, insulin, carbs, meals, activities, notes, vitals, hba1c, water }),
       // El reporte va al control médico: los promedios que imprime tienen que
       // excluir lo confundido con el mismo criterio que la app en pantalla.
       rapidLookbackMinutes: rapidInsulinLookbackMinutes(profile),
@@ -1550,6 +1551,11 @@ function Type1AApp() {
             Icon={GlassWater}
             color={colors.blue}
             soft="#E3EFF7"
+            // Ancho completo: son cinco botones en una grilla de dos columnas,
+            // así que el quinto dejaba media fila vacía. Va último y ancho
+            // porque es el de menor consecuencia clínica de los cinco — el
+            // peso visual sigue el orden de importancia, no el de llegada.
+            wide
             onPress={() => { setQuickNumeric('water'); }}
           />
         </View>
@@ -1927,6 +1933,7 @@ function QuickButton({
   Icon,
   color,
   soft,
+  wide = false,
   onPress,
 }: {
   label: string;
@@ -1941,11 +1948,18 @@ function QuickButton({
   Icon: ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
   color: string;
   soft: string;
+  /** Ocupa la fila entera. Para el último de una grilla impar. */
+  wide?: boolean;
   onPress: () => void;
 }) {
   return (
     <Pressable
-      style={({ pressed }) => [styles.quickButton, { backgroundColor: soft }, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.quickButton,
+        wide && styles.quickButtonWide,
+        { backgroundColor: soft },
+        pressed && styles.pressed,
+      ]}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={`${label}. ${hint}`}
@@ -2003,6 +2017,7 @@ const styles = StyleSheet.create({
   sectionSubtitle: { color: colors.muted, fontSize: 13, marginTop: 2 },
   syncing: { color: colors.teal, fontSize: 11, fontWeight: '700' },
   quickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
+  quickButtonWide: { width: '100%', minHeight: 84 },
   quickButton: {
     width: '48%',
     minHeight: 112,

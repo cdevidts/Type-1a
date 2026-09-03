@@ -178,6 +178,26 @@ export const MIN_WATER_TARGET_ML = 1200;
 export const MAX_WATER_TARGET_ML = 6000;
 
 /**
+ * Los tamaños de vaso que la interfaz ofrece con un toque.
+ *
+ * Viven acá y no en cada modal porque estaban escritos **tres veces** y ya
+ * habían divergido: el maestro ofrecía 200/250/500, el modal de Comida
+ * 250/500 y el acceso rápido 200/250/500/750. Es la misma disciplina que la
+ * Regla 1 —una decisión, un sitio— aunque acá lo que se rompe sea la
+ * consistencia y no un número clínico.
+ *
+ * **No son una recomendación de cuánto beber**: son los recipientes que
+ * existen de verdad. Un campo vacío en el que hay que teclear "250" cada vez
+ * es cómo un registro deja de hacerse.
+ */
+export const WATER_PRESETS_ML: readonly { ml: number; label: string }[] = [
+  { ml: 200, label: '200 mL' },
+  { ml: 250, label: 'un vaso' },
+  { ml: 500, label: 'medio litro' },
+  { ml: 750, label: 'una botella' },
+];
+
+/**
  * Meta diaria de agua bebida, en mL.
  *
  * Sale de una referencia **poblacional**, no de esta persona: el IOM la fijó

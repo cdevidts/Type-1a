@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { assessKetones } from '@type1a/domain';
+import { assessKetones, WATER_PRESETS_ML } from '@type1a/domain';
 
 import { parseBlankAsUnsetPositive, parseNonNegativeNumber } from '../format';
 import { logSaveError } from '../log';
@@ -70,12 +70,7 @@ const COPY: Record<QuickNumericKind, {
     placeholder: '—',
     hint: 'Solo agua. Un jugo o una bebida con azúcar tienen carbohidratos: esos van en Comida, con su dosis.',
     cta: 'Guardar agua',
-    presets: [
-      { ml: 200, label: '200 mL' },
-      { ml: 250, label: 'un vaso' },
-      { ml: 500, label: 'medio litro' },
-      { ml: 750, label: 'una botella' },
-    ],
+    presets: WATER_PRESETS_ML,
   },
   ketones: {
     title: 'Cetonas',

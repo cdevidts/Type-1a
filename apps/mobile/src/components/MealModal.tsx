@@ -14,6 +14,7 @@ import {
   type Recipe,
   type CatalogFood,
   waterEstimateIsTrustworthy,
+  WATER_PRESETS_ML,
 } from '@type1a/domain';
 import type { InsulinEvent, MealAnalysisResult } from '@type1a/schemas';
 
@@ -1111,12 +1112,6 @@ export function MealModal({
   );
 }
 
-
-/** Los mismos vasos que el maestro y el acceso rápido: no se reinventan. */
-const WATER_PRESETS_ML = [
-  { ml: 250, label: 'un vaso' },
-  { ml: 500, label: 'medio litro' },
-] as const;
 
 const styles = StyleSheet.create({
   waterBlock: {

@@ -190,6 +190,11 @@ export function observeCorrectionEpisode(input: CorrectionEpisodeInput): Correct
   if (endMs - startMs < MIN_WINDOW_MINUTES * 60_000) return null;
 
   const series = [...input.readings]
+    // Sin datos sintéticos, igual que `insulin-effect-curve`, `glucose-metrics`,
+    // `agp`, `nutrition-insights` y el reporte PDF. Una duración medida sobre
+    // glucosa del modo demo se puede **adoptar**, y adoptarla alimenta el IOB:
+    // sería un dato de mentira decidiendo cuánta insulina se descuenta.
+    .filter((reading) => reading.origin !== 'synthetic')
     .map((reading) => ({
       ms: Date.parse(reading.sourceTimestamp),
       glucose: convertGlucose(reading.glucose, reading.unit, 'mg/dL'),

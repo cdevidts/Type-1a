@@ -384,11 +384,17 @@ function TodayTab({
       />
     );
   }
-  if (data === null || (data.dayMeals.length === 0 && data.dayCarbs.length === 0)) {
+  // El agua cuenta como contenido del día. Sin esto, un día con 2 litros
+  // registrados y sin comidas caía al estado vacío y **la barra de agua no se
+  // veía**: el dato se guardaba, sumaba a la meta, y no había dónde mirarlo.
+  // Es la falla que esta app ya tuvo con las cetonas sueltas.
+  const hasAnything = data !== null
+    && (data.dayMeals.length > 0 || data.dayCarbs.length > 0 || data.dayWater.length > 0);
+  if (!hasAnything) {
     return (
       <EmptyState
-        title="Sin comidas registradas este día"
-        body="Registra una comida y aparecerá acá con sus carbohidratos, proteína, grasa y fibra. Para anotar algo de un día pasado, usa el botón + con ese día seleccionado."
+        title="Sin registros este día"
+        body="Registra una comida y aparecerá acá con sus carbohidratos, proteína, grasa y fibra; el agua que anotes también. Para algo de un día pasado, usa el botón + con ese día seleccionado."
       />
     );
   }
@@ -430,6 +436,16 @@ function TodayTab({
           </Text>
         ) : null}
       </View>
+
+      {data.dayMeals.length === 0 && data.dayCarbs.length === 0 ? (
+        // Un día solo de agua: los macros en cero son ciertos pero no dicen
+        // nada, y una barra vacía se lee como "no llegaste" en vez de "no
+        // anotaste". Se declara la diferencia.
+        <Text style={styles.dayNote}>
+          Todavía no registraste comidas este día, así que los macros de abajo están en cero porque no hay nada
+          anotado — no porque no hayas comido.
+        </Text>
+      ) : null}
 
       <MacroBar label="Carbohidratos" eatenG={totals.carbsG} targetG={targets.carbsG} color={macroColors.carbs} />
       <MacroBar label="Proteína" eatenG={totals.proteinG} targetG={targets.proteinG} color={macroColors.protein} />
@@ -1014,6 +1030,10 @@ const styles = StyleSheet.create({
   macroTrack: { height: 8, borderRadius: 4, backgroundColor: colors.line, overflow: 'hidden' },
   macroFill: { height: '100%', borderRadius: 4 },
   macroOver: { color: colors.muted, fontSize: 11, marginTop: 4 },
+  dayNote: {
+    color: colors.muted, fontSize: 12, lineHeight: 17,
+    marginHorizontal: spacing.lg, marginTop: spacing.md,
+  },
   waterCard: {
     backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.line,
     padding: spacing.md, marginHorizontal: spacing.lg, marginTop: spacing.md,

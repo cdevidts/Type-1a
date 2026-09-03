@@ -16,6 +16,7 @@ import {
   type CatalogFood,
   type Recipe,
   waterEstimateIsTrustworthy,
+  WATER_PRESETS_ML,
 } from '@type1a/domain';
 import type { CGMReading, InsulinEvent, MealAnalysisResult, MealEvent, TherapyProfile } from '@type1a/schemas';
 
@@ -1746,19 +1747,6 @@ export function UnifiedEntryModal({
     </ModalShell>
   );
 }
-
-/**
- * Los tamaños de vaso que se suman con un toque.
- *
- * No son una recomendación de cuánto beber: son los recipientes que existen
- * de verdad. Un campo vacío en el que hay que teclear "250" cada vez es cómo
- * un registro deja de hacerse.
- */
-const WATER_PRESETS_ML = [
-  { ml: 200, label: '200 mL' },
-  { ml: 250, label: 'un vaso' },
-  { ml: 500, label: 'medio litro' },
-] as const;
 
 const styles = StyleSheet.create({
   waterPresetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },

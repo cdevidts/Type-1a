@@ -8,6 +8,7 @@ import type {
   MealEvent,
   NoteEvent,
   VitalsEvent,
+  WaterEvent,
 } from '@type1a/schemas';
 
 /**
@@ -30,6 +31,7 @@ export type ReportRowKind =
   | 'activity'
   | 'note'
   | 'vitals'
+  | 'water'
   | 'hba1c';
 
 export interface ReportRow {
@@ -54,6 +56,15 @@ export interface ReportInput {
   meals: MealEvent[];
   activities: ActivityEvent[];
   notes: NoteEvent[];
+  /**
+   * Agua bebida. Entra al reporte porque la hidratación es contexto clínico
+   * real —y en tipo 1 la sed excesiva puede ser un síntoma de hiperglucemia—,
+   * así que un día de 4 litros al lado de unas glucosas altas dice algo que
+   * un día de 800 mL no dice.
+   *
+   * Opcional para no romper a quien construya un `ReportInput` sin ella.
+   */
+  water?: WaterEvent[];
   vitals: VitalsEvent[];
   hba1c: HbA1cLabResult[];
 }
@@ -72,6 +83,16 @@ function eventProvenance(source: 'manual' | 'imported' | 'meal_confirmed'): stri
     case 'manual': return 'Manual';
     case 'imported': return 'Importado';
     case 'meal_confirmed': return 'Confirmado en comida';
+  }
+}
+
+function waterProvenance(source: WaterEvent['source']): string {
+  switch (source) {
+    case 'manual': return 'Manual';
+    case 'quick': return 'Manual';
+    case 'ai_photo': return 'Estimado por IA (foto)';
+    case 'ai_text': return 'Estimado por IA (texto)';
+    case 'imported': return 'Importado';
   }
 }
 
@@ -194,6 +215,19 @@ export function buildReportRows(input: ReportInput): ReportRow[] {
       kindLabel: 'Nota',
       detail: note.text,
       provenance: eventProvenance(note.source),
+    });
+  }
+
+  for (const water of input.water ?? []) {
+    rows.push({
+      timestamp: water.timestamp,
+      kind: 'water',
+      kindLabel: 'Agua',
+      detail: `${water.ml} mL`,
+      // La procedencia distingue lo que estimó la IA de lo que ella escribió,
+      // igual que en el resto del reporte: un volumen que produjo un modelo no
+      // puede llegar al equipo clínico como un dato medido.
+      provenance: waterProvenance(water.source),
     });
   }
 

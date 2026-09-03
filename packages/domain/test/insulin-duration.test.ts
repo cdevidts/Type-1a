@@ -340,3 +340,21 @@ describe('observeCorrectionsFrom — qué episodio cuenta ahora', () => {
     expect(summary.segments.find((s) => s.segment === 'noche')!.episodeCount).toBe(1);
   });
 });
+
+describe('la glucosa sintética no mide su insulina (auditoría 2026-09-03)', () => {
+  it('un episodio de modo demo no produce una duración adoptable', () => {
+    // Esta cifra se puede **adoptar**, y adoptarla alimenta el IOB: sería un
+    // dato de mentira decidiendo cuánta insulina se descuenta de cada
+    // corrección. Todo el resto del dominio ya excluía `synthetic`; la
+    // duración observada era el hueco.
+    const at = new Date(2026, 8, 3, 9, 0).toISOString();
+    const real = series(at, [250, 232, 212, 194, 176, 160, 150, 143, 138, 144, ...flat(146, 26)]);
+    const synthetic = real.map((reading) => ({ ...reading, origin: 'synthetic' as const }));
+    const dose: InsulinEvent = {
+      id: 'd1', timestamp: at, type: 'rapid', units: 3, source: 'manual', createdAt: at,
+    } as InsulinEvent;
+
+    expect(observeCorrectionsFrom({ insulin: [dose], meals: [], readings: real })).toHaveLength(1);
+    expect(observeCorrectionsFrom({ insulin: [dose], meals: [], readings: synthetic })).toHaveLength(0);
+  });
+});
