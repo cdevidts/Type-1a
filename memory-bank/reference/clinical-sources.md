@@ -1,15 +1,15 @@
 # Fuentes — de dónde sale cada constante
 
-Se lee al **cambiar una constante clínica**, no en cada corrida. Si vas a mover
-un umbral, una duración de insulina o una meta, la cita que lo respalda está
-acá; si no está, no se cambia el número.
+Se lee al **cambiar una constante clínica**, no en cada corrida. Si vas a mover un
+umbral, una duración de insulina o una meta, la cita que lo respalda está acá; si
+no está, no se cambia el número.
 
 ## Duración de acción de las insulinas
 
 Respaldan `packages/domain/src/insulin-catalog.ts`. Sirven para higiene de datos
-—si una dosis anterior podía estar actuando dentro de un episodio— y, desde el
-2026-09-02, alimentan la curva de insulina activa (abajo). Nunca fijan una dosis
-sola: lo que calculan se resta de la corrección y se muestra desglosado.
+—si una dosis anterior podía estar actuando dentro de un episodio— y alimentan la
+curva de insulina activa (abajo). Nunca fijan una dosis sola: lo que calculan se
+resta de la corrección y se muestra desglosado.
 
 - [Cleveland Clinic — Injectable insulin medications](https://my.clevelandclinic.org/health/drugs/13902-injectable-insulin-medications):
   inicio/pico/duración por insulina. De ahí salen lispro (Humalog), aspart
@@ -25,14 +25,12 @@ sola: lo que calculan se resta de la corrección y se muestra desglosado.
   lispro.
 
 **Por qué el extremo alto del rango** (5 h y no 4, 42 h y no 40): para marcar un
-episodio como confundido conviene errar por exceso. Marcar de más cuesta precisión
-—y el `n` se muestra en pantalla y en el reporte—; marcar de menos publica como
-patrón un promedio contaminado, que es el daño que esto existe para evitar.
+episodio confundido conviene errar por exceso. Marcar de más cuesta precisión —el
+`n` se muestra—; de menos publica como patrón un promedio contaminado.
 
 **Y por qué las elige la usuaria y no la app**: `AGENTS.md` prohíbe inferir
-parámetros de terapia. Estos números son el dato del fabricante, no una
-estimación de la app sobre esa persona, y se sobrescriben con lo que haya
-indicado su equipo clínico.
+parámetros de terapia. Son el dato del fabricante, no una estimación sobre esa
+persona, y se sobrescriben con lo que indique su equipo clínico.
 
 ## Insulina activa (IOB) — curva exponencial
 
@@ -45,7 +43,11 @@ Picos (presets de Loop): análogas rápidas 75 min, aceleradas 55, regular 150.
 
 Se eligió sobre la lineal porque la insulina no se agota a ritmo constante: una
 recta sobreestima lo activo temprano y lo subestima tarde. Las cinco condiciones
-bajo las que la app puede usarlo están en `docs/adr/0005`.
+para usarlo están en `docs/adr/0005`.
+
+## Duración observada de la insulina, por tramo del día
+`insulin-duration.ts`. El método, sus fuentes y **por qué la primera versión no
+mostró un solo dato** están en `reference/insulin-duration-method.md`.
 
 ## Umbrales de glucosa
 
@@ -112,10 +114,9 @@ cualquier dato que no venga en formato fácil"*.
 | Patrones (grasa+proteína) | promedio mg/dL | se **conserva** y se le descuenta por OLS el aporte de los confusores; se declara `n`, cuántos traían eventos, y si está ajustado |
 | Comidas (% en rango) | porcentaje | un porcentaje no se residualiza, así que se **cuenta y se declara** (`confoundedCount`) junto al número |
 
-Lo único que saca un episodio del cálculo es **no tener lecturas de glucosa**.
+Lo único que saca un episodio es **no tener lecturas de glucosa**.
 
 ## CGM — LibreLinkUp, LibreView, Junction
-
 Contexto de `docs/adr/0004-cgm-provider-librelinkup.md`.
 
 - [Junction — Abbott LibreView provider guide](https://docs.junction.com/wearables/guides/abbott-libreview)
@@ -127,7 +128,6 @@ Contexto de `docs/adr/0004-cgm-provider-librelinkup.md`.
   `timoschlueter/nightscout-librelink-up`.
 
 ## UX y fatiga de alarma
-
 Respaldan `reference/ux-rationale.md` y `contracts/ux-checklist.md`.
 
 - Apple HIG — [Layout](https://developers.apple.com/design/human-interface-guidelines/foundations/layout/),

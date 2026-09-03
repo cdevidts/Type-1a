@@ -4,11 +4,10 @@ _Última actualización: 2026-09-02 (insulina activa y el desglose de cada dosis
 
 ## Insulina activa (IOB), que era el riesgo mayor (2026-09-02)
 
-`AGENTS.md` prohibía IOB. Se levantó **a propósito** (`docs/adr/0005`) porque
-no tenerlo era peor: registrar una comida chica con corrección y otra comida
-cinco minutos después producía **dos correcciones completas** por la misma
-glucosa alta. La app proponía stacking con toda confianza. Lo encontró
-Verónica, y su argumento era más fuerte que la prohibición.
+`AGENTS.md` prohibía IOB. Se levantó **a propósito** (`docs/adr/0005`) porque no
+tenerlo era peor: una comida chica con corrección y otra comida cinco minutos
+después producían **dos correcciones completas** por la misma glucosa alta. La
+app proponía stacking con toda confianza. Lo encontró Verónica.
 
 Cinco condiciones, todas en el código: modelo publicado y citado
 (exponencial de LoopKit/OpenAPS, `iob.ts`), parámetros que ella configuró,
@@ -16,16 +15,13 @@ resta **solo de la mitad de corrección** —los carbohidratos llevan siempre su
 dosis completa—, desglose entero en pantalla (`InsulinBreakdown.tsx`), y sin
 insulina elegida **no hay estimación**: `undefined`, no cero.
 
-Además, cada dosis ahora **guarda de cuánto se compuso** (`mealUnits`,
-`correctionUnits`, `iobUnits`) y lo muestra: en el detalle del evento, en el
-reporte del día y en el Excel. Antes `purpose` decía para qué fue una dosis y
-nadie guardaba su composición — etiquetar no es desglosar.
+Cada dosis **guarda de cuánto se compuso** (`mealUnits`, `correctionUnits`,
+`iobUnits`) y lo muestra: en el detalle del evento, en el reporte del día y en el
+Excel. Antes `purpose` decía para qué fue y nadie guardaba su composición.
 
-**Duración por tramo horario.** `insulin-duration.ts` mide en correcciones
-aisladas cuánto dura de verdad su insulina en madrugada / mañana / tarde /
-noche (mediana, mínimo 3 episodios por tramo) y lo propone en Resumen →
-Insulina. **Adoptar es de ella**, nunca automático: `AGENTS.md` prohíbe
-inferir parámetros de terapia. Adoptado, ese tramo cambia la curva a esa hora.
+**Duración por tramo horario.** `insulin-duration.ts` mide cuánto dura su
+insulina en madrugada / mañana / tarde / noche (mediana, mínimo 3 episodios) y lo
+propone en Resumen → Insulina. **Adoptar es de ella**, nunca automático.
 
 Dos cosas salieron de la revisión clínica hecha a mano (el subagente se cortó
 por límite de gasto de la cuenta):
@@ -38,6 +34,14 @@ por límite de gasto de la cuenta):
   en la pantalla que ahora sí descuenta; otra iba impresa en el reporte al
   equipo clínico. Ninguna prueba lo detectó: una promesa vieja no rompe nada,
   solo miente. `safetyCopy.test.ts` es el test que faltaba.
+
+**La pestaña salió vacía igual (2026-09-03).** El filtro pedía correcciones
+aisladas sin otra rápida en 8 h: con múltiples dosis diarias esa ventana no
+existe despierto, así que solo la madrugada podía calificar. Ahora cuenta toda
+dosis rápida, la ventana se recorta en la siguiente, la bajada se mide desde el
+máximo (un bolo de comida sube antes de bajar) y los carbohidratos son
+covariable. **Comparar y adoptar son cifras distintas**: adoptar usa solo
+episodios sin comida. Ver `reference/insulin-duration-method.md`.
 
 ## Lo que cambió el foco
 

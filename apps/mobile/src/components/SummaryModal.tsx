@@ -465,15 +465,22 @@ function InsulinTab({
     <View>
       <Text style={styles.sectionTitle}>Cuánto dura tu insulina, en tus datos</Text>
       <Text style={styles.sectionHint}>
-        Mide cuánto tardó tu glucosa en dejar de bajar después de cada corrección aislada — sin comida cerca y
-        sin otra dosis encima, que son los únicos episodios donde la bajada se puede atribuir a la insulina.
-        Últimos {rangeDays} días · {summary.totalEpisodes} {summary.totalEpisodes === 1 ? 'episodio' : 'episodios'} utilizables.
+        Mide, después de <Text style={styles.noteStrong}>cada dosis rápida</Text> —de comida o de corrección—,
+        cuánto tardó tu glucosa en dejar de bajar y en qué momento bajó más rápido. La ventana se recorta en la
+        dosis siguiente en vez de descartar el episodio.
+        {' '}Últimos {rangeDays} días · {summary.totalEpisodes} {summary.totalEpisodes === 1 ? 'episodio' : 'episodios'} utilizables
+        {summary.cleanEpisodes === summary.totalEpisodes
+          ? ', ninguno con comida en la ventana'
+          : `, ${summary.cleanEpisodes} sin comida en la ventana`}.
+        {summary.adjusted
+          ? ' Las medianas están descontadas por los carbohidratos y las unidades de cada episodio.'
+          : ' Las medianas son crudas: todavía no hay muestra para descontar el efecto de los carbohidratos.'}
       </Text>
 
       {summary.totalEpisodes === 0 ? (
         <Text style={styles.empty}>
-          Todavía no hay correcciones aisladas suficientes en este rango. Aparecen solas cuando te corriges sin
-          comer cerca y el sensor alcanza a registrar la bajada. Prueba con un rango más largo.
+          Todavía no hay episodios medibles en este rango. Hace falta que entre una dosis y la siguiente pasen al
+          menos 2 h con lecturas del sensor, y que la glucosa baje al menos 15 mg/dL. Prueba con un rango más largo.
         </Text>
       ) : null}
 
@@ -493,21 +500,36 @@ function InsulinTab({
             </View>
             <Text style={styles.segmentMeta}>
               {segment.episodeCount} {segment.episodeCount === 1 ? 'episodio' : 'episodios'}
+              {segment.cleanCount === segment.episodeCount ? '' : ` (${segment.cleanCount} sin comida)`}
               {segment.medianMinutes === undefined
                 ? ` · hacen falta ${MIN_EPISODES_PER_SEGMENT} para publicar una mediana`
                 : segment.rangeMinutes === undefined
                   ? ''
                   : ` · entre ${hoursText(segment.rangeMinutes.min)} y ${hoursText(segment.rangeMinutes.max)}`}
+              {segment.medianPeakMinutes === undefined
+                ? ''
+                : ` · bajó más rápido a los ${segment.medianPeakMinutes} min`}
               {override === undefined ? '' : ` · estás usando ${override} h en este tramo`}
             </Text>
-            {segment.medianMinutes === undefined ? null : (
+            {segment.cleanMedianMinutes === undefined ? (
+              segment.medianMinutes === undefined ? null : (
+                // Se ve el número para comparar tramos, pero no se puede
+                // adoptar: la mediana ajustada conserva el aporte medio de la
+                // comida, y adoptarla metería la digestión dentro de la
+                // duración de la insulina.
+                <Text style={styles.segmentMeta}>
+                  Para poder usarlo como tu duración hacen falta {MIN_EPISODES_PER_SEGMENT} episodios
+                  {' '}sin comida en la ventana; en este tramo hay {segment.cleanCount}.
+                </Text>
+              )
+            ) : (
               <View style={styles.segmentActions}>
                 <Pressable
                   style={[styles.segmentButton, busy !== null && styles.disabled]}
                   disabled={busy !== null}
                   accessibilityRole="button"
                   onPress={() => {
-                    const hours = Number((segment.medianMinutes! / 60).toFixed(1));
+                    const hours = Number((segment.cleanMedianMinutes! / 60).toFixed(1));
                     setBusy(segment.segment);
                     setMessage(null);
                     void onAdoptSegment(segment.segment, hours)
@@ -516,7 +538,7 @@ function InsulinTab({
                       .finally(() => { setBusy(null); });
                   }}
                 >
-                  <Text style={styles.segmentButtonText}>Usar {hoursText(segment.medianMinutes)} en este tramo</Text>
+                  <Text style={styles.segmentButtonText}>Usar {hoursText(segment.cleanMedianMinutes)} en este tramo</Text>
                 </Pressable>
                 {override === undefined ? null : (
                   <Pressable
@@ -548,12 +570,17 @@ function InsulinTab({
         <Text style={styles.noteText}>
           Es cuándo dejó de verse el efecto en <Text style={styles.noteStrong}>tu</Text> glucosa, que llega antes
           que el final teórico de la insulina en la ficha técnica. No es una medición de laboratorio: la
-          absorción cambia con el sitio de inyección, la temperatura y el ejercicio.
+          absorción cambia con el sitio de inyección, la temperatura y el ejercicio. Un episodio con comida
+          adentro mide la insulina menos los carbohidratos; por eso los carbohidratos entran como covariable y
+          la pantalla dice arriba si el descuento se pudo aplicar o no.
           {configuredHours === undefined
             ? ' Todavía no tienes una duración configurada en Ajustes → Terapia, así que la app no descuenta insulina activa de ninguna dosis.'
             : ` Hoy usas ${configuredHours} h como duración general.`}
         </Text>
         <Text style={styles.noteWarning}>
+          La cifra que se compara entre tramos y la que se puede adoptar no son la misma: para adoptar solo se
+          usan los episodios sin comida en la ventana, porque la mediana ajustada conserva el aporte medio de la
+          comida y adoptarla metería la digestión dentro de la duración de tu insulina.{'\n\n'}
           Adoptar una duración cambia cuánta insulina activa se descuenta de tus correcciones, o sea la dosis que
           la app te propone. Es tu decisión y conviene conversarla con tu equipo clínico. Type 1A nunca la cambia
           sola.

@@ -6,14 +6,14 @@ _Última actualización: 2026-09-02._
 
 | | |
 |---|---|
-| `pnpm verify` | Verde; el wrapper local de Windows conserva su fallo de rutas preexistente. CI Linux es la verificación integral |
-| Tests | **818** — domain 500, mobile 260, ai 25, schemas 13, cgm 10, api 10 |
+| `pnpm verify` | Verde; el wrapper local de Windows conserva su fallo de rutas. CI Linux es la verificación integral |
+| Tests | **829** — domain 511, mobile 260, ai 25, schemas 13, cgm 10, api 10 |
 | Bundle de Metro | **1.367 módulos** medidos (+3: `iob`, `insulin-duration`, `InsulinBreakdown`) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
-⚠️ La base del último build es **1.367**; si vuelve a divergir, **la medición
-manda sobre la tabla**. `pnpm verify` corre, en orden: `verify:contracts`,
-`lint`, `typecheck`, `test`, `verify:bundle` (Metro real).
+⚠️ La base del último build es **1.367**; si diverge, **la medición manda sobre
+la tabla**. `pnpm verify` corre: `verify:contracts`, `lint`, `typecheck`, `test`,
+`verify:bundle` (Metro real).
 
 ## Entregado y en el dispositivo
 
@@ -42,7 +42,6 @@ explota solo porque `apps/mobile/package.json` no depende de `@type1a/ai`; el d�
 que dependa —el chat de IA— el bundle rompe. Cuesta tres líneas.
 
 ### 🔴 Dos hallazgos vivos de la revisión repuntada (2026-08-26)
-
 Del `domain-safety-reviewer` contra `d868ece` y `c4ca192`. Cerrados los que
 corrompían datos y los del guardado de comida; siguen abiertos los dos de
 `macro-glucose.ts`:
@@ -85,7 +84,7 @@ en el mismo commit; quedan tres, declarados a propósito:
 
 Cada uno costó un build, una corrida o un número falso; detalle en `git log`.
 
-| Fallo | Regla que produjo |
+| Fallo | Regla |
 |---|---|
 | `.js` en imports relativos rompió 2 builds con verify en verde | `verify:bundle` obligatorio |
 | Barrel de Lucide: 1.263 → 3.088 módulos | subpath obligatorio, canario de bundle |
@@ -143,8 +142,9 @@ Cada uno costó un build, una corrida o un número falso; detalle en `git log`.
 | La lista de palabras que el saneado filtra tenía **cuatro de las cinco** que importaban, y nada lo delataba | se enumera lo que **sobrevive** contra una lista blanca, no lo que se filtra: así una palabra nueva falla en el test y no en el teléfono |
 | Seis pantallas prometían "Type 1A no calcula insulina activa" el día que empezó a calcularla; una en la pantalla que descuenta, otra impresa en el reporte clínico | una promesa vieja no rompe nada, solo miente: la copia de seguridad se afirma en un test (`safetyCopy.test.ts`) igual que el saneado |
 | La consulta de dosis recientes traía 6 h fijas; la regular humana dura 8, así que el activo salía **de menos** — y el activo de menos sube la dosis propuesta | una ventana que alimenta un cálculo se deriva del modelo, nunca de una constante escrita al lado |
+| La pestaña de Insulina salió VACÍA: pedía correcciones aisladas sin otra rápida en 8 h, ventana que con múltiples dosis diarias no existe despierto. Segunda vez que se comete el mismo error, después de Patrones | truncar y ajustar, nunca obviar — y la prueba de que un filtro no es demasiado estricto es un test con **un día normal** adentro, no con el caso ideal |
 
 ## Redeploy del backend
-`30a87fa` está desplegado. **Falta desplegar `fd3ad1a`**: sin él las fotos
-siguen dando 502 (`exclusiveMinimum`). También lleva `knownFoodNames`. Prompt
-en `docs/DEEPAGENT_REDEPLOY_PROMPT.md`.
+`30a87fa` está desplegado. **Falta desplegar `fd3ad1a`**: sin él las fotos siguen
+dando 502 (`exclusiveMinimum`). También lleva `knownFoodNames`. Prompt en
+`docs/DEEPAGENT_REDEPLOY_PROMPT.md`.

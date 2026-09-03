@@ -59,7 +59,7 @@ Puro, determinístico, con test. **Ningún `.tsx` calcula una métrica de salud.
 | `recipe.ts` | una receta y sus componentes. **Los totales se derivan, nunca se guardan**: corregir un alimento corrige todas las recetas que lo usan. Redondea igual que el carrito a propósito |
 | `catalog-similarity.ts` | qué alimento del catálogo ya cubre uno recién identificado. **Solo propone**: emparejar mal mezcla macros de dos alimentos y eso sugiere carbohidratos sin delatarse |
 | `iob.ts` | insulina activa: curva exponencial de LoopKit/OpenAPS. Se descuenta **solo de la corrección**, nunca de la comida. Sin insulina configurada devuelve `undefined`, no cero. Ver `docs/adr/0005` |
-| `insulin-duration.ts` | cuánto dura de verdad su insulina, medido en correcciones aisladas y agrupado por tramo del día. Mide y propone; **adoptar es de la usuaria** |
+| `insulin-duration.ts` | cuánto dura y cuándo pega su insulina, por tramo del día, sobre **toda** dosis rápida: ventana recortada en la siguiente, carbohidratos como covariable. Comparar y adoptar son cifras distintas. Ver `reference/insulin-duration-method.md` |
 | `coverage.ts` | cuánto del rango elegido tiene datos. Separa "faltan días" (descriptivo) de "no alcanza para la HbA1c estimada" (clínico, 14 días de consenso) |
 | `report.ts`, `units.ts`, `ketones.ts`, `meal.ts`, `mysugr-import.ts` | reporte, conversión, cetonas, comida, importación |
 
