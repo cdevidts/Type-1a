@@ -13,6 +13,7 @@ import {
   type CartLine,
   type Recipe,
   type CatalogFood,
+  waterEstimateIsTrustworthy,
 } from '@type1a/domain';
 import type { InsulinEvent, MealAnalysisResult } from '@type1a/schemas';
 
@@ -57,6 +58,16 @@ export interface ConfirmedMealDraft {
    * ella: la calculadora solo aplica su propio `carbRatio`.
    */
   rapidUnits?: number;
+  /**
+   * Agua bebida junto con esta comida, en mL.
+   *
+   * Llega precargada cuando la IA vio un vaso en la foto o lo leyó en la
+   * descripción, y ella la revisa antes de confirmar — lo estimado por IA no
+   * se guarda solo, igual que los macros.
+   */
+  waterMl?: number;
+  /** Cómo llegó ese volumen. Ausente = lo escribió ella. */
+  waterFromAi?: 'photo' | 'text';
   imageUri?: string;
   analysis?: MealAnalysisResult;
   /**
@@ -174,6 +185,9 @@ export function MealModal({
 }) {
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<MealAnalysisResult | null>(null);
+  /** Agua de esta comida, en mL. La IA la precarga; ella la confirma. */
+  const [waterMl, setWaterMl] = useState('');
+  const [waterFromAi, setWaterFromAi] = useState<'photo' | 'text' | null>(null);
   const [description, setDescription] = useState('');
   /** Corrección sobre la propuesta ya hecha. Ver `MealAiFields`. */
   const [instruction, setInstruction] = useState('');
@@ -203,6 +217,7 @@ export function MealModal({
   const [doseBreakdown, setDoseBreakdown] = useState<{
     mealUnits: number;
     correctionUnits: number;
+    activeInsulinAppliedUnits?: number | undefined;
     activeInsulinUnits: number | undefined;
     activeDoseCount: number;
     totalUnits: number;
@@ -307,6 +322,7 @@ export function MealModal({
         ...(description.trim() === '' ? {} : { description: description.trim() }),
       });
       setAnalysis(nextAnalysis);
+      adoptWaterFrom(nextAnalysis, 'photo');
       prefillMacrosFrom(nextAnalysis);
       setMessage('Estimación lista: proteína, grasa y fibra quedaron precargadas y puedes corregirlas. Los carbohidratos los confirmas tú.');
     } catch (error) {
@@ -400,6 +416,7 @@ export function MealModal({
     try {
       const nextAnalysis = await analyzeMealDescription(description.trim(), knownFoodNamesFrom(catalogFoods));
       setAnalysis(nextAnalysis);
+      adoptWaterFrom(nextAnalysis, 'text');
       prefillMacrosFrom(nextAnalysis);
       setMessage('Estimación lista desde el texto (sin foto, la incertidumbre es mayor). Proteína, grasa y fibra quedaron precargadas y puedes corregirlas; los carbohidratos los confirmas tú.');
     } catch (error) {
@@ -439,6 +456,8 @@ export function MealModal({
         },
       });
       setAnalysis(next);
+      // Una corrección se escribe con palabras: la procedencia es texto.
+      adoptWaterFrom(next, 'text');
       prefillMacrosFrom(next);
       setInstruction('');
       setMessage('Propuesta corregida. Revísala: los carbohidratos los confirmas tú, y una dosis calculada antes ya no corresponde.');
@@ -451,6 +470,42 @@ export function MealModal({
     } finally {
       setBusy(false);
     }
+  }
+
+
+  /**
+   * El agua del formulario, en mL. `null` = el campo está vacío o el texto no
+   * es un número; nunca un `NaN` que tumbe el guardado de la comida entera.
+   */
+
+  /**
+   * El agua que la IA vio o leyó se **precarga** en el campo, visible y
+   * editable — nunca se guarda sola: es la misma regla que rige los macros
+   * estimados. Solo si el campo está vacío: un análisis posterior no pisa un
+   * número que ella ya escribió.
+   */
+  function adoptWaterFrom(next: MealAnalysisResult, origin: 'photo' | 'text'): void {
+    const detected = next.estimate.waterMl;
+    if (detected === null || detected === undefined) return;
+    if (waterMl.trim() !== '') return;
+    // Filtro estructural además del prompt: un jugo mal clasificado se lleva
+    // sus carbohidratos del registro y de la dosis. Ver `ai-safety.ts`.
+    const trusted = waterEstimateIsTrustworthy({
+      waterMl: detected,
+      foodNames: next.estimate.foods.map((food) => food.name),
+      ...(description.trim() === '' ? {} : { description: description.trim() }),
+    });
+    if (!trusted) return;
+    setWaterMl(String(Math.round(detected)));
+    setWaterFromAi(origin);
+  }
+
+  function parsedWaterMl(): number | null {
+    const text = waterMl.trim();
+    if (text === '') return null;
+    const parsed = Number(text.replace(',', '.'));
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return Math.round(parsed);
   }
 
   async function confirm(): Promise<void> {
@@ -518,6 +573,8 @@ export function MealModal({
         ...(protein === undefined ? {} : { proteinG: protein }),
         ...(fat === undefined ? {} : { fatG: fat }),
         ...(fiber === undefined ? {} : { fiberG: fiber }),
+        ...(parsedWaterMl() === null ? {} : { waterMl: parsedWaterMl()! }),
+        ...(waterFromAi === null || parsedWaterMl() === null ? {} : { waterFromAi }),
       };
 
       // La pregunta de tres salidas (Fase 18). Solo se hace si la comida vino
@@ -892,6 +949,45 @@ export function MealModal({
       </View>
 
       {registerToTimeline ? (
+        <View style={styles.waterBlock}>
+          <Text style={styles.choiceTitle}>Agua (opcional)</Text>
+          <View style={styles.waterRow}>
+            <TextInput
+              style={styles.waterInput}
+              value={waterMl}
+              onChangeText={(next) => { setWaterMl(next); setWaterFromAi(null); }}
+              keyboardType="decimal-pad"
+              placeholder="—"
+              placeholderTextColor={colors.muted}
+              accessibilityLabel="Agua bebida en mililitros"
+            />
+            <Text style={styles.waterUnit}>mL</Text>
+            {WATER_PRESETS_ML.map((preset) => (
+              <Pressable
+                key={preset.ml}
+                style={styles.waterPreset}
+                onPress={() => {
+                  const current = Number(waterMl.replace(',', '.'));
+                  const base = Number.isFinite(current) && current > 0 ? current : 0;
+                  setWaterMl(String(Math.round(base + preset.ml)));
+                  setWaterFromAi(null);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`Sumar ${preset.label}`}
+              >
+                <Text style={styles.waterPresetText}>+{preset.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={styles.choiceHint}>
+            {waterFromAi === null
+              ? 'Solo agua. Un jugo o una bebida con azúcar van arriba, con sus carbohidratos y su dosis.'
+              : `Este volumen lo estimó la IA ${waterFromAi === 'photo' ? 'de la foto' : 'de lo que escribiste'}. Revísalo: se guarda lo que quede acá.`}
+          </Text>
+        </View>
+      ) : null}
+
+      {registerToTimeline ? (
         <View style={styles.insulinBlock}>
           <View style={styles.insulinRow}>
             <View style={styles.choiceCopy}>
@@ -1016,7 +1112,29 @@ export function MealModal({
 }
 
 
+/** Los mismos vasos que el maestro y el acceso rápido: no se reinventan. */
+const WATER_PRESETS_ML = [
+  { ml: 250, label: 'un vaso' },
+  { ml: 500, label: 'medio litro' },
+] as const;
+
 const styles = StyleSheet.create({
+  waterBlock: {
+    borderTopWidth: 1, borderTopColor: colors.line, marginTop: spacing.md, paddingTop: spacing.md,
+  },
+  waterRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
+  waterInput: {
+    minWidth: 84, minHeight: 44, paddingHorizontal: spacing.md,
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface,
+    color: colors.ink, fontSize: 16, fontWeight: '700',
+  },
+  waterUnit: { color: colors.muted, fontSize: 13, fontWeight: '700' },
+  waterPreset: {
+    minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.md,
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.background,
+  },
+  waterPresetText: { color: colors.navy, fontSize: 13, fontWeight: '800' },
+  choiceHint: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: spacing.sm },
   sectionLabel: { color: colors.navy, fontSize: 13, fontWeight: '800', letterSpacing: 0.5, marginTop: spacing.xl },
   choiceRow: {
     flexDirection: 'row',

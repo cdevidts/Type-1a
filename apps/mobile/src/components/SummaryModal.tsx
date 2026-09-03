@@ -2,16 +2,19 @@ import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View, type GestureResponderHandlers } from 'react-native';
 
 import {
-  MIN_EPISODES_PER_SEGMENT,
-  observeCorrectionsFrom,
-  summarizeObservedDuration,
-  type DaySegmentKey,  buildAmbulatoryProfile,
+  buildAmbulatoryProfile,
   buildNutritionInsights,
-  MIN_SAMPLE_FOR_RATE,
-  summarizeGlucose,
-  type MealWindowInsight,
   describeCoverage,
+  insulinEffectCurveFrom,
+  MIN_EPISODES_PER_CURVE_POINT,
+  MIN_EPISODES_PER_SEGMENT,
+  MIN_SAMPLE_FOR_RATE,
+  observeCorrectionsFrom,
   RELIABLE_COVERAGE_DAYS,
+  summarizeGlucose,
+  summarizeObservedDuration,
+  type DaySegmentKey,
+  type MealWindowInsight,
 } from '@type1a/domain';
 import type { CGMReading, TherapyProfile } from '@type1a/schemas';
 
@@ -20,7 +23,7 @@ import { colors, glucoseBands, radius, spacing } from '../theme';
 import type { SummaryData } from '../types';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ModalShell } from './ModalShell';
-import { AgpChart, AgpLegend, DayGlucoseChart, isNonSensorReading, RangeBar } from './SummaryCharts';
+import { AgpChart, AgpLegend, DayGlucoseChart, InsulinEffectCurve, isNonSensorReading, RangeBar } from './SummaryCharts';
 
 /**
  * Pantalla "Resumen" (Fase 11 + parte descriptiva de la Fase 12). Tres
@@ -250,7 +253,13 @@ export function SummaryModal({
             ) : null}
             {tab === 'food' ? <FoodTab insights={insights} rangeDays={rangeDays} /> : null}
             {tab === 'insulin' ? (
-              <InsulinTab data={data} rangeDays={rangeDays} therapy={therapy} onAdoptSegment={onAdoptSegmentDuration} />
+              <InsulinTab
+                data={data}
+                rangeDays={rangeDays}
+                therapy={therapy}
+                chartWidth={chartWidth}
+                onAdoptSegment={onAdoptSegmentDuration}
+              />
             ) : null}
           </ScrollView>
         </ErrorBoundary>
@@ -434,11 +443,13 @@ function InsulinTab({
   data,
   rangeDays,
   therapy,
+  chartWidth,
   onAdoptSegment,
 }: {
   data: SummaryData | null;
   rangeDays: number;
   therapy: TherapyProfile;
+  chartWidth: number;
   onAdoptSegment: (segment: DaySegmentKey, hours: number | null) => Promise<void>;
 }) {
   const [busy, setBusy] = useState<DaySegmentKey | null>(null);
@@ -455,7 +466,16 @@ function InsulinTab({
     }));
   }, [data]);
 
-  if (summary === null) return null;
+  const curves = useMemo(() => {
+    if (data === null) return null;
+    return insulinEffectCurveFrom({
+      insulin: data.insulin,
+      meals: data.meals,
+      readings: data.readings,
+    });
+  }, [data]);
+
+  if (summary === null || curves === null) return null;
 
   const configuredHours = therapy.rapidInsulinDurationHours;
   const hoursText = (minutes: number): string => `${(minutes / 60).toFixed(1)} h`;
@@ -564,6 +584,69 @@ function InsulinTab({
       })}
 
       {message === null ? null : <Text style={styles.adoptMessage}>{message}</Text>}
+
+      <Text style={styles.sectionTitle}>Tu curva de efecto, hora por hora</Text>
+      <Text style={styles.sectionHint}>
+        Cuánto se movió tu glucosa 1, 2, 3… horas después de inyectarte, según la hora en que{' '}
+        <Text style={styles.noteStrong}>empezó</Text> la inyección. Bajo la línea = bajó; sobre la línea = subió.
+        Los cuatro comparten la misma escala, así que se leen de un vistazo.
+      </Text>
+
+      {curves.totalDoses === 0 ? (
+        <Text style={styles.empty}>
+          Todavía no hay dosis con glucosa registrada al momento de inyectarte. La curva aparece sola en cuanto
+          el sensor tenga una lectura cerca de una dosis.
+        </Text>
+      ) : (
+        curves.segments.map((segment) => {
+          const drawn = segment.points.filter((point) => point.medianDeltaMgDl !== undefined);
+          return (
+            <View key={segment.segment} style={styles.curveBlock}>
+              <Text style={styles.curveLabel}>
+                {segment.label} · {segment.doseCount} {segment.doseCount === 1 ? 'dosis' : 'dosis'}
+              </Text>
+              {segment.doseCount === 0 ? (
+                <Text style={styles.curveEmpty}>Sin dosis registradas que empiecen en este tramo.</Text>
+              ) : (
+                <>
+                  <InsulinEffectCurve
+                    segment={segment}
+                    extremeDeltaMgDl={curves.extremeDeltaMgDl}
+                    width={chartWidth}
+                  />
+                  {/*
+                    El `n` de CADA punto, no el del mejor. Antes la leyenda
+                    mostraba el máximo entre horas, así que una hora sostenida
+                    por un episodio heredaba el respaldo de la hora 1 — y el
+                    botón de adoptar duración está justo arriba.
+                  */}
+                  <Text style={styles.curveMeta}>
+                    Horas desde la inyección · mg/dL respecto del momento de pincharte.{' '}
+                    {drawn.length === 0
+                      ? `Ningún punto llega todavía a ${MIN_EPISODES_PER_CURVE_POINT} episodios, así que no se dibuja ninguno.`
+                      : drawn.map((point) => `${point.hour} h: n=${point.sampleSize}${point.cleanSampleSize === point.sampleSize ? '' : ` (${point.cleanSampleSize} sin comida)`}`).join(' · ')}
+                  </Text>
+                </>
+              )}
+            </View>
+          );
+        })
+      )}
+
+      <View style={styles.noteBox}>
+        <Text style={styles.noteTitle}>Por qué la curva y la duración no dicen lo mismo</Text>
+        <Text style={styles.noteText}>
+          La <Text style={styles.noteStrong}>duración</Text> de arriba busca cuándo tu glucosa dejó de bajar, y
+          para eso mira hasta tu dosis siguiente. En la mañana el almuerzo llega a las 5 h; de noche no llega
+          nada. Un tramo con más espacio tiene más oportunidades de encontrar un mínimo tardío, así que la tarde
+          y la noche salen más largas aunque tu insulina se comporte igual.{'\n\n'}
+          La <Text style={styles.noteStrong}>curva</Text> no tiene ese problema: mide el mismo instante en todos
+          los episodios —una hora después, dos horas después— así que cada punto se compara con su igual. Si te
+          inyectas temprano y recién te baja a las 4-5 h, acá se ve.{'\n\n'}
+          Los dos tramos se deciden por <Text style={styles.noteStrong}>cuándo te inyectaste</Text>, nunca por
+          cuándo hizo efecto: una dosis de las 8:00 que sigue actuando a las 16:00 pertenece entera a la mañana.
+        </Text>
+      </View>
 
       <View style={styles.noteBox}>
         <Text style={styles.noteTitle}>Qué es y qué no es este número</Text>
@@ -768,6 +851,10 @@ const styles = StyleSheet.create({
   segmentButtonText: { color: colors.teal, fontSize: 12, fontWeight: '800' },
   segmentButtonPlain: { minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.sm },
   segmentButtonPlainText: { color: colors.muted, fontSize: 12, fontWeight: '700' },
+  curveBlock: { marginTop: spacing.md },
+  curveLabel: { color: colors.ink, fontSize: 14, fontWeight: '800' },
+  curveEmpty: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: 4 },
+  curveMeta: { color: colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
   adoptMessage: { color: colors.navy, backgroundColor: colors.tealSoft, borderRadius: radius.sm, padding: spacing.md, fontSize: 13, lineHeight: 19, marginTop: spacing.md },
   noteStrong: { fontWeight: '800' },
   tabBar: {

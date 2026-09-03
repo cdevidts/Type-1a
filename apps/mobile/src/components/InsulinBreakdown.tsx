@@ -29,6 +29,7 @@ export function InsulinBreakdown({
   mealUnits,
   correctionUnits,
   activeInsulinUnits,
+  activeInsulinAppliedUnits,
   activeDoseCount,
   totalUnits,
   /** Sin insulina configurada no hay curva y no se descuenta nada. */
@@ -49,12 +50,27 @@ export function InsulinBreakdown({
   correctionUnits: number;
   /** `undefined` = no se sabe, que **no** es lo mismo que 0. */
   activeInsulinUnits: number | undefined;
+  /**
+   * Cuánto del activo se descontó **de verdad**. Puede ser menos que
+   * `activeInsulinUnits`: el descuento se detiene cuando la corrección llega a
+   * 0, porque la comida nunca se toca.
+   *
+   * Existe porque sin él la resta no cuadraba con el total y el panel parecía
+   * un error de la app — mostraba "− 9 U" sobre un total que solo había
+   * bajado 3. Omitido = se aplicó todo (la corrección suelta, donde el total
+   * **es** la corrección).
+   */
+  activeInsulinAppliedUnits?: number | undefined;
   activeDoseCount: number;
   totalUnits: number;
   insulinConfigured: boolean;
   activeWasSubtracted?: boolean;
 }) {
   const round = (value: number): string => String(Number(value.toFixed(2)));
+  // Sin `activeInsulinAppliedUnits` (la corrección suelta) todo el activo se
+  // aplicó: ahí el total **es** la corrección y no hay comida que proteger.
+  const applied = activeInsulinAppliedUnits ?? activeInsulinUnits ?? 0;
+  const unused = (activeInsulinUnits ?? 0) - applied;
   return (
     <View style={styles.box}>
       <Text style={styles.title}>De dónde sale este número</Text>
@@ -65,11 +81,21 @@ export function InsulinBreakdown({
       <Row label="Corrección (glucosa)" value={`${round(correctionUnits)} U`} />
 
       {activeInsulinUnits === undefined ? null : (
-        <Row
-          label={`Insulina todavía activa${activeDoseCount === 0 ? '' : ` · ${activeDoseCount} ${activeDoseCount === 1 ? 'dosis' : 'dosis'}`}${activeWasSubtracted ? '' : ' (informativo)'}`}
-          value={activeWasSubtracted ? `− ${round(activeInsulinUnits)} U` : `${round(activeInsulinUnits)} U`}
-          emphasis
-        />
+        <>
+          <Row
+            label={`Insulina todavía activa${activeDoseCount === 0 ? '' : ` · ${activeDoseCount} ${activeDoseCount === 1 ? 'dosis' : 'dosis'}`}${activeWasSubtracted ? '' : ' (informativo)'}`}
+            value={activeWasSubtracted ? `− ${round(applied)} U` : `${round(activeInsulinUnits)} U`}
+            emphasis
+          />
+          {unused <= 0.005 ? null : (
+            // La línea que hace que la resta cuadre. Sin ella el panel muestra
+            // "− 9 U" sobre un total que solo bajó 3 y parece un error.
+            <Row
+              label="No se descontó (tu comida no se toca)"
+              value={`${round(unused)} U`}
+            />
+          )}
+        </>
       )}
 
       <View style={styles.total}>
@@ -90,7 +116,9 @@ export function InsulinBreakdown({
           {activeDoseCount === 0
             ? 'No quedan dosis recientes actuando.'
             : activeWasSubtracted
-              ? 'La insulina activa se descuenta solo de la corrección: los carbohidratos siempre llevan su dosis completa.'
+              ? unused > 0.005
+                ? 'Te sobra insulina activa, así que no hay corrección que poner. Los carbohidratos igual llevan su dosis completa: comer siempre pide insulina, corregir no siempre.'
+                : 'La insulina activa se descuenta solo de la corrección: los carbohidratos siempre llevan su dosis completa.'
               : 'Este conteo cubre solo carbohidratos, así que no se le descontó nada: el total de arriba NO incluye esa resta. Se muestra porque, si vas a corregir además, esas unidades ya están actuando.'}
           {' '}Es una estimación sobre la duración que configuraste, no una medición. Revisa el número antes de inyectarte.
         </Text>

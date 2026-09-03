@@ -6,6 +6,7 @@ import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
 import Calculator from 'lucide-react-native/icons/calculator';
 import FlaskConical from 'lucide-react-native/icons/flask-conical';
+import GlassWater from 'lucide-react-native/icons/glass-water';
 import Settings from 'lucide-react-native/icons/settings';
 import Syringe from 'lucide-react-native/icons/syringe';
 import UtensilsCrossed from 'lucide-react-native/icons/utensils-crossed';
@@ -107,6 +108,7 @@ import {
   getActivityEvents,
   getCapillaryReminderSettings,
   getCarbEvents,
+  getWaterEvents,
   getCorrectionReminderSettings,
   getHbA1cResults,
   getInsulinEvents,
@@ -153,6 +155,8 @@ import {
   saveTherapyProfile,
   saveUnifiedEntry,
   saveVitalsEvent,
+  deleteWaterEvent,
+  saveWaterEvent,
   setSetting,
   updateMealFromEdit,
   updateUnifiedEntryGroup,
@@ -481,6 +485,7 @@ function Type1AApp() {
     // solo, parametrizado, sin lógica clínica propia — y ofrece la salida al
     // maestro para quien además quiera anotar la glucosa.
     if (route === 'basal') { setQuickNumeric('basal'); return; }
+    if (route === 'water') { setQuickNumeric('water'); return; }
     setQuickRoute(route);
   }, []);
 
@@ -601,6 +606,21 @@ function Type1AApp() {
     });
     await loadLocalState();
     setNotice(`Se registraron ${ketonesMmolL} mmol/L de cetonas.`);
+  }
+
+  async function registerWater(ml: number): Promise<void> {
+    const timestamp = new Date().toISOString();
+    await saveWaterEvent(db, {
+      id: Crypto.randomUUID(),
+      timestamp,
+      ml,
+      // `quick` y no `manual`: la procedencia distingue el acceso rápido del
+      // maestro, igual que se distingue lo que estimó la IA.
+      source: 'quick',
+      createdAt: timestamp,
+    });
+    await loadLocalState();
+    setNotice(`Se registraron ${ml} mL de agua.`);
   }
 
   /**
@@ -767,6 +787,29 @@ function Type1AApp() {
     // vez de abrir uno segundo y desconectado.
     const entryGroupId = Crypto.randomUUID();
     const episodeId = await saveMealWithEpisode(db, meal, entryGroupId);
+
+    // El agua va al MISMO grupo que la comida, con su misma hora. Su
+    // procedencia distingue lo que estimó la IA de lo que ella escribió, igual
+    // que los macros. En su propio try: si falla el vaso, lo comido ya quedó
+    // registrado y el agua se puede agregar después desde el timeline.
+    if (draft.waterMl !== undefined) {
+      try {
+        await saveWaterEvent(db, {
+          id: Crypto.randomUUID(),
+          timestamp,
+          ml: draft.waterMl,
+          // La procedencia real, no una deducida de que hubo análisis: un
+          // número que ella tecleó sobre una comida analizada es suyo, y un
+          // análisis por texto no salió de una foto.
+          source: draft.waterFromAi === 'photo' ? 'ai_photo'
+            : draft.waterFromAi === 'text' ? 'ai_text'
+              : 'manual',
+          createdAt: timestamp,
+        }, entryGroupId);
+      } catch (error) {
+        logSaveError('confirmMeal.water', error);
+      }
+    }
 
     // La insulina de esta comida va con el MISMO timestamp que la comida.
     // Es el arreglo estructural de la Fase 21: el botón "Rápida" suelto
@@ -1019,9 +1062,10 @@ function Type1AApp() {
     // una colación a las 2 h entra al promedio de grasa/proteína como si
     // fuera efecto tardío de la comida. `dayCarbs` y `dayMeals` son la ventana
     // del día seleccionado, que es otra pregunta.
-    const [dayMeals, dayCarbs, patternMeals, readings, patternInsulin, patternCarbs, patternActivity] = await Promise.all([
+    const [dayMeals, dayCarbs, dayWater, patternMeals, readings, patternInsulin, patternCarbs, patternActivity] = await Promise.all([
       getMealEvents(db, dayStart, dayEnd, tally),
       getCarbEvents(db, dayStart, dayEnd, tally),
+      getWaterEvents(db, dayStart, dayEnd, tally),
       getMealEvents(db, patternStart, now, tally),
       getCGMReadings(db, patternStart, now, tally),
       getInsulinEvents(db, patternStart, now, tally),
@@ -1031,6 +1075,7 @@ function Type1AApp() {
     return {
       dayMeals,
       dayCarbs,
+      dayWater,
       patternMeals,
       patternInsulin,
       patternCarbs,
@@ -1197,6 +1242,11 @@ function Type1AApp() {
       ...(payload.rapidUnits === undefined ? {} : { rapidUnits: payload.rapidUnits }),
       ...(payload.basalUnits === undefined ? {} : { basalUnits: payload.basalUnits }),
       ...(payload.vitals === undefined ? {} : { vitals: payload.vitals }),
+      // `waterMl` llega SIEMPRE del maestro en edición: `null` significa que
+      // ella vació el campo, y ahí `undefined` en el input es justo lo que
+      // hace que `updateUnifiedEntryGroup` borre la fila.
+      ...(payload.waterMl === undefined || payload.waterMl === null ? {} : { waterMl: payload.waterMl }),
+      ...(payload.waterFromAi === undefined ? {} : { waterFromAi: payload.waterFromAi }),
       ...(payload.note === undefined ? {} : { note: payload.note }),
     };
 
@@ -1270,6 +1320,8 @@ function Type1AApp() {
       await deleteNoteEvent(db, item.id);
     } else if (item.kind === 'vitals') {
       await deleteVitalsEvent(db, item.id);
+    } else if (item.kind === 'water') {
+      await deleteWaterEvent(db, item.id);
     } else {
       await deleteUnifiedEntryGroup(db, item.id);
     }
@@ -1485,6 +1537,21 @@ function Type1AApp() {
             soft={colors.redSoft}
             onPress={() => { setQuickNumeric('ketones'); }}
           />
+          {/*
+            Agua (2026-09-03). Botón propio y no una sección del maestro por la
+            misma razón que la basal: se registra varias veces al día y en
+            momentos en que no se quiere navegar. Sus atajos suman un vaso de
+            un toque; la salida al maestro sigue ahí para quien además quiera
+            anotar la comida.
+          */}
+          <QuickButton
+            label="Agua"
+            hint="Suma un vaso de un toque"
+            Icon={GlassWater}
+            color={colors.blue}
+            soft="#E3EFF7"
+            onPress={() => { setQuickNumeric('water'); }}
+          />
         </View>
 
         <Timeline items={timeline} onEditItem={openMasterEdit} onDeleteItem={deleteTimelineItem} />
@@ -1542,9 +1609,15 @@ function Type1AApp() {
           ? { insulinName: profile.basalInsulinName }
           : {})}
         onClose={() => { setQuickNumeric(null); }}
-        onSave={quickNumeric === 'basal' ? registerBasal : registerKetones}
+        onSave={
+          quickNumeric === 'basal' ? registerBasal
+            : quickNumeric === 'water' ? registerWater
+              : registerKetones
+        }
         onOpenFullEntry={() => {
-          const focus: EntryFocus = quickNumeric === 'basal' ? 'insulin' : 'ketones';
+          const focus: EntryFocus = quickNumeric === 'basal' ? 'insulin'
+            : quickNumeric === 'water' ? 'water'
+              : 'ketones';
           setQuickNumeric(null);
           openMasterCreate(focus);
         }}

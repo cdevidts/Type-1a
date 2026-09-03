@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { EpisodeContextEvent } from '@type1a/schemas';
+import type { EpisodeContextEvent, WaterEvent } from '@type1a/schemas';
 
 import { formatDayTime, trendArrow } from '../format';
 import { colors, radius, spacing } from '../theme';
@@ -89,6 +89,21 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * De dónde salió un registro de agua.
+ *
+ * "La IA lo vio en una foto" y "lo escribí yo" no son lo mismo, y la regla de
+ * `AGENTS.md` sobre carbohidratos estimados vs. confirmados vale igual acá:
+ * una estimación se muestra como estimación.
+ */
+const waterSourceLabel: Record<WaterEvent['source'], string> = {
+  manual: 'Ingresado a mano',
+  quick: 'Acceso rápido',
+  ai_photo: 'Estimado por la IA desde una foto',
+  ai_text: 'Estimado por la IA desde tu descripción',
+  imported: 'Importado',
+};
+
 function rowsFor(item: TimelineItem): { label: string; value: string }[] {
   switch (item.kind) {
     case 'insulin':
@@ -104,6 +119,14 @@ function rowsFor(item: TimelineItem): { label: string; value: string }[] {
         ...(item.raw.correctionUnits === undefined ? [] : [{ label: 'De corrección', value: `${item.raw.correctionUnits} U` }]),
         ...(item.raw.iobUnits === undefined ? [] : [{ label: 'Insulina activa descontada', value: `− ${item.raw.iobUnits} U` }]),
         { label: 'Origen', value: item.raw.source === 'imported' ? 'Importado desde CSV' : 'Ingresado a mano' },
+        { label: 'Hora', value: formatDayTime(item.raw.timestamp) },
+      ];
+    case 'water':
+      return [
+        { label: 'Agua', value: `${item.raw.ml} mL` },
+        // La procedencia importa igual que en los macros: un vaso que vio la
+        // IA en una foto no es lo mismo que uno que ella escribió.
+        { label: 'Origen', value: waterSourceLabel[item.raw.source] },
         { label: 'Hora', value: formatDayTime(item.raw.timestamp) },
       ];
     case 'carbs':

@@ -81,6 +81,17 @@ export const NutritionProfileSchema = z.object({
   weightKg: z.number().min(25).max(350),
   activityLevel: z.enum(['sedentary', 'light', 'moderate', 'active', 'veryActive']),
   goal: z.enum(['lose', 'maintain', 'gain', 'trackOnly']),
+  /**
+   * Meta diaria de agua **bebida**, en mL, escrita por la usuaria.
+   *
+   * Ausente = se usa la referencia poblacional del IOM que calcula
+   * `nutrition-targets.ts`. Existe el override porque la necesidad de líquido
+   * varía con el clima, el ejercicio y —lo que más importa acá— porque hay
+   * condiciones (renales, cardíacas) donde la indicación es **restringir**
+   * líquidos. Una app que empuja a beber 3 L sin dejar bajar ese número
+   * estaría contradiciendo a un equipo clínico.
+   */
+  waterMlTarget: z.number().int().positive().max(6000).optional(),
   updatedAt: IsoTimestampSchema,
 });
 export type NutritionProfile = z.infer<typeof NutritionProfileSchema>;
@@ -203,6 +214,38 @@ export const ActivityEventSchema = z.object({
 });
 export type ActivityEvent = z.infer<typeof ActivityEventSchema>;
 
+/**
+ * Agua bebida. Un evento propio y no un campo de comida, a propósito.
+ *
+ * El agua se toma **entre** comidas tanto como con ellas, y colgarla de una
+ * comida obligaría a inventar una comida para registrar un vaso. Además no
+ * tiene macros: meterla en `MealEvent` haría que un vaso de agua entrara en
+ * los conteos de carbohidratos como un cero, y un cero registrado no es lo
+ * mismo que un dato ausente en las pantallas que promedian.
+ *
+ * **Solo agua.** No hay campo de "tipo de bebida": un jugo tiene
+ * carbohidratos y eso es una comida, con su bolo. Confundir las dos cosas
+ * sería registrar carbohidratos como si fueran agua, que es exactamente el
+ * error que no puede pasar en esta app.
+ */
+export const WaterEventSchema = z.object({
+  id: z.string().min(1),
+  timestamp: IsoTimestampSchema,
+  /**
+   * Mililitros. El tope de 5 L por registro no es una meta ni un límite de
+   * salud: es un freno a un dedo que escribe 20000 en vez de 200.
+   */
+  ml: z.number().positive().max(5000).finite(),
+  /**
+   * `ai_photo` y `ai_text` existen para que la procedencia no se pierda: un
+   * vaso que la IA vio en una foto no es lo mismo que uno que ella escribió,
+   * y la pantalla lo distingue igual que hace con los macros estimados.
+   */
+  source: z.enum(['manual', 'quick', 'ai_photo', 'ai_text', 'imported']),
+  createdAt: IsoTimestampSchema,
+});
+export type WaterEvent = z.infer<typeof WaterEventSchema>;
+
 export const NoteEventSchema = z.object({
   id: z.string().min(1),
   timestamp: IsoTimestampSchema,
@@ -292,6 +335,25 @@ export type FoodEstimate = z.infer<typeof FoodEstimateSchema>;
 
 export const MealAnalysisSchema = z.object({
   foods: z.array(FoodEstimateSchema).min(1).max(30),
+  /**
+   * Agua **sola** que se ve en la foto o que ella describió, en mL.
+   *
+   * Va aparte de `foods` a propósito, y es la única bebida con trato especial:
+   * el agua no tiene macros ni carbohidratos, así que no es un alimento del
+   * catálogo — es un registro de hidratación. Un vaso de agua entrando a
+   * `foods` sumaría un alimento de 0 g a la lista y ensuciaría el catálogo con
+   * "vaso de agua" como si fuera una comida.
+   *
+   * **Solo agua.** Un jugo, una bebida o un café con leche tienen
+   * carbohidratos y van en `foods`, donde reciben su dosis. Confundirlos sería
+   * registrar carbohidratos como si fueran agua, que es el error que no puede
+   * pasar en esta app.
+   *
+   * `null` cuando no se ve agua o no se puede estimar el volumen. Nunca un
+   * default: un vaso inventado se suma a la meta del día sin que nadie lo haya
+   * bebido.
+   */
+  waterMl: z.number().positive().max(3000).finite().nullable().default(null),
   uncertaintyNotes: z.array(z.string().trim().min(1).max(300)).max(12),
 });
 export type MealAnalysis = z.infer<typeof MealAnalysisSchema>;

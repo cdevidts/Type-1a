@@ -130,3 +130,62 @@ const INSULIN_REQUEST_PATTERNS = [
 export function requestsInsulinAdvice(instruction: string): boolean {
   return INSULIN_REQUEST_PATTERNS.some((pattern) => pattern.test(instruction));
 }
+
+/**
+ * Bebidas que **no** son agua, en los idiomas en que la app recibe texto.
+ *
+ * Existe porque el prompt no puede ser la única defensa. `contracts/safety-acceptance.md`
+ * es explícito: al agregar un campo al payload que va al modelo, en el mismo
+ * cambio crecen la prohibición del prompt **y el filtro**. `waterMl` se agregó
+ * el 2026-09-03 y el filtro no había crecido.
+ *
+ * El daño concreto: una foto con un vaso de jugo al lado del plato. Si el
+ * modelo devuelve `waterMl: 250` y omite el jugo de `foods`, esos ~25 g de
+ * carbohidratos desaparecen del registro, del catálogo **y del campo que
+ * alimenta el bolo**. La pantalla, además, le dice "solo agua, un jugo va
+ * arriba con sus carbohidratos", que se lee como que la app lo verificó.
+ */
+const NON_WATER_BEVERAGE_PATTERN =
+  /\b(jugo|zumo|bebida|gaseosa|refresco|soda|cola|nectar|limonada|leche|lactea|yogur|batido|licuado|smoothie|cafe|te|mate|chocolate|cacao|cerveza|vino|alcohol|trago|sopa|caldo|consome|isotonic[ao]|gatorade|powerade|energetica|kombucha|juice|soft ?drink|milk|yogh?urt|shake|coffee|tea|beer|wine|broth|soup|sports ?drink)\b/i;
+
+/**
+ * Quita los acentos antes de buscar.
+ *
+ * `\b` en JavaScript se define sobre `[A-Za-z0-9_]`, así que en "té con
+ * azúcar" **no hay límite de palabra después de la `é`** y el patrón no
+ * matcheaba. Lo encontró un test parametrizado; con un solo ejemplo por
+ * bebida habría pasado desapercibido. Normalizar arregla eso y de paso
+ * atrapa a quien escribe "cafe" sin tilde.
+ */
+function withoutAccents(text: string): string {
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/gu, '');
+}
+
+/**
+ * ¿Puede confiarse en el `waterMl` que devolvió el modelo?
+ *
+ * `false` cuando el texto que rodea al análisis menciona una bebida que **no**
+ * es agua y ninguna entrada de `foods` la recoge. En ese caso quien llama
+ * descarta el volumen: perder un vaso de agua es una molestia, perder 25 g de
+ * carbohidratos es una dosis corta.
+ *
+ * Deliberadamente grueso. Un falso positivo cuesta que ella escriba el agua a
+ * mano —el campo está ahí, visible—; un falso negativo cuesta carbohidratos
+ * que nadie ve. Esa asimetría decide el diseño.
+ */
+export function waterEstimateIsTrustworthy(input: {
+  waterMl: number | null | undefined;
+  /** Nombres de los alimentos que el propio análisis devolvió. */
+  foodNames: readonly string[];
+  /** Lo que ella escribió: la pista de la foto o la descripción sin foto. */
+  description?: string | undefined;
+}): boolean {
+  if (input.waterMl === null || input.waterMl === undefined) return true;
+
+  const mentioned = withoutAccents(`${input.description ?? ''} ${input.foodNames.join(' ')}`);
+  if (!NON_WATER_BEVERAGE_PATTERN.test(mentioned)) return true;
+
+  // Se nombró una bebida. Solo se confía si **algún alimento** la recoge: ahí
+  // sus carbohidratos están contados y el agua puede convivir con ella.
+  return input.foodNames.some((name) => NON_WATER_BEVERAGE_PATTERN.test(withoutAccents(name)));
+}

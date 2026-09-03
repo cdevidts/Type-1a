@@ -11,6 +11,7 @@ import {
   masterTitleFor,
   mealOf,
   sectionStartsOpen,
+  MASTER_SECTIONS,
 } from './masterModal';
 
 import type { EntryFocus, TimelineItem } from './types';
@@ -381,5 +382,65 @@ describe('isHistoricCalculation — la advertencia cubre TODOS los caminos', () 
       { editing: false, hasPresetDay: true },
     ];
     for (const combo of combos) expect(isHistoricCalculation(combo)).toBe(true);
+  });
+});
+
+describe('el agua en el Modal Maestro (2026-09-03)', () => {
+  const at = '2026-09-03T10:00:00.000Z';
+  const waterItem = {
+    id: 'w1',
+    kind: 'water' as const,
+    timestamp: at,
+    title: 'Agua',
+    detail: '250 mL',
+    tone: 'blue' as const,
+    raw: { id: 'w1', timestamp: at, ml: 250, source: 'quick' as const, createdAt: at },
+  };
+
+  it('un registro suelto de agua se puede editar: se promueve a grupo', () => {
+    expect(masterTargetOf(waterItem)).toEqual({
+      kind: 'promote', table: 'water_events', rowId: 'w1',
+    });
+    expect(isMasterEditable(waterItem)).toBe(true);
+  });
+
+  it('el maestro se abre con el volumen que ya estaba, no vacío', () => {
+    // Un formulario que no conoce un campo lo destruye al guardar. Esta es la
+    // mitad que impide que eso pase con el agua.
+    const seed = masterSeedFrom(waterItem);
+    expect(seed.waterMl).toBe(250);
+    expect(seed.timestamp).toBe(at);
+    expect(seed.timestampEditable).toBe(true);
+  });
+
+  it('la sección de Agua se abre sola cuando el registro la trae', () => {
+    expect(masterSectionsFor(masterSeedFrom(waterItem)).has('water')).toBe(true);
+  });
+
+  it('y NO se abre cuando no hay agua', () => {
+    const seed = masterSeedFrom({
+      id: 'n1', kind: 'note', timestamp: at, title: 'Nota', detail: 'x', tone: 'navy',
+      raw: { id: 'n1', timestamp: at, text: 'x', source: 'manual', createdAt: at },
+    });
+    expect(masterSectionsFor(seed).has('water')).toBe(false);
+  });
+
+  it('una entrada agrupada con agua la carga y abre su sección', () => {
+    const seed = masterSeedFrom({
+      id: 'g1', kind: 'entry', timestamp: at, title: 'Entrada', detail: '', tone: 'navy',
+      raw: { entryGroupId: 'g1', waterMl: 500 },
+    } as unknown as TimelineItem);
+    expect(seed.waterMl).toBe(500);
+    expect(masterSectionsFor(seed).has('water')).toBe(true);
+  });
+
+  it('el título nombra lo que se está corrigiendo', () => {
+    expect(masterTitleFor(waterItem)).toBe('Editar agua');
+  });
+
+  it('"agua" es una sección declarada, no una cadena suelta', () => {
+    // `MASTER_SECTIONS` es lo que recorre la UI: si la sección existe en el
+    // tipo y no acá, el campo se guarda y nunca se ve.
+    expect(MASTER_SECTIONS).toContain('water');
   });
 });

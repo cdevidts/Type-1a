@@ -12,6 +12,7 @@ import {
   type BiologicalSex,
   type NutritionGoal,
   type NutritionTargets,
+  summarizeWaterDay,
 } from '@type1a/domain';
 import type { CarbEvent, MealEvent, NutritionProfile } from '@type1a/schemas';
 
@@ -399,6 +400,8 @@ function TodayTab({
     fatG: totals.fatG,
   });
   const remaining = targets.caloriesKcal - energy.kcal;
+  // El agregado vive en el dominio (Regla 1): acá solo se elige el día.
+  const water = summarizeWaterDay({ events: data.dayWater, targetMl: targets.waterMl });
 
   return (
     <View>
@@ -471,6 +474,44 @@ function TodayTab({
         <Text style={styles.fiberFoot}>
           La meta de fibra es una referencia poblacional (14 g por cada 1000 kcal), igual que las demás. No se
           descuenta de los carbohidratos ni cambia ninguna dosis.
+        </Text>
+      </View>
+
+      {/*
+        El agua (2026-09-03), pedida por Verónica: *"ahora tiene que formar
+        parte del objetivo la cantidad de agua a tomar diaria"*.
+
+        Va **después** de los macros y con su propia tarjeta, no como una
+        quinta `MacroBar`, porque no es un macro: no aporta energía, no entra
+        en el reparto 4/4/9 y su unidad es otra. Ponerla en la misma fila
+        invitaría a leerla como parte del mismo total.
+
+        Azul (`colors.blue`) y no un `macroColors` nuevo: la nota de
+        `theme.ts` dice que un hue categórico más no se agrega sin volver a
+        correr el validador de la paleta, y acá no hace falta — el agua está
+        sola en su tarjeta, no compite con los macros por separación.
+      */}
+      <View style={styles.waterCard}>
+        <View style={styles.waterHead}>
+          <Text style={styles.waterLabel}>Agua</Text>
+          <Text style={styles.waterValue}>
+            {water.totalMl} <Text style={styles.waterUnit}>de {water.targetMl} mL</Text>
+          </Text>
+        </View>
+        <View style={styles.waterTrack}>
+          <View style={[styles.waterFill, { width: `${Math.round(water.progress * 100)}%` }]} />
+        </View>
+        <Text style={styles.waterFoot}>
+          {water.remainingMl === 0
+            ? 'Llegaste a tu referencia de hoy.'
+            : `Te faltan ${water.remainingMl} mL`}
+          {data.dayWater.length === 0
+            ? ' · todavía no registraste agua hoy'
+            : ` · ${data.dayWater.length} ${data.dayWater.length === 1 ? 'registro' : 'registros'}`}
+        </Text>
+        <Text style={styles.waterNote}>
+          Referencia poblacional del IOM para adultos sanos, no una indicación para ti. Si tu equipo clínico te
+          dijo otra cantidad —hay condiciones donde hay que restringir líquidos— cámbiala en Metas.
         </Text>
       </View>
 
@@ -552,6 +593,13 @@ function GoalsTab({
   const [weight, setWeight] = useState(profile === null ? '' : String(profile.weightKg));
   const [activity, setActivity] = useState<ActivityLevel>(profile?.activityLevel ?? 'moderate');
   const [goal, setGoal] = useState<NutritionGoal>(profile?.goal ?? 'maintain');
+  // Vacío = usar la referencia del IOM. No se precarga con el valor calculado
+  // a propósito: un campo lleno con lo que la app decidió se lee como algo que
+  // ella eligió, y `AGENTS.md` es explícito con esa distinción en el resto de
+  // la app (ver `InsulinPicker`, donde nada viene preseleccionado).
+  const [waterTarget, setWaterTarget] = useState(
+    profile?.waterMlTarget === undefined ? '' : String(profile.waterMlTarget),
+  );
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -563,11 +611,18 @@ function GoalsTab({
       setMessage('Revisa edad, estatura y peso: deben ser números.');
       return;
     }
+    const trimmedWater = waterTarget.trim();
+    const parsedWater = trimmedWater === '' ? undefined : Number(trimmedWater.replace(',', '.'));
+    if (parsedWater !== undefined && (!Number.isFinite(parsedWater) || parsedWater <= 0)) {
+      setMessage('Revisa la meta de agua: debe ser un número de mililitros, o quedar vacía para usar la referencia.');
+      return;
+    }
     setBusy(true);
     setMessage(null);
     try {
       await onSaveProfile({
         sex,
+        ...(parsedWater === undefined ? {} : { waterMlTarget: Math.round(parsedWater) }),
         ageYears: Math.round(parsedAge),
         heightCm: parsedHeight,
         weightKg: parsedWeight,
@@ -598,6 +653,7 @@ function GoalsTab({
             <TargetChip label="Proteína" value={`${targets.proteinG} g`} color={macroColors.protein} />
             <TargetChip label="Grasa" value={`${targets.fatG} g`} color={macroColors.fat} />
             <TargetChip label="Fibra" value={`al menos ${targets.fiberG} g`} color={macroColors.fiber} />
+            <TargetChip label="Agua" value={`${targets.waterMl} mL`} color={colors.blue} />
           </View>
           <Text style={styles.targetBreakdown}>
             Metabolismo basal estimado {targets.bmrKcal} kcal · gasto total estimado {targets.tdeeKcal} kcal
@@ -634,6 +690,17 @@ function GoalsTab({
         <MeasureField label="Edad" unit="años" value={age} onChange={setAge} />
         <MeasureField label="Estatura" unit="cm" value={height} onChange={setHeight} />
         <MeasureField label="Peso" unit="kg" value={weight} onChange={setWeight} />
+      </View>
+
+      <Text style={styles.fieldLabel}>Meta de agua</Text>
+      <Text style={styles.fieldHint}>
+        Déjala vacía para usar la referencia del IOM ({targets === null ? '—' : `${targets.waterMl} mL`}), que es
+        poblacional: adultos sanos, sedentarios, clima templado. Escribe otra cantidad si tu equipo clínico te
+        indicó una distinta — con ejercicio o calor hace falta más, y hay condiciones renales o cardíacas donde
+        la indicación es tomar menos.
+      </Text>
+      <View style={styles.measureRow}>
+        <MeasureField label="Agua al día" unit="mL" value={waterTarget} onChange={setWaterTarget} />
       </View>
 
       <Text style={styles.fieldLabel}>Actividad física</Text>
@@ -947,6 +1014,20 @@ const styles = StyleSheet.create({
   macroTrack: { height: 8, borderRadius: 4, backgroundColor: colors.line, overflow: 'hidden' },
   macroFill: { height: '100%', borderRadius: 4 },
   macroOver: { color: colors.muted, fontSize: 11, marginTop: 4 },
+  waterCard: {
+    backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.line,
+    padding: spacing.md, marginHorizontal: spacing.lg, marginTop: spacing.md,
+  },
+  waterHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
+  waterLabel: { color: colors.ink, fontSize: 15, fontWeight: '800' },
+  waterValue: { color: colors.ink, fontSize: 18, fontWeight: '900' },
+  waterUnit: { color: colors.muted, fontSize: 13, fontWeight: '600' },
+  waterTrack: {
+    height: 10, borderRadius: 5, backgroundColor: colors.line, marginTop: spacing.sm, overflow: 'hidden',
+  },
+  waterFill: { height: '100%', borderRadius: 5, backgroundColor: colors.blue },
+  waterFoot: { color: colors.ink, fontSize: 12, lineHeight: 17, marginTop: spacing.sm },
+  waterNote: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: 4 },
   fiberCard: {
     backgroundColor: colors.surface,
     borderRadius: radius.md,

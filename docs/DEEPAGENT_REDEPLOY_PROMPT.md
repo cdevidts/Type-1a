@@ -106,7 +106,24 @@ distinta es otro alimento. Sin redeploy, el campo viaja, Zod lo descarta en
 silencio y el modelo sigue inventando "pata de pollo" al lado de "muslo de
 pollo". Compatible hacia atrás: es opcional.
 
-### 3. Diferido a propósito, no pendiente de confirmación
+### 3. Agua en el análisis de comida (2026-09-03)
+
+`MealAnalysisSchema` gana `waterMl` (`number | null`, `default null`) y los
+tres prompts pasan a **v4**: devuelven los mililitros de **agua sola** que se
+ven en la foto o que ella describió, para que un vaso no entre a `foods` como
+un alimento de 0 g y ensucie el catálogo.
+
+La regla que el prompt enumera en vez de dar por entendida: **solo agua**. Un
+jugo, una bebida, leche, café con leche, té con azúcar, sopa o caldo llevan
+carbohidratos y van en `foods`, donde reciben su dosis. Si el modelo mandara
+un jugo a `waterMl`, esos carbohidratos desaparecerían del registro **y de la
+dosis propuesta**. Sin volumen estimable, `null` — nunca un número redondo.
+
+Sin redeploy la app funciona igual, pero la IA no detecta agua: `waterMl` sale
+`null` siempre y el registro de agua queda solo manual (que sí funciona ya, con
+su acceso rápido). Compatible hacia atrás: el campo tiene default.
+
+### 4. Diferido a propósito, no pendiente de confirmación
 
 Quitar `LIBRELINKUP_EMAIL`/`LIBRELINKUP_PASSWORD` del entorno — Verónica ya
 confirmó (2026-08-21) que su cuenta propia funciona conectada desde la app,
@@ -155,14 +172,23 @@ endurecimiento de nginx como está: no era la causa, pero es razonable.
 Necesito un redeploy más, el mismo procedimiento de siempre.
 
 Rama: claude/prompt-maestro-14-cambios-pa5ale
-Commit: fd3ad1a
+Commit: el head de la rama (incluye fd3ad1a y todo lo posterior)
 
-Qué trae: sanitizeForStrictJsonSchema ahora filtra también exclusiveMinimum,
-exclusiveMaximum y default. No debilita nada — eso solo afecta al esquema que
-se le PIDE al modelo; la respuesta se sigue re-validando entera contra el Zod
-real, con todas sus cotas. Y hay un test nuevo que enumera lo que SOBREVIVE al
-saneado contra una lista blanca, para que la próxima palabra rara falle ahí y
-no en el teléfono.
+Qué trae, en dos partes:
+
+1. sanitizeForStrictJsonSchema ahora filtra también exclusiveMinimum,
+   exclusiveMaximum y default. No debilita nada — eso solo afecta al esquema
+   que se le PIDE al modelo; la respuesta se sigue re-validando entera contra
+   el Zod real, con todas sus cotas. Y hay un test nuevo que enumera lo que
+   SOBREVIVE al saneado contra una lista blanca, para que la próxima palabra
+   rara falle ahí y no en el teléfono. Sin esto, TODAS las fotos dan 502.
+
+2. Los tres prompts de comida pasan a v4 y MealAnalysisSchema gana waterMl
+   (number | null, default null): el agua sola que se ve en la foto o que la
+   usuaria describe se devuelve aparte, para que un vaso no entre a `foods`
+   como un alimento de 0 g. SOLO agua: jugo, bebida, leche, café con leche, té
+   con azúcar, sopa y caldo van en `foods` con sus carbohidratos. Campo
+   opcional con default, compatible hacia atrás.
 
 Checkout, pnpm install --frozen-lockfile, reiniciar el servicio. Sin tocar
 dominio, puerto ni variables de entorno.

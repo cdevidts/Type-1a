@@ -20,6 +20,7 @@ function analysis(names: string[]): MealAnalysisResult {
         caloriesKcal: 60,
         confidence: 0.7,
       })),
+      waterMl: null,
       uncertaintyNotes: [],
     },
     totals: { carbsG: 10, proteinG: 2, fatG: 1, fiberG: 1, caloriesKcal: 60 },

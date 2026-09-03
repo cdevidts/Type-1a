@@ -97,8 +97,40 @@ describe('nombres conocidos del catálogo (2026-09-02)', () => {
   });
 
   it('las versiones de los tres se movieron con la regla', () => {
-    expect(MEAL_VISION_PROMPT_VERSION).toBe('meal-analysis.v3');
-    expect(MEAL_TEXT_PROMPT_VERSION).toBe('meal-analysis-text.v3');
-    expect(MEAL_EDIT_PROMPT_VERSION).toBe('meal-analysis-edit.v3');
+    expect(MEAL_VISION_PROMPT_VERSION).toBe('meal-analysis.v4');
+    expect(MEAL_TEXT_PROMPT_VERSION).toBe('meal-analysis-text.v4');
+    expect(MEAL_EDIT_PROMPT_VERSION).toBe('meal-analysis-edit.v4');
+  });
+});
+
+describe('el agua es agua, y solo agua (2026-09-03)', () => {
+  /**
+   * La regla que no se puede aflojar: un jugo tiene carbohidratos y necesita
+   * su dosis. Si el modelo lo manda a `waterMl` en vez de a `foods`, esos
+   * carbohidratos desaparecen del registro y de la dosis propuesta. Por eso
+   * el prompt enumera las bebidas que NO son agua en vez de decir "solo agua"
+   * y confiar en que se entienda.
+   */
+  const prompts = [
+    ['visión', mealVisionSystemPrompt],
+    ['texto', mealTextSystemPrompt],
+    ['edición', mealEditSystemPrompt],
+  ] as const;
+
+  it.each(prompts)('el prompt de %s manda el agua a waterMl y no a foods', (_name, prompt) => {
+    expect(prompt).toContain('waterMl');
+    expect(prompt).toContain('Only plain water counts');
+    expect(prompt).toContain('never in waterMl');
+  });
+
+  it.each(prompts)('el prompt de %s nombra las bebidas que NO son agua', (_name, prompt) => {
+    for (const drink of ['juice', 'soft drink', 'milk', 'coffee with milk', 'soup']) {
+      expect(prompt).toContain(drink);
+    }
+  });
+
+  it.each(prompts)('el prompt de %s prohíbe inventar un volumen', (_name, prompt) => {
+    expect(prompt).toContain('return null');
+    expect(prompt).toContain('Never guess a round volume');
   });
 });

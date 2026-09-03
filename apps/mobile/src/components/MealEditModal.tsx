@@ -515,6 +515,17 @@ export function MealEditModal({
             </View>
           ))}
 
+          {proposal.estimate.waterMl === null || proposal.estimate.waterMl === undefined ? null : (
+            // Este editor cambia la COMIDA; el agua es un registro aparte y se
+            // edita en el maestro. Si la IA la detectó y no se dijera acá, el
+            // dato se perdería en silencio — y un dato que la app vio y no
+            // dice es peor que uno que no vio.
+            <Text style={styles.waterNote}>
+              La IA también vio unos {Math.round(proposal.estimate.waterMl)} mL de agua. El agua se registra
+              aparte de la comida: anótala con el botón Agua, o abriendo esta entrada desde el timeline.
+            </Text>
+          )}
+
           <View style={styles.diffBox}>
             <DiffRow label="Carbohidratos" before={carbsInput} after={String(proposal.totals.carbsG)} unit="g" />
             <DiffRow label="Proteína" before={proteinInput} after={String(proposal.totals.proteinG)} unit="g" />
@@ -715,6 +726,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     marginBottom: spacing.md,
   },
+  waterNote: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: spacing.sm },
   proposalTitle: { fontSize: 15, fontWeight: '700', color: colors.warning, marginBottom: spacing.sm },
   foodRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.xs },
   foodNameWrap: { flex: 1, paddingRight: spacing.md },

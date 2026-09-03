@@ -15,6 +15,7 @@ import {
   MealEventSchema,
   NutritionProfileSchema,
   NoteEventSchema,
+  WaterEventSchema,
   TherapyProfileSchema,
   VitalsEventSchema,
   type ActivityEvent,
@@ -27,6 +28,7 @@ import {
   type MealEvent,
   type NutritionProfile,
   type NoteEvent,
+  type WaterEvent,
   type TherapyProfile,
   type VitalsEvent,
 } from '@type1a/schemas';
@@ -176,6 +178,19 @@ export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS vitals_events_timestamp ON vitals_events(timestamp);
+    -- Agua bebida (2026-09-03). Tabla propia y no un campo de comida: el agua
+    -- se toma entre comidas tanto como con ellas, y colgarla de una comida
+    -- obligaría a inventar una comida para registrar un vaso. Ver
+    -- WaterEventSchema en packages/schemas para el resto del razonamiento.
+    CREATE TABLE IF NOT EXISTS water_events (
+      id TEXT PRIMARY KEY,
+      timestamp TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      entry_group_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS water_events_timestamp ON water_events(timestamp);
+    CREATE INDEX IF NOT EXISTS water_events_group ON water_events(entry_group_id);
     -- Recetas (2026-09-01). ADITIVAS: ninguna fila de food_catalog se toca, se
     -- reinterpreta ni se borra, así que el catálogo que ya está en el teléfono
     -- sigue funcionando exactamente igual.
@@ -974,6 +989,14 @@ export async function saveMealWithEpisode(
  */
 const InsulinUnitsSchema = InsulinEventSchema.shape.units;
 const CarbGramsSchema = CarbEventSchema.shape.carbsG;
+const WaterMlSchema = WaterEventSchema.shape.ml;
+
+/** Traduce la procedencia del formulario a la del evento guardado. */
+function waterSourceFor(fromAi: 'photo' | 'text' | undefined): WaterEvent['source'] {
+  if (fromAi === 'photo') return 'ai_photo';
+  if (fromAi === 'text') return 'ai_text';
+  return 'manual';
+}
 /** Gramos de un macro, con el mismo límite que `MealEventSchema`. */
 const MacroGramsSchema = MealEventSchema.shape.proteinG.unwrap();
 const GlucoseValueSchema = CGMReadingSchema.shape.glucose;
@@ -1011,6 +1034,15 @@ function vitalsPatchHasValue(patch: VitalsPatch | undefined): boolean {
 }
 
 export interface UnifiedEntryInput {
+  /** Agua bebida en esta entrada, en mL. Ausente = no hubo. */
+  waterMl?: number;
+  /**
+   * Cómo llegó ese volumen. Ausente = lo escribió ella.
+   *
+   * Se guarda en `WaterEvent.source`, que el detalle del registro imprime: un
+   * número que produjo un modelo no puede mostrarse como "Ingresado a mano".
+   */
+  waterFromAi?: 'photo' | 'text';
   manualGlucose?: number;
   description?: string;
   carbsG?: number;
@@ -1103,6 +1135,7 @@ export interface UnifiedEntryOutcome {
   savedRapid: boolean;
   savedBasal: boolean;
   savedNote: boolean;
+  savedWater: boolean;
   /**
    * Episodios cuyas notificaciones ya programadas dejaron de describir la
    * realidad y hay que **cancelar antes** de programar las nuevas.
@@ -1121,6 +1154,7 @@ const EMPTY_OUTCOME = (): UnifiedEntryOutcome => ({
   savedRapid: false,
   savedBasal: false,
   savedNote: false,
+  savedWater: false,
   movedEpisodeIds: [],
 });
 
@@ -1171,6 +1205,11 @@ export async function saveUnifiedEntry(
   if (input.basalUnits !== undefined) InsulinUnitsSchema.parse(input.basalUnits);
   if (input.carbsG !== undefined) CarbGramsSchema.parse(input.carbsG);
   if (input.manualGlucose !== undefined) GlucoseValueSchema.parse(input.manualGlucose);
+  // El agua entra a la validación previa por la misma razón que las demás: su
+  // insert corre dentro de la transacción, así que un 20000 tecleado por 2000
+  // tumbaba el guardado ENTERO —la glucosa y las unidades que sí estaban
+  // bien— detrás de un "no se pudo guardar" que no decía qué campo fue.
+  if (input.waterMl !== undefined) WaterMlSchema.parse(input.waterMl);
 
   const hasMeal = hasMealContent(input);
 
@@ -1277,6 +1316,17 @@ export async function saveUnifiedEntry(
       }, entryGroupId);
     }
 
+    if (input.waterMl !== undefined) {
+      await saveWaterEvent(db, {
+        id: Crypto.randomUUID(),
+        timestamp,
+        ml: input.waterMl,
+        source: waterSourceFor(input.waterFromAi),
+        createdAt: timestamp,
+      }, entryGroupId);
+      outcome.savedWater = true;
+    }
+
     if (input.note !== undefined) {
       await saveNoteEvent(db, {
         id: Crypto.randomUUID(),
@@ -1327,7 +1377,7 @@ async function moveEntryGroupRows(
   const movedEpisodeIds: string[] = [];
   let previousTimestamp: string | null = null;
 
-  for (const table of ['insulin_events', 'carb_events', 'note_events', 'meal_events', 'vitals_events'] as const) {
+  for (const table of ['insulin_events', 'carb_events', 'note_events', 'meal_events', 'vitals_events', 'water_events'] as const) {
     const rows = await db.getAllAsync<{ id: string; timestamp: string; payload: string | null }>(
       // `carb_events` no tiene payload: sus datos son columnas. El SELECT
       // pide NULL en su lugar para que el bucle sea uno solo.
@@ -1844,6 +1894,30 @@ export async function updateUnifiedEntryGroup(
       await deleteNoteEvent(db, existingNote.id);
     }
 
+    // Agua: mismo contrato que la nota. Un `undefined` borra, porque el
+    // maestro manda el campo SIEMPRE al editar y `undefined` solo llega
+    // cuando ella lo vació.
+    const existingWater = await db.getFirstAsync<{ id: string }>(
+      'SELECT id FROM water_events WHERE entry_group_id = ?',
+      entryGroupId,
+    );
+    if (input.waterMl !== undefined) {
+      if (existingWater === null) {
+        await saveWaterEvent(db, {
+          id: Crypto.randomUUID(),
+          timestamp,
+          ml: input.waterMl,
+          source: waterSourceFor(input.waterFromAi),
+          createdAt: timestamp,
+        }, entryGroupId);
+      } else {
+        await updateWaterEvent(db, existingWater.id, input.waterMl);
+      }
+      outcome.savedWater = true;
+    } else if (existingWater !== null) {
+      await deleteWaterEvent(db, existingWater.id);
+    }
+
     // If a sensor-anchored entry has had every attachment removed, it's no
     // longer an "entry" — just the plain sensor reading again. Detach it
     // (clear the group id) rather than leave a one-item group that would
@@ -2000,6 +2074,11 @@ export async function deleteUnifiedEntryGroup(db: SQLiteDatabase, entryGroupId: 
     await db.runAsync('DELETE FROM insulin_events WHERE entry_group_id = ?', entryGroupId);
     await db.runAsync('DELETE FROM note_events WHERE entry_group_id = ?', entryGroupId);
     await db.runAsync('DELETE FROM vitals_events WHERE entry_group_id = ?', entryGroupId);
+    // Sin esta línea la fila de agua quedaba con un `entry_group_id` colgando:
+    // seguía sumando al total del día para siempre, reaparecía como una
+    // "Entrada vacía" en el timeline, y borrar esa entrada volvía a correr las
+    // mismas consultas — o sea que no había forma de sacarla nunca.
+    await db.runAsync('DELETE FROM water_events WHERE entry_group_id = ?', entryGroupId);
   });
 }
 
@@ -2102,6 +2181,56 @@ export async function getActivityEvents(db: SQLiteDatabase, from: Date, to: Date
     to.toISOString(),
   );
   return rows.flatMap((row) => decodeRow(row.payload, ActivityEventSchema));
+}
+
+/**
+ * Registra agua bebida.
+ *
+ * `INSERT OR IGNORE` como el resto: reintentar un guardado no duplica el vaso.
+ */
+export async function saveWaterEvent(db: SQLiteDatabase, water: WaterEvent, entryGroupId?: string): Promise<void> {
+  const parsed = WaterEventSchema.parse(water);
+  await db.runAsync(
+    'INSERT OR IGNORE INTO water_events (id, timestamp, payload, created_at, entry_group_id) VALUES (?, ?, ?, ?, ?)',
+    parsed.id,
+    parsed.timestamp,
+    JSON.stringify(parsed),
+    parsed.createdAt,
+    entryGroupId ?? null,
+  );
+}
+
+export async function updateWaterEvent(db: SQLiteDatabase, id: string, ml: number): Promise<void> {
+  const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM water_events WHERE id = ?', id);
+  if (row === null) return;
+  const existing = WaterEventSchema.parse(JSON.parse(row.payload));
+  const next = WaterEventSchema.parse({ ...existing, ml });
+  await db.runAsync('UPDATE water_events SET payload = ? WHERE id = ?', JSON.stringify(next), id);
+}
+
+export async function deleteWaterEvent(db: SQLiteDatabase, id: string): Promise<void> {
+  await db.runAsync('DELETE FROM water_events WHERE id = ?', id);
+}
+
+/**
+ * El agua de un rango.
+ *
+ * `tally` viaja igual que en las otras lecturas: una fila ilegible no puede
+ * pasar por "no tomaste agua". Aquí el costo de mentir es bajo comparado con
+ * una glucosa, pero la regla es la misma y el hábito importa más que el caso.
+ */
+export async function getWaterEvents(
+  db: SQLiteDatabase,
+  from: Date,
+  to: Date,
+  tally?: DecodeTally,
+): Promise<WaterEvent[]> {
+  const rows = await db.getAllAsync<{ payload: string }>(
+    'SELECT payload FROM water_events WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp ASC',
+    from.toISOString(),
+    to.toISOString(),
+  );
+  return rows.flatMap((row) => decodeRow(row.payload, WaterEventSchema, tally));
 }
 
 export async function saveNoteEvent(db: SQLiteDatabase, note: NoteEvent, entryGroupId?: string): Promise<void> {
@@ -2518,6 +2647,7 @@ interface EntryGroupAccumulator {
   basal?: InsulinEvent;
   note?: NoteEvent;
   vitals?: VitalsEvent;
+  water?: WaterEvent;
 }
 
 /**
@@ -2537,7 +2667,7 @@ function glucoseOriginSuffix(origin: CGMReading['origin']): string {
 }
 
 export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<TimelineItem[]> {
-  const [insulinRows, carbRows, mealRows, episodeRows, glucoseRows, noteRows, groupedVitalsRows, looseVitalsRows] = await Promise.all([
+  const [insulinRows, carbRows, mealRows, episodeRows, glucoseRows, noteRows, groupedVitalsRows, looseVitalsRows, waterRows] = await Promise.all([
     db.getAllAsync<{ payload: string; entry_group_id: string | null }>(
       'SELECT payload, entry_group_id FROM insulin_events ORDER BY timestamp DESC LIMIT ?',
       limit,
@@ -2593,6 +2723,10 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
     ),
     db.getAllAsync<{ payload: string; entry_group_id: string | null }>(
       'SELECT payload, entry_group_id FROM vitals_events WHERE entry_group_id IS NULL ORDER BY timestamp DESC LIMIT ?',
+      limit,
+    ),
+    db.getAllAsync<{ payload: string; entry_group_id: string | null }>(
+      'SELECT payload, entry_group_id FROM water_events ORDER BY timestamp DESC LIMIT ?',
       limit,
     ),
   ]);
@@ -2748,6 +2882,26 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
       raw: note.data,
     });
   }
+  // El agua suelta se ve en el timeline como cualquier otro registro: si se
+  // guarda y no se ve, no se puede corregir ni borrar. Es la misma falla que
+  // tuvieron las cetonas sueltas y que costó un `WHERE` de más.
+  for (const row of waterRows) {
+    const water = WaterEventSchema.safeParse(safeJsonParse(row.payload));
+    if (!water.success) continue;
+    if (row.entry_group_id !== null) {
+      groupFor(row.entry_group_id, water.data.timestamp).water = water.data;
+      continue;
+    }
+    items.push({
+      id: water.data.id,
+      kind: 'water',
+      timestamp: water.data.timestamp,
+      title: 'Agua',
+      detail: `${water.data.ml} mL`,
+      tone: 'blue',
+      raw: water.data,
+    });
+  }
   for (const row of episodeRows) {
     const parsed = parseOptionalEpisodePayloads(row.metrics_json, row.insight_json);
     const peak = parsed.metrics?.peakGlucose;
@@ -2799,6 +2953,9 @@ export async function getTimeline(db: SQLiteDatabase, limit = 80): Promise<Timel
       // que el formulario permite, aparecía literalmente como "Entrada
       // vacía".
       group.vitals?.ketonesMmolL === undefined ? null : `${group.vitals.ketonesMmolL} mmol/L cetonas`,
+      // Por la misma razón que las cetonas: una entrada cuyo único contenido
+      // es agua aparecía como "Entrada registrada · Entrada vacía".
+      group.water === undefined ? null : `${group.water.ml} mL agua`,
       group.note === undefined ? null : 'nota',
     ].filter((part): part is string => part !== null);
     items.push({
@@ -2855,6 +3012,7 @@ function entryGroupRaw(entryGroupId: string, group: EntryGroupAccumulator): Time
     ...(group.rapid?.correctionUnits === undefined ? {} : { rapidCorrectionUnits: group.rapid.correctionUnits }),
     ...(group.rapid?.iobUnits === undefined ? {} : { rapidIobUnits: group.rapid.iobUnits }),
     ...(group.basal?.insulinName === undefined ? {} : { basalInsulinName: group.basal.insulinName }),
+    ...(group.water === undefined ? {} : { waterMl: group.water.ml }),
     ...(group.note === undefined ? {} : { note: group.note.text }),
     ...(group.vitals?.ketonesMmolL === undefined ? {} : { ketonesMmolL: group.vitals.ketonesMmolL }),
     // Peso y presión, por la misma razón que las cetonas.
@@ -2882,6 +3040,12 @@ function singleGroupItem(entryGroupId: string, group: EntryGroupAccumulator): Ti
     group.basal === undefined ? null : 'basal',
     group.note === undefined ? null : 'note',
     group.vitals === undefined ? null : 'vitals',
+    // El agua cuenta como pieza. Sin esto, un grupo de glucosa + agua se
+    // dibujaba como una glucosa suelta, el maestro la abría sin conocer el
+    // campo, y al guardar **borraba el agua en silencio** — exactamente el
+    // fallo que este archivo documenta en `moveEntryGroupRows`: un formulario
+    // que no conoce un campo no puede destruirlo.
+    group.water === undefined ? null : 'water',
   ].filter((piece): piece is string => piece !== null);
   if (pieces.length !== 1) return null;
 

@@ -44,6 +44,7 @@ describe('Abacus RouteLLM services', () => {
             confidence: 0.7,
           },
         ],
+        waterMl: null,
         uncertaintyNotes: ['La porción se estima visualmente.'],
       });
     };
@@ -77,6 +78,7 @@ describe('Abacus RouteLLM services', () => {
             confidence: 0.3,
           },
         ],
+        waterMl: null,
         uncertaintyNotes: ['No hay foto: la porción es una suposición.'],
       });
     };
@@ -121,6 +123,7 @@ describe('Abacus RouteLLM services', () => {
             confidence: 0.7,
           },
         ],
+        waterMl: null,
         uncertaintyNotes: [],
       });
     };
@@ -205,6 +208,7 @@ describe('modo edición (Fase 17)', () => {
         confidence: 0.5,
       },
     ],
+    waterMl: null,
     uncertaintyNotes: ['El tipo de pan no se especifica.'],
   };
 

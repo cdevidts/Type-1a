@@ -24,6 +24,28 @@ import { roundToIncrement } from './correction';
  * activa; restarla ahí te deja corta y es el error clásico de quien
  * implementa esto por primera vez.
  *
+ * ## El error que cometimos igual, y cómo se ve (2026-09-03)
+ *
+ * El comentario de arriba estaba escrito y el código igual lo hacía mal. La
+ * resta era `mealUnits + (correcciónUnits − IOB)` sin tope, así que cuando el
+ * IOB superaba a la corrección **el sobrante seguía viaje y se comía la
+ * cobertura de los carbohidratos**. La cuenta era formalmente "solo de la
+ * corrección" y el efecto era exactamente el prohibido.
+ *
+ * Lo encontró Verónica con el caso más cotidiano que hay: comió y se corrigió
+ * hace diez minutos, ahora quiere comer 20 g más, y la app le proponía **0 U**
+ * porque le quedaban 9 U activas. Los 20 g de carbohidratos nuevos necesitan
+ * sus 2 U pase lo que pase.
+ *
+ * Su regla, que es la correcta y ahora es la del código: **carbohidratos
+ * nuevos = siempre te pinchas; corrección nueva = no necesariamente.**
+ *
+ * El tope va en `correctionAfterActiveUnits`: el IOB puede llevar la
+ * corrección hasta 0 y ahí se detiene. Lo que sí puede seguir bajando el total
+ * es una **glucosa bajo objetivo**, que es otra cosa y se calcula antes de
+ * mirar el IOB — estar en 70 sí es motivo para poner menos insulina de la que
+ * pediría el plato, y esa resta ya existía y se conserva.
+ *
  * `activeInsulinUnits` es **opcional**. Sin insulina configurada no hay curva
  * y no hay IOB: el resultado es exactamente el de antes y la pantalla lo dice.
  * "No lo sé" nunca se convierte en "no queda nada".
@@ -68,11 +90,24 @@ export interface MealBolusResult {
    */
   activeInsulinUnits: number | undefined;
   /**
-   * La corrección **después** de descontar el IOB, antes de redondear. Puede
-   * quedar negativa —ya tienes de sobra para lo que estás alta— y en ese caso
-   * reduce el bolo de comida, igual que estar bajo objetivo.
+   * La corrección **después** de descontar el IOB, antes de redondear.
+   *
+   * Nunca baja de 0 por culpa del IOB: tener insulina de sobra significa "no
+   * corrijas", no "come sin insulina". Sí puede ser negativa cuando la
+   * **glucosa** está bajo objetivo, que es una razón distinta y anterior.
    */
   correctionAfterActiveUnits: number;
+  /**
+   * Cuánto IOB alcanzó a descontarse de verdad, y cuánto sobró sin usar.
+   *
+   * Se expone porque la pantalla tiene que poder decir "de tus 9 U activas se
+   * usaron 3 para anular la corrección; las otras 6 no tocan tu comida". Sin
+   * esto el desglose muestra un −9 que no cuadra con el total y parece un
+   * error de la app justo donde menos conviene dudar.
+   */
+  activeInsulinAppliedUnits: number;
+  /** El IOB que quedó sin aplicar porque ya no había corrección que anular. */
+  activeInsulinUnusedUnits: number;
   /** `mealUnits + correctionAfterActiveUnits`, floored at 0. */
   totalRawUnits: number;
   totalRoundedUnits: number;
@@ -97,15 +132,26 @@ export function calculateMealBolus(input: z.input<typeof MealBolusInputSchema>):
   const correctionUnits = parsed.currentGlucose === undefined
     ? 0
     : (parsed.currentGlucose - parsed.targetGlucose) / parsed.correctionFactor;
-  // El IOB sale SOLO de la corrección. Restarlo del total mezclaría las dos
-  // mitades y dejaría corta la cobertura de los carbohidratos.
-  const correctionAfterActiveUnits = correctionUnits - (parsed.activeInsulinUnits ?? 0);
+  // El IOB sale SOLO de la corrección, y **con tope en 0**. Sin ese tope el
+  // sobrante se comía la cobertura de los carbohidratos, que es justo lo que
+  // el comentario de arriba prohíbe. Ver el bloque "El error que cometimos
+  // igual" en la cabecera de este archivo.
+  //
+  // Cuando la corrección ya es negativa por glucosa baja no hay nada que
+  // descontar: el IOB no aplica y esa resta —que sí baja el total— se
+  // conserva entera, porque estar en 70 es motivo real para poner menos.
+  const activeUnits = parsed.activeInsulinUnits ?? 0;
+  const activeInsulinAppliedUnits = correctionUnits <= 0 ? 0 : Math.min(activeUnits, correctionUnits);
+  const activeInsulinUnusedUnits = activeUnits - activeInsulinAppliedUnits;
+  const correctionAfterActiveUnits = correctionUnits - activeInsulinAppliedUnits;
   const totalRawUnits = Math.max(0, mealUnits + correctionAfterActiveUnits);
 
   return {
     mealUnits,
     correctionUnits,
     activeInsulinUnits: parsed.activeInsulinUnits,
+    activeInsulinAppliedUnits,
+    activeInsulinUnusedUnits,
     correctionAfterActiveUnits,
     totalRawUnits,
     totalRoundedUnits: roundToIncrement(totalRawUnits, parsed.doseIncrement),
@@ -118,6 +164,13 @@ export function calculateMealBolus(input: z.input<typeof MealBolusInputSchema>):
     correctionFormula: parsed.currentGlucose === undefined
       ? null
       : `(${parsed.currentGlucose} − ${parsed.targetGlucose}) ÷ ${parsed.correctionFactor}`
-        + (parsed.activeInsulinUnits === undefined ? '' : ` − ${parsed.activeInsulinUnits} U activas`),
+        // La resta que se imprime es la que se hizo. Antes decía "− 9 U activas"
+      // sobre una corrección de 1.4 que solo perdió 1.4: la expresión daba
+      // −7.6 y el desglose de al lado decía lo contrario. Dos relatos del
+      // mismo número en una calculadora de dosis, y el falso parecía la
+      // fórmula.
+      + (activeInsulinAppliedUnits <= 0
+        ? ''
+        : ` − ${Number(activeInsulinAppliedUnits.toFixed(2))} U activas`),
   };
 }

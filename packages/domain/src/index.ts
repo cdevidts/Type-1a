@@ -9,6 +9,7 @@ export * from './glucose-metrics';
 export * from './glucose-thresholds';
 export * from './insulin-catalog';
 export * from './insulin-duration';
+export * from './insulin-effect-curve';
 export * from './iob';
 export * from './ketones';
 export * from './catalog-proposal';

@@ -48,6 +48,7 @@ describe('Type 1A API', () => {
         model: 'test',
         estimate: {
           foods: [{ name: 'pan', estimatedGrams: 50, servingGrams: 30, servingLabel: '1 rebanada', carbsG: 25, proteinG: 4, fatG: 1, fiberG: 2, caloriesKcal: 130, confidence: 0.8 }],
+          waterMl: null,
           uncertaintyNotes: [],
         },
         totals: { carbsG: 25, proteinG: 4, fatG: 1, fiberG: 2, caloriesKcal: 130 },
@@ -90,6 +91,7 @@ describe('Type 1A API', () => {
           model: 'test',
           estimate: {
             foods: [{ name: 'sopaipillas', estimatedGrams: null, servingGrams: null, servingLabel: null, carbsG: 40, proteinG: 3, fatG: 8, fiberG: 1, caloriesKcal: 260, confidence: 0.3 }],
+            waterMl: null,
             uncertaintyNotes: ['No hay foto.'],
           },
           totals: { carbsG: 40, proteinG: 3, fatG: 8, fiberG: 1, caloriesKcal: 260 },
@@ -120,6 +122,7 @@ describe('Type 1A API', () => {
           model: 'test',
           estimate: {
             foods: [{ name: 'sándwich de queso', estimatedGrams: 160, servingGrams: null, servingLabel: null, carbsG: 38, proteinG: 16, fatG: 14, fiberG: 3, caloriesKcal: 400, confidence: 0.5 }],
+            waterMl: null,
             uncertaintyNotes: ['El tipo de pan no se especifica.'],
           },
           totals: { carbsG: 38, proteinG: 16, fatG: 14, fiberG: 3, caloriesKcal: 400 },

@@ -46,10 +46,10 @@ export function mealOf(item: TimelineItem): MealEvent | null {
 }
 
 /** Las seis secciones del maestro. La calculadora es una más, no un anexo. */
-export type MasterSection = 'glucose' | 'meal' | 'calculator' | 'insulin' | 'ketones' | 'note';
+export type MasterSection = 'glucose' | 'meal' | 'calculator' | 'insulin' | 'ketones' | 'water' | 'note';
 
 export const MASTER_SECTIONS: readonly MasterSection[] = [
-  'glucose', 'meal', 'calculator', 'insulin', 'ketones', 'note',
+  'glucose', 'meal', 'calculator', 'insulin', 'ketones', 'water', 'note',
 ];
 
 /**
@@ -77,6 +77,7 @@ export function masterTargetOf(item: TimelineItem): MasterTarget {
     case 'insulin': return { kind: 'promote', table: 'insulin_events', rowId: item.raw.id };
     case 'carbs': return { kind: 'promote', table: 'carb_events', rowId: item.id };
     case 'note': return { kind: 'promote', table: 'note_events', rowId: item.raw.id };
+    case 'water': return { kind: 'promote', table: 'water_events', rowId: item.raw.id };
     case 'meal': return { kind: 'promote', table: 'meal_events', rowId: item.raw.id };
     case 'vitals': return { kind: 'promote', table: 'vitals_events', rowId: item.raw.id };
     // Un episodio es un agregado calculado: sus métricas salen del CGM, nadie
@@ -126,6 +127,8 @@ export interface MasterSeed {
   weightKg?: number;
   systolicBP?: number;
   diastolicBP?: number;
+  /** Agua bebida en este registro, en mL. */
+  waterMl?: number;
   note?: string;
   /**
    * `false` solo cuando el momento lo fija una fuente externa: la hora de un
@@ -156,6 +159,8 @@ export function masterSeedFrom(item: TimelineItem): MasterSeed {
         timestampEditable: !readOnly,
       };
     }
+    case 'water':
+      return { ...EMPTY_SEED, timestamp: item.raw.timestamp, waterMl: item.raw.ml };
     case 'entry': {
       const raw = item.raw;
       const readOnly = raw.glucoseOrigin !== undefined && raw.glucoseOrigin !== 'manual';
@@ -179,6 +184,7 @@ export function masterSeedFrom(item: TimelineItem): MasterSeed {
         ...(raw.rapidInsulinName === undefined ? {} : { rapidInsulinName: raw.rapidInsulinName }),
         ...(raw.basalInsulinName === undefined ? {} : { basalInsulinName: raw.basalInsulinName }),
         ...(raw.ketonesMmolL === undefined ? {} : { ketonesMmolL: raw.ketonesMmolL }),
+        ...(raw.waterMl === undefined ? {} : { waterMl: raw.waterMl }),
         ...(raw.note === undefined ? {} : { note: raw.note }),
         // El grupo entero se mueve junto, salvo que lo ancle un sensor.
         timestampEditable: !readOnly,
@@ -271,6 +277,7 @@ export function masterSectionsFor(seed: MasterSeed): Set<MasterSection> {
     || seed.systolicBP !== undefined || seed.diastolicBP !== undefined) {
     open.add('ketones');
   }
+  if (seed.waterMl !== undefined) open.add('water');
   if (seed.note !== undefined) open.add('note');
   return open;
 }
@@ -290,6 +297,7 @@ export function masterTitleFor(item: TimelineItem): string {
     case 'insulin': return 'Editar insulina';
     case 'carbs': return 'Editar carbohidratos';
     case 'note': return 'Editar nota';
+    case 'water': return 'Editar agua';
     case 'vitals': return 'Editar cetonas y vitales';
     case 'episode': return 'Episodio de comida';
   }

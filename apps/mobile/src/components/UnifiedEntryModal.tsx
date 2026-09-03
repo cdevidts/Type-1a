@@ -15,6 +15,7 @@ import {
   type CartLine,
   type CatalogFood,
   type Recipe,
+  waterEstimateIsTrustworthy,
 } from '@type1a/domain';
 import type { CGMReading, InsulinEvent, MealAnalysisResult, MealEvent, TherapyProfile } from '@type1a/schemas';
 
@@ -58,6 +59,7 @@ interface DoseSuggestion {
   breakdown: {
     mealUnits?: number | undefined;
     correctionUnits: number;
+    activeInsulinAppliedUnits?: number | undefined;
     activeInsulinUnits: number | undefined;
     activeDoseCount: number;
     totalUnits: number;
@@ -95,6 +97,7 @@ const FOCUS_TITLE: Record<EntryFocus, string> = {
   meal: 'Comida',
   insulin: 'Insulina',
   ketones: 'Cetonas y vitales',
+  water: 'Agua',
   note: 'Nota',
 };
 
@@ -278,6 +281,16 @@ export function UnifiedEntryModal({
   const [systolic, setSystolic] = useState('');
   const [diastolic, setDiastolic] = useState('');
   const [note, setNote] = useState('');
+  const [waterMl, setWaterMl] = useState('');
+  /**
+   * Cómo llegó el número del campo de agua: `null` = lo escribió ella.
+   *
+   * No es un booleano porque la procedencia que se guarda distingue foto de
+   * texto (`WaterEventSchema.source`), y el detalle del registro la imprime:
+   * decir "estimado desde una foto" cuando no hubo foto es igual de falso que
+   * decir "a mano".
+   */
+  const [waterFromAi, setWaterFromAi] = useState<'photo' | 'text' | null>(null);
   const [imageUri, setImageUri] = useState<string | null>(null);
   /** `true` = la usuaria pidió quitar la foto que ya estaba guardada. */
   const [imageRemoved, setImageRemoved] = useState(false);
@@ -325,7 +338,13 @@ export function UnifiedEntryModal({
     return {
       ...(breakdown.mealUnits === undefined ? {} : { rapidMealUnits: Number(breakdown.mealUnits.toFixed(2)) }),
       rapidCorrectionUnits: Number(breakdown.correctionUnits.toFixed(2)),
-      ...(breakdown.activeInsulinUnits === undefined ? {} : { rapidIobUnits: breakdown.activeInsulinUnits }),
+      // El IOB **aplicado**, no el disponible. Guardar el total era describir
+      // en el registro clínico exactamente la aritmética que el ADR 0006
+      // eliminó: el PDF del médico decía "2 U de comida, 1.4 de corrección,
+      // menos 9 U activas" para una dosis de 2 U.
+      ...(breakdown.activeInsulinUnits === undefined
+        ? {}
+        : { rapidIobUnits: Number((breakdown.activeInsulinAppliedUnits ?? breakdown.activeInsulinUnits).toFixed(2)) }),
     };
   }
 
@@ -382,6 +401,8 @@ export function UnifiedEntryModal({
         setSystolic(numberOrBlank(editSeed.systolicBP));
         setDiastolic(numberOrBlank(editSeed.diastolicBP));
         setNote(editSeed.note ?? '');
+        setWaterMl(editSeed.waterMl === undefined ? '' : String(editSeed.waterMl));
+        setWaterFromAi(null);
         setImageUri(editSeed.imageUri ?? null);
         setImageRemoved(false);
         setOpenedAt(editSeed.timestamp);
@@ -424,6 +445,8 @@ export function UnifiedEntryModal({
         setRapid('');
         setBasal('');
         setNote('');
+        setWaterMl('');
+        setWaterFromAi(null);
         setProtein('');
         setFat('');
         setFiber('');
@@ -560,7 +583,7 @@ export function UnifiedEntryModal({
       // "estimada por IA y corregida por la usuaria" para una grasa y una
       // fibra que nunca vio. Ahora lo que se guarda es lo que está en
       // pantalla.
-      adoptAnalysis(nextAnalysis);
+      adoptAnalysis(nextAnalysis, 'photo');
       setMessage('Estimación lista. Escribe tú los carbohidratos que confirmas.');
     } catch (error) {
       setMessage(error instanceof MobileApiError
@@ -581,8 +604,29 @@ export function UnifiedEntryModal({
    * los carbohidratos cambian, así que una dosis anterior deja de
    * corresponder.
    */
-  function adoptAnalysis(next: MealAnalysisResult): void {
+  function adoptAnalysis(next: MealAnalysisResult, origin: 'photo' | 'text'): void {
     setAnalysis(next);
+    // El agua que la IA vio en la foto o leyó en la descripción se **precarga**
+    // en el campo, visible y editable — nunca se guarda sola. Es la misma regla
+    // que rige los macros estimados: lo que se guarda es lo que está en
+    // pantalla, y `AGENTS.md` mantiene lo estimado separado de lo confirmado.
+    //
+    // Solo si el campo está vacío: si ella ya escribió un número, una foto
+    // posterior no puede pisárselo.
+    const detectedWater = next.estimate.waterMl;
+    // El filtro estructural, no solo el prompt: si el texto o los alimentos
+    // nombran una bebida que NO es agua y ningún alimento la recoge, el
+    // volumen se descarta. Perder un vaso de agua es una molestia; perder los
+    // carbohidratos de un jugo es una dosis corta. Ver `ai-safety.ts`.
+    const waterTrusted = waterEstimateIsTrustworthy({
+      waterMl: detectedWater,
+      foodNames: next.estimate.foods.map((food) => food.name),
+      ...(description.trim() === '' ? {} : { description: description.trim() }),
+    });
+    if (detectedWater !== null && detectedWater !== undefined && waterTrusted && waterMl.trim() === '') {
+      setWaterMl(String(Math.round(detectedWater)));
+      setWaterFromAi(origin);
+    }
     setProtein(String(Math.round(next.totals.proteinG)));
     setFat(String(Math.round(next.totals.fatG)));
     setFiber(String(Math.round(next.totals.fiberG)));
@@ -618,7 +662,9 @@ export function UnifiedEntryModal({
           ...(description.trim() === '' ? {} : { note: description.trim() }),
         },
       });
-      adoptAnalysis(next);
+      // La corrección se escribe con palabras: la procedencia es texto,
+      // aunque la propuesta original hubiera salido de una foto.
+      adoptAnalysis(next, 'text');
       setInstruction('');
       setMessage('Propuesta corregida. Escribe tú los carbohidratos que confirmas; una dosis calculada antes ya no corresponde.');
     } catch (error) {
@@ -641,7 +687,7 @@ export function UnifiedEntryModal({
     setAnalysis(null);
     try {
       const nextAnalysis = await analyzeMealDescription(description.trim(), knownFoodNamesFrom(catalogFoods));
-      adoptAnalysis(nextAnalysis);
+      adoptAnalysis(nextAnalysis, 'text');
       setMessage('Estimación lista a partir del texto (sin foto, así que la incertidumbre es mayor). Escribe tú los carbohidratos que confirmas.');
     } catch (error) {
       setMessage(error instanceof MobileApiError
@@ -743,6 +789,7 @@ export function UnifiedEntryModal({
           mealUnits: result.mealUnits,
           correctionUnits: result.correctionUnits,
           activeInsulinUnits: result.activeInsulinUnits,
+          activeInsulinAppliedUnits: result.activeInsulinAppliedUnits,
           activeDoseCount: active?.doseCount ?? 0,
           totalUnits: result.totalRoundedUnits,
         },
@@ -846,6 +893,23 @@ export function UnifiedEntryModal({
     if (text.trim() === '') return seeded === undefined ? undefined : null;
     const parsed = parseNonNegativeNumber(text);
     return parsed === null ? undefined : parsed;
+  }
+
+  /**
+   * El agua del formulario, en mL.
+   *
+   * `null` = el campo está vacío. En edición eso significa **borrar**; al
+   * crear, "no hay agua en esta entrada". Un texto que no es un número también
+   * cae a `null` en vez de guardar un `NaN`: la validación de rango la hace
+   * Zod al escribir, y un vaso mal tecleado no puede tumbar el guardado de una
+   * glucosa que sí estaba bien.
+   */
+  function parsedWaterMl(): number | null {
+    const text = waterMl.trim();
+    if (text === '') return null;
+    const parsed = Number(text.replace(',', '.'));
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return Math.round(parsed);
   }
 
   function readMealNumbers(): {
@@ -1011,13 +1075,20 @@ export function UnifiedEntryModal({
           rapidIncludesCorrection: rapidFromCalculator && correctionIncluded,
           ...adoptedBreakdown(),
           ...(Object.keys(vitals).length === 0 ? {} : { vitals }),
+          // `waterMl` viaja SIEMPRE en edición, `null` incluido: vaciar el
+          // campo tiene que borrar el registro, igual que con la nota. Un
+          // `undefined` aquí significaría "no lo toques" y dejaría un vaso
+          // que ella acaba de quitar.
+          waterMl: parsedWaterMl(),
+          ...(waterFromAi === null || parsedWaterMl() === null ? {} : { waterFromAi }),
           ...(note.trim() === '' ? {} : { note: note.trim() }),
         });
       } else {
         const hasSomething = mealNumbers.carbsG !== undefined || rapidUnits !== undefined || basalUnits !== undefined
           || glucoseValue !== undefined || description.trim() !== '' || note.trim() !== ''
           || mealNumbers.proteinG !== undefined || mealNumbers.fatG !== undefined || mealNumbers.fiberG !== undefined
-          || mealNumbers.caloriesKcal !== undefined || Object.keys(vitals).length > 0;
+          || mealNumbers.caloriesKcal !== undefined || Object.keys(vitals).length > 0
+          || parsedWaterMl() !== null;
         if (!hasSomething) {
           setMessage('Completa al menos un campo antes de guardar.');
           setBusy(false);
@@ -1039,6 +1110,8 @@ export function UnifiedEntryModal({
           ...(rapidUnits === undefined ? {} : { rapidUnits }),
           ...(basalUnits === undefined ? {} : { basalUnits }),
           ...(note.trim() === '' ? {} : { note: note.trim() }),
+          ...(parsedWaterMl() === null ? {} : { waterMl: parsedWaterMl()! }),
+          ...(waterFromAi === null || parsedWaterMl() === null ? {} : { waterFromAi }),
           ...(typeof vitals.ketonesMmolL === 'number' ? { ketonesMmolL: vitals.ketonesMmolL } : {}),
           ...(typeof vitals.weightKg === 'number' ? { weightKg: vitals.weightKg } : {}),
           ...(typeof vitals.systolicBP === 'number' ? { systolicBP: vitals.systolicBP } : {}),
@@ -1108,6 +1181,7 @@ export function UnifiedEntryModal({
     systolic.trim() === '' || diastolic.trim() === '' ? null : `presión ${systolic.trim()}/${diastolic.trim()} mmHg`,
   );
   const noteSummary = note.trim() === '' ? null : 'anotada';
+  const waterSummary = waterMl.trim() === '' ? null : `${waterMl.trim()} mL`;
 
   const title = editing !== null ? editing.title : (focus === 'all' ? 'Nueva entrada' : FOCUS_TITLE[focus]);
   /**
@@ -1590,6 +1664,62 @@ export function UnifiedEntryModal({
         </Text>
       </EntrySection>
 
+      {/*
+        Agua (2026-09-03). Sección propia y no un campo dentro de Comida: se
+        toma entre comidas tanto como con ellas, y meterla ahí obligaría a
+        abrir una comida para registrar un vaso.
+      */}
+      <EntrySection title="Agua" summary={waterSummary} initiallyOpen={sectionOpen('water')}>
+        <Field
+          label="Agua bebida"
+          value={waterMl}
+          unit="mL"
+          onChange={(next) => { setWaterMl(next); setWaterFromAi(null); }}
+        />
+        {waterFromAi !== null ? (
+          // La procedencia se declara, igual que con los macros estimados: un
+          // número que puso la IA y uno que escribió ella no son lo mismo.
+          <Text style={styles.hint}>
+            Este volumen lo estimó la IA {waterFromAi === 'photo' ? 'de la foto' : 'de lo que escribiste'}.
+            Revísalo: se guarda lo que quede escrito acá.
+          </Text>
+        ) : null}
+        <View style={styles.waterPresetRow}>
+          {WATER_PRESETS_ML.map((preset) => (
+            <Pressable
+              key={preset.ml}
+              style={styles.waterPreset}
+              onPress={() => {
+                // Suma en vez de reemplazar: registrar dos vasos es tocar dos
+                // veces, que es como se bebe. Reemplazar obligaría a hacer la
+                // suma de cabeza para corregir un número que ya estaba bien.
+                const current = Number(waterMl.replace(',', '.'));
+                const base = Number.isFinite(current) && current > 0 ? current : 0;
+                setWaterMl(String(Math.round(base + preset.ml)));
+                setWaterFromAi(null);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Sumar ${preset.label}`}
+            >
+              <Text style={styles.waterPresetText}>+{preset.label}</Text>
+            </Pressable>
+          ))}
+          {waterMl.trim() === '' ? null : (
+            <Pressable
+              style={styles.waterPreset}
+              onPress={() => { setWaterMl(''); setWaterFromAi(null); }}
+              accessibilityRole="button"
+              accessibilityLabel="Borrar el agua de esta entrada"
+            >
+              <Text style={styles.waterPresetText}>Borrar</Text>
+            </Pressable>
+          )}
+        </View>
+        <Text style={styles.hint}>
+          Solo agua. Un jugo o una bebida con azúcar tienen carbohidratos y van en Comida, con su dosis.
+        </Text>
+      </EntrySection>
+
       <EntrySection title="Nota" summary={noteSummary} initiallyOpen={sectionOpen('note')}>
         <TextInput
           style={styles.description}
@@ -1617,7 +1747,26 @@ export function UnifiedEntryModal({
   );
 }
 
+/**
+ * Los tamaños de vaso que se suman con un toque.
+ *
+ * No son una recomendación de cuánto beber: son los recipientes que existen
+ * de verdad. Un campo vacío en el que hay que teclear "250" cada vez es cómo
+ * un registro deja de hacerse.
+ */
+const WATER_PRESETS_ML = [
+  { ml: 200, label: '200 mL' },
+  { ml: 250, label: 'un vaso' },
+  { ml: 500, label: 'medio litro' },
+] as const;
+
 const styles = StyleSheet.create({
+  waterPresetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
+  waterPreset: {
+    minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.md,
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.background,
+  },
+  waterPresetText: { color: colors.navy, fontSize: 13, fontWeight: '800' },
   timeBox: { paddingBottom: spacing.sm, borderBottomColor: colors.line, borderBottomWidth: StyleSheet.hairlineWidth },
   timeLabel: { color: colors.muted, fontSize: 12, fontWeight: '800' },
   timeValue: { color: colors.ink, fontSize: 16, fontWeight: '700', marginTop: 4 },

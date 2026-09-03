@@ -1,6 +1,7 @@
 import type {
   ActivityEvent,
   CarbEvent,
+  WaterEvent,
   CGMReading,
   GlucoseInsight,
   InsulinEvent,
@@ -96,6 +97,11 @@ export interface ReportExport {
 export interface NutritionDayData {
   dayMeals: MealEvent[];
   dayCarbs: CarbEvent[];
+  /**
+   * Agua bebida en el día que se está mirando. Va acá y no en la ventana
+   * larga porque el agua es una meta **diaria**: no alimenta ningún patrón.
+   */
+  dayWater: WaterEvent[];
   patternMeals: MealEvent[];
   /**
    * Insulina, carbohidratos y actividad de la MISMA ventana larga que
@@ -133,7 +139,7 @@ export interface NutritionDayData {
  * por un build anterior y sus botones siguen emitiendo `carbs`/`rapid`, igual
  * que cualquier deep link viejo. `normalizeQuickRoute` los traduce.
  */
-export type QuickRoute = 'meal' | 'basal' | 'correction';
+export type QuickRoute = 'meal' | 'basal' | 'correction' | 'water';
 
 /**
  * Las tablas cuyo evento suelto se puede **promover** a entrada agrupada.
@@ -144,13 +150,13 @@ export type QuickRoute = 'meal' | 'basal' | 'correction';
  * una tabla exista en una y no en la otra, y el síntoma sería un botón
  * "Editar" que no hace nada.
  */
-export type PromotableTable = 'insulin_events' | 'carb_events' | 'note_events' | 'meal_events' | 'vitals_events';
+export type PromotableTable = 'insulin_events' | 'carb_events' | 'note_events' | 'meal_events' | 'vitals_events' | 'water_events';
 
 /**
  * Con qué sección arranca abierto el Modal Maestro. Vive acá y no en el
  * componente para que la regla se pueda probar sin montar React.
  */
-export type EntryFocus = 'all' | 'glucose' | 'meal' | 'insulin' | 'ketones' | 'note';
+export type EntryFocus = 'all' | 'glucose' | 'meal' | 'insulin' | 'ketones' | 'water' | 'note';
 
 /** Lo que puede llegar desde una notificación vieja o un deep link viejo. */
 export type LegacyQuickRoute = QuickRoute | 'carbs' | 'rapid';
@@ -233,6 +239,22 @@ export type TimelineItem =
       detail: string;
       tone: 'navy';
       raw: NoteEvent;
+    }
+  | {
+      /**
+       * Agua bebida suelta (2026-09-03).
+       *
+       * Aparece en el timeline como cualquier otro registro. Un dato que se
+       * guarda y no se ve es un dato que no se puede corregir ni borrar, y
+       * esta app ya tuvo esa falla con las cetonas sueltas.
+       */
+      id: string;
+      kind: 'water';
+      timestamp: string;
+      title: string;
+      detail: string;
+      tone: 'blue';
+      raw: WaterEvent;
     }
   | {
       /**
@@ -343,6 +365,8 @@ export interface TimelineEntryGroupRaw {
   basalInsulinName?: string;
   /** Calorías de la comida del grupo, si las tiene. */
   caloriesKcal?: number;
+  /** Agua bebida dentro de esta entrada, en mL. */
+  waterMl?: number;
   note?: string;
 }
 
@@ -418,6 +442,22 @@ export interface MasterEditPayload {
     systolicBP?: number | null;
     diastolicBP?: number | null;
   };
+  /**
+   * Agua de esta entrada, en mL. `null` = borrarla; `undefined` = no se tocó.
+   *
+   * El maestro la manda **siempre** al editar, para que vaciar el campo borre
+   * el registro en vez de dejarlo intacto — la misma regla que la nota.
+   */
+  waterMl?: number | null;
+  /**
+   * Si el volumen de agua lo estimó la IA y ella no lo corrigió.
+   *
+   * `WaterEventSchema.source` distingue `ai_photo`/`ai_text` de `manual`
+   * justamente para no perder eso, y el detalle del registro lo imprime. Sin
+   * este dato, un número que produjo un modelo se guardaba y se mostraba como
+   * "Ingresado a mano".
+   */
+  waterFromAi?: 'photo' | 'text';
   note?: string;
 }
 

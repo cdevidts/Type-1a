@@ -70,6 +70,8 @@ export interface NutritionProfileInput {
   weightKg: number;
   activityLevel: ActivityLevel;
   goal: NutritionGoal;
+  /** Meta de agua escrita por la usuaria. Ausente = referencia poblacional. */
+  waterMlTarget?: number | undefined;
 }
 
 /** Límite deliberadamente conservador — ver la nota de seguridad de arriba. */
@@ -143,6 +145,96 @@ export const FIBER_G_PER_1000_KCAL = 14;
  */
 export const MAX_FIBER_TARGET_G = 50;
 
+/**
+ * Ingesta adecuada de **agua total** del IOM (DRI 2004), en mL/día: todo lo
+ * que entra, bebidas y alimentos juntos.
+ *
+ * No es la meta que se muestra. Lo que la usuaria registra es agua **bebida**,
+ * y el propio informe dice que ~80 % del agua total viene de bebidas y el 20 %
+ * restante de la comida. Mostrar 2.700 mL como meta de vaso sería pedirle
+ * beber el agua de la fruta también.
+ */
+export const TOTAL_WATER_AI_ML: Readonly<Record<BiologicalSex, number>> = {
+  female: 2700,
+  male: 3700,
+};
+
+/** La fracción del agua total que el IOM atribuye a bebidas. */
+export const WATER_FROM_BEVERAGES_FRACTION = 0.8;
+
+/**
+ * Techo y piso de la meta de agua.
+ *
+ * El piso existe porque la meta no depende del peso ni de la energía —es una
+ * cifra por sexo— y no tiene sentido que baje. El techo es un freno a un
+ * override disparatado, no una recomendación.
+ */
+/**
+ * Piso de la **referencia calculada**, no del override.
+ *
+ * Ver `waterTargetMl`: lo que ella escribe no se sube nunca a este número.
+ */
+export const MIN_WATER_TARGET_ML = 1200;
+export const MAX_WATER_TARGET_ML = 6000;
+
+/**
+ * Meta diaria de agua bebida, en mL.
+ *
+ * Sale de una referencia **poblacional**, no de esta persona: el IOM la fijó
+ * para adultos sanos, sedentarios, en clima templado. Por eso `waterMlTarget`
+ * la sobrescribe y por eso la pantalla que la muestra tiene que decir de dónde
+ * viene — con ejercicio, calor o una restricción de líquidos indicada por su
+ * equipo, el número correcto es otro.
+ *
+ * Se redondea a 50 mL: la precisión al mililitro sería falsa sobre una
+ * referencia de este tipo.
+ */
+export function waterTargetMl(input: {
+  sex: BiologicalSex;
+  waterMlTarget?: number | undefined;
+}): number {
+  const override = input.waterMlTarget;
+  if (override !== undefined && Number.isFinite(override) && override > 0) {
+    // **Solo el techo.** El piso NO se aplica a lo que ella escribió: alguien
+    // con una restricción de 1.000 mL/día (insuficiencia cardíaca, enfermedad
+    // renal avanzada, diálisis) escribía 1000 y la app le seguía pidiendo
+    // 1.200 — un 20 % por encima de una indicación clínica, en silencio, y
+    // con "Te faltan 1200 mL" todos los días.
+    //
+    // Un tope que corta hacia ARRIBA es un freno a un dedo que se resbaló;
+    // uno que corta hacia abajo contradice a su equipo. No son simétricos.
+    return Math.min(MAX_WATER_TARGET_ML, Math.round(override));
+  }
+  const beverages = TOTAL_WATER_AI_ML[input.sex] * WATER_FROM_BEVERAGES_FRACTION;
+  const rounded = Math.round(beverages / 50) * 50;
+  return Math.min(MAX_WATER_TARGET_ML, Math.max(MIN_WATER_TARGET_ML, rounded));
+}
+
+/**
+ * Cuánta agua se bebió en un día y cómo va contra la meta.
+ *
+ * Vive en el dominio y no en el `.tsx` por la Regla 1: es un agregado que se
+ * lee como patrón. Se queda en 0-100 % **a propósito** — pasarse de agua no es
+ * un logro que la barra deba premiar creciendo, y en una app de diabetes la
+ * sed excesiva puede ser un síntoma de hiperglucemia, no una meta cumplida.
+ */
+export function summarizeWaterDay(input: {
+  events: readonly { ml: number }[];
+  targetMl: number;
+}): { totalMl: number; targetMl: number; progress: number; remainingMl: number } {
+  const totalMl = input.events.reduce(
+    (sum, event) => sum + (Number.isFinite(event.ml) && event.ml > 0 ? event.ml : 0),
+    0,
+  );
+  const targetMl = Math.max(1, input.targetMl);
+  return {
+    totalMl: Math.round(totalMl),
+    targetMl,
+    progress: Math.min(1, totalMl / targetMl),
+    remainingMl: Math.max(0, Math.round(targetMl - totalMl)),
+  };
+}
+
 /** Por qué la meta no es la que salía del cálculo puro. */
 export type TargetClamp = 'bmr' | 'absoluteFloor';
 
@@ -158,6 +250,12 @@ export interface NutritionTargets {
    * quedarse corto es lo único que la pantalla debería marcar.
    */
   fiberG: number;
+  /**
+   * Meta diaria de agua **bebida**, en mL. Ver `waterTargetMl`: sale de una
+   * referencia poblacional o de lo que ella escribió, nunca de su peso ni de
+   * su energía — el IOM la fija por sexo y no por talla.
+   */
+  waterMl: number;
   /**
    * Presente si un piso de seguridad modificó el resultado. La interfaz debe
    * decirlo: una meta corregida en silencio es una meta que la usuaria no
@@ -242,6 +340,7 @@ export function calculateNutritionTargets(input: NutritionProfileInput): Nutriti
     tdeeKcal: Math.round(tdeeKcal),
     caloriesKcal: Math.round(caloriesKcal),
     carbsG: Math.max(0, Math.round(carbKcal / KCAL_PER_G_CARB)),
+    waterMl: waterTargetMl(input),
     proteinG,
     fatG: Math.max(0, Math.round(fatKcal / KCAL_PER_G_FAT)),
     // Se escala con la energía ya acotada por los pisos, no con el cálculo

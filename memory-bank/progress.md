@@ -7,11 +7,11 @@ _Última actualización: 2026-09-02._
 | | |
 |---|---|
 | `pnpm verify` | Verde; el wrapper local de Windows conserva su fallo de rutas. CI Linux es la verificación integral |
-| Tests | **829** — domain 511, mobile 260, ai 25, schemas 13, cgm 10, api 10 |
-| Bundle de Metro | **1.367 módulos** medidos (+3: `iob`, `insulin-duration`, `InsulinBreakdown`) |
+| Tests | **870** — domain 535, mobile 260, ai 34, schemas 21, cgm 10, api 10 |
+| Bundle de Metro | **1.369 módulos** medidos (+2: `insulin-effect-curve`, icono de agua) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
-⚠️ La base del último build es **1.367**; si diverge, **la medición manda sobre
+⚠️ La base del último build es **1.369**; si diverge, **la medición manda sobre
 la tabla**. `pnpm verify` corre: `verify:contracts`, `lint`, `typecheck`, `test`,
 `verify:bundle` (Metro real).
 
@@ -81,7 +81,6 @@ en el mismo commit; quedan tres, declarados a propósito:
   solo limpia los de su receta). No suma en ningún total.
 
 ## Historial de fallos que definieron las reglas
-
 Cada uno costó un build, una corrida o un número falso; detalle en `git log`.
 
 | Fallo | Regla |
@@ -91,7 +90,7 @@ Cada uno costó un build, una corrida o un número falso; detalle en `git log`.
 | Filas sueltas emparejadas por timestamp | `entry_group_id` (Regla 3b) |
 | `macrosSource` en 4 capas → 3 bugs | Regla 1 |
 | Prompt con dosis habilitó afirmar IOB sin disparar el filtro | Regla 2 hermana |
-| Promedio "ajustado" publicaba +57 donde la verdad era +10, con 372 tests en verde | test contra verdad sembrada |
+| Promedio "ajustado" publicaba +57 donde la verdad era +10, con 372 tests verdes | test contra verdad sembrada |
 | Exclusión binaria vació la pantalla de Patrones | truncar y ajustar, nunca obviar |
 | `.positive()` en un esquema rompió un caso legítimo una corrida después | Regla 3, hermana |
 | `eas-cli` desde la raíz dejó `app.json`/`eas.json` basura (2 veces) | correr desde `apps/mobile/` |
@@ -141,10 +140,11 @@ Cada uno costó un build, una corrida o un número falso; detalle en `git log`.
 | El "502 sobre 8 KB" no era el proxy: `route-llm` reparte por tamaño y las fotos grandes iban a Gemini, cuyo validador rechaza `exclusiveMinimum`. Un `z.number().positive()` nuevo rompió TODAS las fotos mientras el texto seguía bien | un umbral de tamaño puede ser un cambio de modelo disfrazado; se prueba el mismo payload contra cada modelo antes de culpar a la capa de red |
 | La lista de palabras que el saneado filtra tenía **cuatro de las cinco** que importaban, y nada lo delataba | se enumera lo que **sobrevive** contra una lista blanca, no lo que se filtra: así una palabra nueva falla en el test y no en el teléfono |
 | Seis pantallas prometían "Type 1A no calcula insulina activa" el día que empezó a calcularla; una en la pantalla que descuenta, otra impresa en el reporte clínico | una promesa vieja no rompe nada, solo miente: la copia de seguridad se afirma en un test (`safetyCopy.test.ts`) igual que el saneado |
+| El IOB se restaba sin tope, así que el sobrante se comía la cobertura de carbohidratos: 20 g nuevos con 9 U activas proponían **0 U**. El test que debía impedirlo **afirmaba el bug** | el corolario de la Regla 1 otra vez: un test escrito junto al código confirma el código, no la verdad. Un invariante ("el total nunca baja de `mealUnits`") se barre sobre un rango, no se ejemplifica |
 | La consulta de dosis recientes traía 6 h fijas; la regular humana dura 8, así que el activo salía **de menos** — y el activo de menos sube la dosis propuesta | una ventana que alimenta un cálculo se deriva del modelo, nunca de una constante escrita al lado |
 | La pestaña de Insulina salió VACÍA: pedía correcciones aisladas sin otra rápida en 8 h, ventana que con múltiples dosis diarias no existe despierto. Segunda vez que se comete el mismo error, después de Patrones | truncar y ajustar, nunca obviar — y la prueba de que un filtro no es demasiado estricto es un test con **un día normal** adentro, no con el caso ideal |
 
 ## Redeploy del backend
-`30a87fa` está desplegado. **Falta desplegar `fd3ad1a`**: sin él las fotos siguen
-dando 502 (`exclusiveMinimum`). También lleva `knownFoodNames`. Prompt en
-`docs/DEEPAGENT_REDEPLOY_PROMPT.md`.
+`30a87fa` está desplegado. **Falta `fd3ad1a`** (sin él las fotos dan 502) y ahora
+también los **prompts v4 con `waterMl`**: hasta el redeploy la IA no detecta agua.
+Prompt en `docs/DEEPAGENT_REDEPLOY_PROMPT.md`.

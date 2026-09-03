@@ -39,7 +39,7 @@ import { ModalShell } from './ModalShell';
  * todo junto bajo un mismo `entry_group_id`.
  */
 
-export type QuickNumericKind = 'basal' | 'ketones';
+export type QuickNumericKind = 'basal' | 'ketones' | 'water';
 
 const COPY: Record<QuickNumericKind, {
   title: string;
@@ -48,6 +48,12 @@ const COPY: Record<QuickNumericKind, {
   placeholder: string;
   hint: string;
   cta: string;
+  /**
+   * Atajos que **suman** al campo. Solo el agua los tiene, y por una razón
+   * concreta: se bebe en unidades conocidas (un vaso, una botella) y muchas
+   * veces al día. Una basal o una cetona son medidas, no recipientes.
+   */
+  presets?: readonly { ml: number; label: string }[];
 }> = {
   basal: {
     title: 'Basal',
@@ -57,6 +63,20 @@ const COPY: Record<QuickNumericKind, {
     hint: 'Se guarda exactamente lo que escribas. La app no calcula ni sugiere dosis de basal.',
     cta: 'Guardar basal',
   },
+  water: {
+    title: 'Agua',
+    label: 'Agua bebida',
+    unit: 'mL',
+    placeholder: '—',
+    hint: 'Solo agua. Un jugo o una bebida con azúcar tienen carbohidratos: esos van en Comida, con su dosis.',
+    cta: 'Guardar agua',
+    presets: [
+      { ml: 200, label: '200 mL' },
+      { ml: 250, label: 'un vaso' },
+      { ml: 500, label: 'medio litro' },
+      { ml: 750, label: 'una botella' },
+    ],
+  },
   ketones: {
     title: 'Cetonas',
     label: 'Cetonas en sangre',
@@ -65,6 +85,13 @@ const COPY: Record<QuickNumericKind, {
     hint: 'Type 1A registra el valor y te dice en qué banda cae; qué hacer con eso lo decides con tu equipo clínico.',
     cta: 'Guardar cetonas',
   },
+};
+
+/** Qué decir cuando el campo quedó vacío, en el dominio de cada modal. */
+const BLANK_MESSAGE: Record<QuickNumericKind, string> = {
+  basal: 'Escribe las unidades: un número positivo.',
+  ketones: 'Escribe las cetonas: un número entre 0 y 20 mmol/L.',
+  water: 'Escribe cuánta agua tomaste, en mililitros, o toca uno de los atajos.',
 };
 
 export function QuickNumericModal({
@@ -110,11 +137,14 @@ export function QuickNumericModal({
 
   async function save(): Promise<void> {
     setMessage(null);
-    const value = kind === 'basal' ? parseBlankAsUnsetPositive(text) : parseNonNegativeNumber(text);
+    // El agua exige positivo como la basal: 0 mL no es un registro de agua.
+    const value = kind === 'ketones' ? parseNonNegativeNumber(text) : parseBlankAsUnsetPositive(text);
     if (value === null || value === undefined) {
-      setMessage(kind === 'basal'
-        ? 'Escribe las unidades: un número positivo.'
-        : 'Escribe las cetonas: un número entre 0 y 20 mmol/L.');
+      // Cada tipo con su mensaje. Un campo de agua vacío que respondía "escribe
+      // las cetonas" era copia de otro dominio clínico dentro de un modal de
+      // registro, y `contracts/ux-checklist.md` pide que el error diga qué pasó
+      // **en lo que se estaba haciendo**.
+      setMessage(BLANK_MESSAGE[kind]);
       return;
     }
     if (kind === 'basal' && value > 100) {
@@ -123,6 +153,13 @@ export function QuickNumericModal({
     }
     if (kind === 'ketones' && value > 20) {
       setMessage('Las cetonas deben estar entre 0 y 20 mmol/L.');
+      return;
+    }
+    // El tope real vive en `WaterEventSchema`; acá se comprueba antes para que
+    // el error diga qué corregir en vez de caer al genérico "no se pudo
+    // guardar", que es lo que pasaba al sumar presets pasados de 5 L.
+    if (kind === 'water' && value > 5000) {
+      setMessage('Son 5.000 mL como máximo por registro. Anota el resto en otro.');
       return;
     }
     setBusy(true);
@@ -154,6 +191,28 @@ export function QuickNumericModal({
         />
         <Text style={styles.unit}>{copy.unit}</Text>
       </View>
+
+      {copy.presets === undefined ? null : (
+        <View style={styles.presetRow}>
+          {copy.presets.map((preset) => (
+            <Pressable
+              key={preset.ml}
+              style={styles.preset}
+              onPress={() => {
+                // Suma, no reemplaza: dos vasos son dos toques, que es como
+                // se bebe. Reemplazar obligaría a sumar de cabeza.
+                const current = parseNonNegativeNumber(text);
+                const base = current === null ? 0 : current;
+                setText(String(Math.round(base + preset.ml)));
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Sumar ${preset.label}`}
+            >
+              <Text style={styles.presetText}>+{preset.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
 
       {preview === null ? null : (
         <View style={[styles.band, preview.urgent && styles.bandUrgent]}>
@@ -188,6 +247,12 @@ export function QuickNumericModal({
 }
 
 const styles = StyleSheet.create({
+  presetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md },
+  preset: {
+    minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.md,
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.background,
+  },
+  presetText: { color: colors.navy, fontSize: 14, fontWeight: '800' },
   label: { color: colors.navy, fontSize: 13, fontWeight: '800', marginTop: spacing.md },
   inputWrap: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface,

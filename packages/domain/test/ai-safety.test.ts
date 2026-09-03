@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { containsTherapyRecommendation, requestsInsulinAdvice } from '../src/ai-safety';
+import {
+  containsTherapyRecommendation,
+  requestsInsulinAdvice,
+  waterEstimateIsTrustworthy,
+} from '../src/ai-safety';
 
 describe('containsTherapyRecommendation', () => {
   it('rechaza una salida que recomienda dosis', () => {
@@ -122,4 +126,45 @@ describe('juicio o consejo sobre la hora de comer (2026-09-01)', () => {
       expect(containsTherapyRecommendation(text)).toBe(false);
     });
   }
+});
+
+describe('waterEstimateIsTrustworthy — el jugo no puede entrar como agua (2026-09-03)', () => {
+  it('sin agua estimada no hay nada que desconfiar', () => {
+    expect(waterEstimateIsTrustworthy({ waterMl: null, foodNames: ['Arroz'] })).toBe(true);
+    expect(waterEstimateIsTrustworthy({ waterMl: undefined, foodNames: [] })).toBe(true);
+  });
+
+  it('agua sola con comida normal se acepta', () => {
+    expect(waterEstimateIsTrustworthy({
+      waterMl: 250, foodNames: ['Arroz', 'Pollo'], description: 'almuerzo con un vaso de agua',
+    })).toBe(true);
+  });
+
+  it('EL CASO PELIGROSO: se nombra un jugo y ningún alimento lo recoge', () => {
+    // Si esto pasara, ~25 g de carbohidratos desaparecen del registro y del
+    // campo que alimenta el bolo. Perder el vaso de agua es una molestia;
+    // perder los carbohidratos es una dosis corta.
+    expect(waterEstimateIsTrustworthy({
+      waterMl: 250, foodNames: ['Arroz', 'Pollo'], description: 'almuerzo con un jugo de naranja',
+    })).toBe(false);
+  });
+
+  it('si el alimento SÍ recoge la bebida, el agua puede convivir con ella', () => {
+    expect(waterEstimateIsTrustworthy({
+      waterMl: 250,
+      foodNames: ['Arroz', 'Jugo de naranja'],
+      description: 'almuerzo con jugo y además agua',
+    })).toBe(true);
+  });
+
+  it('atrapa la bebida aunque venga solo en los nombres del análisis', () => {
+    expect(waterEstimateIsTrustworthy({ waterMl: 300, foodNames: ['Pan', 'leche entera'] })).toBe(true);
+  });
+
+  it.each([
+    'un jugo', 'una bebida', 'gaseosa', 'leche', 'un café con leche', 'té con azúcar',
+    'sopa de verduras', 'un batido', 'cerveza', 'a glass of juice', 'a soft drink', 'some milk',
+  ])('desconfía cuando el texto dice "%s" y nada lo recoge', (text) => {
+    expect(waterEstimateIsTrustworthy({ waterMl: 250, foodNames: ['Arroz'], description: text })).toBe(false);
+  });
 });
