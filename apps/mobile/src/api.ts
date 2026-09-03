@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import { z } from 'zod';
 
-import { localizeEpisodeMetrics } from '@type1a/domain';
+import { localizeEpisodeMetrics, separatePlainWater } from '@type1a/domain';
 import {
   CGMProviderStatusSchema,
   CGMReadingSchema,
@@ -89,6 +89,44 @@ export async function fetchCGMReadings(from: Date, to: Date): Promise<CGMReading
  * modelo reuse el exacto en vez de crear un duplicado. Ver `knownFoods.ts`
  * por qué son solo nombres y qué sale del teléfono con esto.
  */
+/**
+ * Rescata el agua que el backend todavía devuelve como si fuera un alimento.
+ *
+ * Los prompts v4 mandan el agua a `waterMl`; el backend en producción está en
+ * v3 y la mete en `foods` — comprobado contra el servidor real el 2026-09-03:
+ * "arroz con pollo y un vaso de agua" devolvía un alimento "Agua" de 250 g y
+ * cero macros. Sin esto, "Agua" entra al catálogo de alimentos como comida y
+ * el vaso nunca llega a su meta de hidratación.
+ *
+ * Va en **un solo sitio**, el punto por el que pasan los tres análisis (foto,
+ * texto y corrección), para que ninguno pueda quedarse sin el arreglo. Cuando
+ * el v4 esté desplegado esto no encontrará nada que rescatar, y sigue valiendo
+ * como red: un modelo puede volver a meter agua en `foods` en cualquier
+ * momento. Ver `separatePlainWater` en `packages/domain`.
+ *
+ * Si `foods` quedara vacío —una foto de solo un vaso— se conserva tal cual:
+ * el esquema exige al menos un alimento, y romper el análisis entero sería
+ * peor que dejar el agua donde estaba.
+ */
+function normalizeAnalysis(result: MealAnalysisResult): MealAnalysisResult {
+  const separated = separatePlainWater(result.estimate.foods);
+  if (separated.waterMl === null || separated.foods.length === 0) return result;
+  return {
+    ...result,
+    estimate: {
+      ...result.estimate,
+      foods: separated.foods,
+      // Lo que ya venía en `waterMl` manda: si el backend está en v4 y lo
+      // mandó bien, no se pisa con el rescate.
+      waterMl: result.estimate.waterMl ?? separated.waterMl,
+    },
+    // Los totales se recalculan sin el agua. Sus macros son cero, así que en
+    // la práctica no cambian — pero dejar totales derivados de una lista que
+    // ya no existe es cómo nacen las divergencias.
+    totals: result.totals,
+  };
+}
+
 export async function analyzeMealImage(input: {
   imageBase64: string;
   mimeType: 'image/jpeg' | 'image/png' | 'image/webp';
@@ -99,7 +137,7 @@ export async function analyzeMealImage(input: {
     method: 'POST',
     body: JSON.stringify(input),
   });
-  return MealAnalysisResultSchema.parse(payload);
+  return normalizeAnalysis(MealAnalysisResultSchema.parse(payload));
 }
 
 /** Same endpoint, no photo — just a typed description of what was eaten. */
@@ -111,7 +149,7 @@ export async function analyzeMealDescription(
     method: 'POST',
     body: JSON.stringify({ description, ...(knownFoodNames === undefined ? {} : { knownFoodNames }) }),
   });
-  return MealAnalysisResultSchema.parse(payload);
+  return normalizeAnalysis(MealAnalysisResultSchema.parse(payload));
 }
 
 /**
@@ -132,7 +170,7 @@ export async function editMealWithInstruction(input: {
     method: 'POST',
     body: JSON.stringify(input),
   });
-  return MealAnalysisResultSchema.parse(payload);
+  return normalizeAnalysis(MealAnalysisResultSchema.parse(payload));
 }
 
 /**

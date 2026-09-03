@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   containsTherapyRecommendation,
+  isPlainWaterFood,
+  separatePlainWater,
   requestsInsulinAdvice,
   waterEstimateIsTrustworthy,
 } from '../src/ai-safety';
@@ -166,5 +168,62 @@ describe('waterEstimateIsTrustworthy — el jugo no puede entrar como agua (2026
     'sopa de verduras', 'un batido', 'cerveza', 'a glass of juice', 'a soft drink', 'some milk',
   ])('desconfía cuando el texto dice "%s" y nada lo recoge', (text) => {
     expect(waterEstimateIsTrustworthy({ waterMl: 250, foodNames: ['Arroz'], description: text })).toBe(false);
+  });
+});
+
+describe('separatePlainWater — el agua que el prompt v3 mete en foods (2026-09-03)', () => {
+  const water = {
+    name: 'Agua', estimatedGrams: 250, servingGrams: 250,
+    carbsG: 0, proteinG: 0, fatG: 0, caloriesKcal: 0,
+  };
+  const rice = {
+    name: 'Arroz con pollo', estimatedGrams: 350, servingGrams: 350,
+    carbsG: 55, proteinG: 30, fatG: 12, caloriesKcal: 460,
+  };
+
+  it('EL CASO REAL del backend en v3: rescata el vaso y limpia el catálogo', () => {
+    // Respuesta literal de producción a "arroz con pollo y un vaso de agua".
+    const result = separatePlainWater([rice, water]);
+    expect(result.foods).toEqual([rice]);
+    expect(result.waterMl).toBe(250);
+  });
+
+  it('sin agua no toca nada', () => {
+    expect(separatePlainWater([rice])).toEqual({ foods: [rice], waterMl: null });
+  });
+
+  it('UN AGUA CON CARBOHIDRATOS NO ES AGUA', () => {
+    // Clasificar mal en esta dirección saca carbohidratos del plato y de la
+    // dosis. El filtro prefiere dejar pasar un alimento raro antes que perder
+    // un gramo.
+    const cocoWater = { ...water, name: 'Agua de coco', carbsG: 9, caloriesKcal: 45 };
+    expect(separatePlainWater([cocoWater]).foods).toHaveLength(1);
+    expect(separatePlainWater([cocoWater]).waterMl).toBeNull();
+    const sparkling = { ...water, name: 'Agua saborizada', carbsG: 6, caloriesKcal: 25 };
+    expect(separatePlainWater([sparkling]).foods).toHaveLength(1);
+  });
+
+  it.each(['Agua', 'agua', 'AGUA', 'Agua mineral', 'Agua sin gas', 'un vaso de agua', 'Water'])(
+    'reconoce "%s" como agua sola', (name) => {
+      expect(isPlainWaterFood({ ...water, name })).toBe(true);
+    },
+  );
+
+  it.each(['Jugo de naranja', 'Leche', 'Sopa de verduras', 'Café', 'Agua de coco', 'Arroz'])(
+    'NO trata "%s" como agua', (name) => {
+      expect(isPlainWaterFood({ ...water, name, carbsG: name === 'Café' ? 0 : 5 })).toBe(false);
+    },
+  );
+
+  it('suma varios vasos y redondea', () => {
+    const result = separatePlainWater([water, rice, { ...water, estimatedGrams: 330 }]);
+    expect(result.waterMl).toBe(580);
+    expect(result.foods).toEqual([rice]);
+  });
+
+  it('agua sin volumen estimable no inventa un número', () => {
+    const result = separatePlainWater([{ ...water, estimatedGrams: null, servingGrams: null }]);
+    expect(result.waterMl).toBeNull();
+    expect(result.foods).toHaveLength(0);
   });
 });

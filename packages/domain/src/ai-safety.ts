@@ -189,3 +189,76 @@ export function waterEstimateIsTrustworthy(input: {
   // sus carbohidratos están contados y el agua puede convivir con ella.
   return input.foodNames.some((name) => NON_WATER_BEVERAGE_PATTERN.test(withoutAccents(name)));
 }
+
+/**
+ * Un alimento que en realidad es **agua sola**, no comida.
+ *
+ * ## Por qué existe (2026-09-03)
+ *
+ * Probando el backend real tras el redeploy: pedirle "arroz con pollo y un
+ * vaso de agua al lado" devuelve `foods: [{ name: "Arroz con pollo", … },
+ * { name: "Agua", estimatedGrams: 250, carbsG: 0, proteinG: 0, fatG: 0,
+ * caloriesKcal: 0 }]`. El prompt v4 —el que manda el agua a `waterMl`— todavía
+ * no está desplegado, y el v3 la trata como un alimento más.
+ *
+ * Eso tiene dos costos, y **ninguno depende del redeploy para arreglarse**:
+ * "Agua" entra al catálogo de alimentos como si fuera comida, y el vaso que
+ * ella bebió no llega a su meta de hidratación.
+ *
+ * Así que el cliente lo resuelve él. Cuando el v4 esté arriba, esta función
+ * simplemente no encontrará nada que rescatar — y sigue valiendo como red: un
+ * modelo puede volver a meter agua en `foods` en cualquier momento.
+ *
+ * ## El criterio, y por qué es tan estrecho
+ *
+ * Se exige **nombre de agua Y todos los macros en cero**. Un "agua de coco"
+ * tiene carbohidratos y no pasa; una "sopa" tampoco. Clasificar mal en esta
+ * dirección sacaría carbohidratos del plato y de la dosis, así que el filtro
+ * prefiere dejar pasar un alimento raro antes que perder un gramo.
+ */
+const PLAIN_WATER_NAME = /^(?:un |una |el |la |vaso de |vasos de |botella de )*(agua|agua (?:pura|potable|natural|sin gas|mineral)|water|plain water)$/i;
+
+export interface WaterLikeFood {
+  name: string;
+  estimatedGrams?: number | null | undefined;
+  servingGrams?: number | null | undefined;
+  carbsG: number;
+  proteinG: number;
+  fatG: number;
+  caloriesKcal: number;
+}
+
+export function isPlainWaterFood(food: WaterLikeFood): boolean {
+  const name = withoutAccents(food.name).trim().toLowerCase();
+  if (!PLAIN_WATER_NAME.test(name)) return false;
+  // Todos los macros en cero. Un solo gramo de carbohidrato lo descalifica:
+  // eso ya no es agua y sus carbohidratos tienen que quedar en el plato.
+  return food.carbsG === 0 && food.proteinG === 0 && food.fatG === 0 && food.caloriesKcal === 0;
+}
+
+/**
+ * Separa el agua de la lista de alimentos de un análisis.
+ *
+ * Devuelve los alimentos **sin** el agua y los mililitros rescatados (1 g de
+ * agua = 1 mL, que es exacto para lo que hace falta acá). `waterMl` es `null`
+ * cuando no había agua o cuando no se pudo estimar el volumen: nunca un número
+ * inventado, porque se suma a la meta del día.
+ */
+export function separatePlainWater<T extends WaterLikeFood>(
+  foods: readonly T[],
+): { foods: T[]; waterMl: number | null } {
+  const kept: T[] = [];
+  let ml = 0;
+  for (const food of foods) {
+    if (!isPlainWaterFood(food)) {
+      kept.push(food);
+      continue;
+    }
+    const grams = food.estimatedGrams ?? food.servingGrams;
+    if (typeof grams === 'number' && Number.isFinite(grams) && grams > 0) ml += grams;
+  }
+  // Si TODO era agua, no se devuelve una lista vacía: `MealAnalysisSchema`
+  // exige al menos un alimento, y una foto de solo un vaso es un caso legítimo
+  // que quien llama resuelve mirando `foods.length === 0`.
+  return { foods: kept, waterMl: ml > 0 ? Math.round(ml) : null };
+}

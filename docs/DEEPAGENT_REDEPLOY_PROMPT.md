@@ -58,6 +58,23 @@ por Claude Code: la hora local del resumen tomó y `servingGrams` viene. Pero el
 deploy trajo un problema de infraestructura que el anterior no tenía, y el repo
 avanzó una vez más.
 
+### 0. ✅ DESPLEGADO (2026-09-03): las fotos funcionan
+
+Verificado contra el servidor real, no reportado: `POST /v1/ai/meal-analysis`
+con un cuerpo grande responde 200. El `exclusiveMinimum` está corregido en
+producción.
+
+**Lo que sigue pendiente es solo el punto 3.** La misma prueba mostró que el
+backend responde `meal-analysis-text.v3`, así que los prompts v4 con `waterMl`
+no están arriba: hoy devuelve `{"name":"Agua","estimatedGrams":250,
+"carbsG":0,...}` dentro de `foods`.
+
+**Ya no es urgente**: el cliente rescata esa agua por su cuenta
+(`separatePlainWater`, en `packages/domain`), así que la función anda igual y
+"Agua" no ensucia el catálogo. El redeploy la hace más limpia y ahorra un
+alimento inventado por análisis; no la desbloquea. **Puede esperar al próximo
+cambio de backend que sí haga falta.**
+
 ### 1. ✅ El 502 de las fotos: no era el proxy, era el esquema
 
 Diagnóstico de DeepAgent (2026-09-02), verificado contra el código. **La

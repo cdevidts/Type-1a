@@ -7,7 +7,7 @@ _Última actualización: 2026-09-02._
 | | |
 |---|---|
 | `pnpm verify` | Verde; el wrapper local de Windows conserva su fallo de rutas. CI Linux es la verificación integral |
-| Tests | **870** — domain 535, mobile 260, ai 34, schemas 21, cgm 10, api 10 |
+| Tests | **924** — domain 582, mobile 267, ai 34, schemas 21, cgm 10, api 10 |
 | Bundle de Metro | **1.369 módulos** medidos (+2: `insulin-effect-curve`, icono de agua) |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
@@ -34,26 +34,24 @@ la tabla**. `pnpm verify` corre: `verify:contracts`, `lint`, `typecheck`, `test`
 
 ## Deuda conocida
 
-### 🔴 Bomba: imports `.js` en `@type1a/ai`
+### 🟡 Supabase conectado, todavía vacío (2026-09-03)
+Proyecto `kvhlttcvjamgybwlamcu` (us-east-1, Postgres 17), creado y sin tablas.
+Es el paso hacia cuentas por usuaria; no hay decisión tomada ni ADR todavía.
 
-`packages/ai/src/abacus.ts:23` y `packages/ai/src/index.ts:1-2` usan extensión
-`.js` en imports relativos — **la trampa de Metro que rompió dos builds**. No
-explota solo porque `apps/mobile/package.json` no depende de `@type1a/ai`; el día
-que dependa —el chat de IA— el bundle rompe. Cuesta tres líneas.
+### 🔴 Bomba: imports `.js` en `@type1a/ai`
+`abacus.ts:23` e `index.ts:1-2` usan extensión `.js` en imports relativos — **la
+trampa de Metro que rompió dos builds**. No explota solo porque `apps/mobile` no
+depende de `@type1a/ai`; el día que dependa —el chat— el bundle rompe.
 
 ### 🔴 Dos hallazgos vivos de la revisión repuntada (2026-08-26)
-Del `domain-safety-reviewer` contra `d868ece` y `c4ca192`. Cerrados los que
-corrompían datos y los del guardado de comida; siguen abiertos los dos de
-`macro-glucose.ts`:
-
-1. **La basal es invisible al modelo** (`macro-glucose.ts:281-287`, sin rama
-   para `basal_insulin`): 20 U de Tresiba no entran como covariable.
-2. **Cantidad ausente = "no pasó nada"** (`event.amount ?? 0` con `> 0`): una
-   comida real sin carbos confirmados desaparece del conteo.
+Del `domain-safety-reviewer`. Siguen abiertos los dos de `macro-glucose.ts`:
+la basal no entra como covariable (sin rama para `basal_insulin`), y
+`event.amount ?? 0` con `> 0` hace que una comida sin carbos confirmados
+desaparezca del conteo.
 
 Cerrados el 2026-09-01: la insulina que se pisaba con "Comida guardada", y la
-dosis del botón rápido sin `entryGroupId`. Menores: `MealModal` no recibe
-glucosa (`isHypoglycemic` nunca dispara); `attachEntryToReading` no valida macros.
+dosis del botón rápido sin `entryGroupId`. Menores: `MealModal` no recibe glucosa
+(`isHypoglycemic` nunca dispara).
 
 ### 🟠 Hallazgos de la revisión de seguridad del 2026-08-27, no corregidos
 
@@ -145,6 +143,8 @@ Cada uno costó un build, una corrida o un número falso; detalle en `git log`.
 | La pestaña de Insulina salió VACÍA: pedía correcciones aisladas sin otra rápida en 8 h, ventana que con múltiples dosis diarias no existe despierto. Segunda vez que se comete el mismo error, después de Patrones | truncar y ajustar, nunca obviar — y la prueba de que un filtro no es demasiado estricto es un test con **un día normal** adentro, no con el caso ideal |
 
 ## Redeploy del backend
-`30a87fa` está desplegado. **Falta `fd3ad1a`** (sin él las fotos dan 502) y ahora
-también los **prompts v4 con `waterMl`**: hasta el redeploy la IA no detecta agua.
-Prompt en `docs/DEEPAGENT_REDEPLOY_PROMPT.md`.
+Desplegado hasta `fd3ad1a`: **las fotos ya funcionan**. Verificado el 2026-09-03
+contra el servidor real: responde `meal-analysis-text.v3`, así que **los prompts
+v4 con `waterMl` siguen pendientes** — hoy devuelve "Agua" como un alimento de
+`foods` con 0 macros. El cliente lo rescata solo (`separatePlainWater`), así que
+el agua ya funciona; el redeploy lo hace más limpio, no lo desbloquea.
