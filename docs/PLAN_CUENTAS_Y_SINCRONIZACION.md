@@ -254,10 +254,32 @@ es la peor versión de este proyecto.
 
 ---
 
-## 10. Lo que necesito de ella antes de la Fase 1
+## 10. Decisiones tomadas — 4 de septiembre de 2026
 
-1. **¿Camino A (RLS) o B (E2EE)?** Recomiendo A, con el argumento de §2.
-2. **¿Pro desde el principio o Free mientras solo la usa ella?** Recomiendo Free
-   hasta la Fase 3, y Pro el día que exista la segunda cuenta.
-3. **¿La app sigue funcionando sin cuenta, para siempre?** Recomiendo que sí:
-   es lo que la hace usable el primer día y es coherente con local-first.
+Verónica respondió las tres. El plan queda cerrado sobre esto:
+
+1. **Camino A (RLS).** El servidor puede leer los datos; una política por fila
+   impide que una usuaria vea las de otra. Se descarta E2EE porque rompe la
+   recuperación de contraseña y hace imposible el soporte. Queda anotado que
+   E2EE tenía a favor un argumento legal real —una brecha expondría datos
+   ilegibles— y que se eligió A a pesar de eso, no por ignorarlo.
+2. **Free mientras la use solo ella; Pro el día que exista la segunda cuenta.**
+   El proyecto Free se apaga tras una semana sin uso: aceptable para una
+   usuaria, inaceptable para una clienta.
+3. **La app sigue funcionando sin cuenta, para siempre.** La cuenta es opcional
+   y sirve para respaldar y cambiar de teléfono. Al crearla, lo que ya está en
+   el teléfono se sube; al cerrar sesión, lo local no se borra.
+
+### Sobre el consentimiento
+
+Preguntó si lo legal se resuelve con un formulario al iniciar. No: el
+consentimiento expreso es la **base legal** para tratar datos de salud y hay que
+tenerlo, pero es una obligación entre varias. No cubre las medidas de seguridad,
+la notificación de brecha en 72 h, ni los derechos ARCOP —acceso,
+rectificación, supresión, oposición, portabilidad y bloqueo—, que son pantallas
+y botones que hay que construir. Tampoco cubre que retirar el consentimiento
+deba ser tan fácil como darlo. Eso es la Fase 4 completa, no un checkbox.
+
+El texto del consentimiento y la política de privacidad los revisa un abogado
+antes de la primera usuaria que no sea ella. No es opcional y no lo suple este
+documento.
