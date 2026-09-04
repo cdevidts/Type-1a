@@ -65,6 +65,54 @@ export interface CatalogFood {
   servingGrams?: number;
   /** Cómo se llama esa porción para la usuaria: "taza", "rebanada", "plato". */
   servingLabel?: string;
+  /**
+   * Quién fijó esa porción.
+   *
+   * Existe por una razón concreta: hasta ahora la IA **no podía** proponer
+   * porción, y `blendCatalogEntry` se apoyaba en eso (`next.servingGrams ??
+   * existing.servingGrams`) para que un análisis nuevo nunca pisara el "una
+   * taza son 150 g" escrito a mano. Desde que la IA sí la propone, esa
+   * garantía dejaría de existir en silencio y cada foto nueva reescribiría la
+   * corrección de la usuaria.
+   *
+   * `'user'` = lo confirmó o lo escribió ella, y solo otro `'user'` lo
+   * reemplaza. `'ai'` = quedó de una propuesta sin confirmar. Ausente = fila
+   * anterior a este campo, que se trata como `'user'`: son las porciones que
+   * Verónica ya escribió a mano en el editor del catálogo, y degradarlas a
+   * "de la IA" las volvería pisables.
+   */
+  servingSource?: 'user' | 'ai';
+  /**
+   * Foto del alimento, si alguna comida real dejó una.
+   *
+   * **Nunca se genera ni se inventa.** Sale exactamente de la foto que la
+   * usuaria sacó al registrar una comida donde ese alimento se identificó, y
+   * si esa comida no tuvo foto, el alimento no tiene foto. Un alimento
+   * anterior a este campo —o sea, todo lo que ya está en el teléfono de
+   * Verónica— simplemente no la trae, y su tarjeta muestra el fallback.
+   *
+   * Es **representación**, no evidencia de macros: nada la vuelve a analizar
+   * al leer el catálogo. Ver `catalogFoodMissingMacros` y `blendCatalogEntry`.
+   */
+  imageUri?: string;
+  /**
+   * Si se muestra como alimento suelto en el catálogo y en el buscador de
+   * comidas. **Ausente = `true`**: toda fila anterior a este campo es un
+   * alimento que ella guardó a la vista.
+   *
+   * `false` es "solo receta": la usuaria eligió guardar un plato de varios
+   * alimentos **como receta y nada más**. Los componentes igual viven en
+   * `food_catalog` —una receta no guarda macros, los deriva de ellos, así que
+   * sin las filas sería una suma sin sumandos— pero no se listan sueltos.
+   * Antes esa elección escribía las filas y las listaba igual, o sea que
+   * "solo receta" y "las dos cosas" hacían exactamente lo mismo.
+   *
+   * Un componente oculto vive y muere con sus recetas (`deleteRecipe` borra
+   * los que ninguna otra receta use), y se puede sacar a la luz desde el
+   * detalle de la receta. Volver a confirmar el mismo alimento "por separado"
+   * también lo muestra: `blendCatalogEntry` hace OR, nunca oculta uno visible.
+   */
+  listed?: boolean;
 }
 
 /**
@@ -97,13 +145,29 @@ export const MIN_CATALOG_GRAMS = 5;
 export function toCatalogEntry(
   food: FoodEstimate,
   seenAt: string,
+  /**
+   * La foto de la comida en la que se identificó, si la hubo. Se propaga tal
+   * cual: no se genera, no se recorta y no se deriva nada de ella.
+   */
+  imageUri?: string,
 ): Omit<CatalogFood, 'timesSeen'> | null {
-  const grams = food.estimatedGrams;
-  if (grams === null || !Number.isFinite(grams) || grams < MIN_CATALOG_GRAMS) return null;
+  const grams = normalizationBasis(food);
+  if (grams === null) return null;
   const key = foodKey(food.name);
   if (key === '') return null;
 
+  // Los macros que informa la IA describen **lo que había en el plato**, así
+  // que solo se pueden normalizar contra los gramos de ese plato. Cuando el
+  // denominador es la porción típica, los macros también son los de una
+  // porción: es el mismo alimento descrito a otra escala, y dividir por la
+  // porción devuelve los mismos valores por 100 g.
   const per100 = (value: number): number => Number(((value / grams) * 100).toFixed(2));
+  const servingGrams = food.servingGrams !== null && isValidServingGrams(food.servingGrams)
+    ? food.servingGrams
+    : undefined;
+  const servingLabel = food.servingLabel !== null && food.servingLabel.trim() !== ''
+    ? food.servingLabel.trim()
+    : undefined;
   return {
     key,
     name: food.name.trim(),
@@ -113,17 +177,55 @@ export function toCatalogEntry(
     fiberPer100g: per100(food.fiberG),
     kcalPer100g: per100(food.caloriesKcal),
     lastSeenAt: seenAt,
+    // Sale de la IA y **todavía no está confirmada**. Quien la confirme la
+    // marca `'user'`; ver `catalogProposal.ts`.
+    ...(servingGrams === undefined ? {} : { servingGrams, servingSource: 'ai' as const }),
+    ...(servingLabel === undefined ? {} : { servingLabel }),
+    ...(imageUri === undefined ? {} : { imageUri }),
   };
 }
 
-/** Todas las entradas normalizables de un análisis, ya deduplicadas por clave. */
+/**
+ * Contra qué gramos se normaliza un alimento a valores por 100 g, o `null` si
+ * no hay forma de hacerlo.
+ *
+ * Antes esto era una sola línea contra `estimatedGrams`, y descartaba **en
+ * silencio** todo alimento cuya porción la IA no pudo estimar. El prompt le
+ * pide explícitamente devolver `null` ahí, así que una Monster Zero descrita
+ * por texto —0 g de carbohidratos, un alimento perfectamente registrable— no
+ * llegaba nunca al catálogo y nadie se enteraba.
+ *
+ * La porción típica rescata justo ese caso: cuánto pesa una lata se sabe sin
+ * mirar el plato. Se prefiere `estimatedGrams` cuando existe porque es lo que
+ * la IA realmente midió; la porción es el respaldo.
+ */
+export function normalizationBasis(food: FoodEstimate): number | null {
+  const plate = food.estimatedGrams;
+  if (plate !== null && Number.isFinite(plate) && plate >= MIN_CATALOG_GRAMS) return plate;
+  const serving = food.servingGrams;
+  if (serving !== null && isValidServingGrams(serving) && serving >= MIN_CATALOG_GRAMS) return serving;
+  return null;
+}
+
+/**
+ * Todas las entradas normalizables de un análisis, ya deduplicadas por clave.
+ *
+ * ⚠️ **Descarta en silencio** lo que no puede normalizar. Esa fue exactamente
+ * la falla que hizo desaparecer una Monster Zero del catálogo sin un solo
+ * aviso. La app ya no la usa: el camino es `buildCatalogProposals`
+ * (`catalog-proposal.ts`), que devuelve también lo rechazado **con su razón**
+ * para poder decirlo en pantalla. Se conserva como primitiva de normalización;
+ * si vas a llamarla desde una pantalla nueva, casi seguro querías la otra.
+ */
 export function catalogEntriesFrom(
   foods: readonly FoodEstimate[],
   seenAt: string,
+  /** Foto de la comida analizada, si la hubo. Ver `toCatalogEntry`. */
+  imageUri?: string,
 ): Omit<CatalogFood, 'timesSeen'>[] {
   const byKey = new Map<string, Omit<CatalogFood, 'timesSeen'>>();
   for (const food of foods) {
-    const entry = toCatalogEntry(food, seenAt);
+    const entry = toCatalogEntry(food, seenAt, imageUri);
     // El último gana: si un análisis nombra el mismo alimento dos veces, es
     // más probable que sea una corrección que dos platos distintos.
     if (entry !== null && isPlausibleCatalogEntry(entry)) byKey.set(entry.key, entry);
@@ -176,11 +278,30 @@ export function blendCatalogEntry(
   next: Omit<CatalogFood, 'timesSeen'>,
 ): CatalogFood {
   const weight = Math.min(existing.timesSeen, MAX_BLEND_WEIGHT);
-  // La porción de referencia la define la usuaria, no la IA. Sin conservarla,
-  // la próxima vez que la IA identifique este alimento borraría el "una taza
-  // son 150 g" que ella escribió: un análisis nuevo nunca trae este campo.
-  const servingGrams = next.servingGrams ?? existing.servingGrams;
-  const servingLabel = next.servingLabel ?? existing.servingLabel;
+  // La porción de referencia la define la usuaria, no la IA.
+  //
+  // Esto **antes** se sostenía solo porque un análisis nunca traía el campo.
+  // Desde que la IA lo propone, la regla tiene que ser explícita: una porción
+  // marcada `'user'` —lo que ella escribió o confirmó, y también toda fila
+  // anterior a `servingSource`, que es exactamente lo que escribió a mano—
+  // solo la reemplaza otra `'user'`. Sin esto, cada foto nueva del mismo
+  // alimento le borraría en silencio el "una taza son 150 g".
+  const existingIsUser = existing.servingGrams !== undefined && (existing.servingSource ?? 'user') === 'user';
+  const nextIsUser = next.servingGrams !== undefined && next.servingSource === 'user';
+  const keepExistingServing = existingIsUser && !nextIsUser;
+  const servingGrams = keepExistingServing ? existing.servingGrams : (next.servingGrams ?? existing.servingGrams);
+  const servingLabel = keepExistingServing ? existing.servingLabel : (next.servingLabel ?? existing.servingLabel);
+  const servingSource = keepExistingServing
+    ? existing.servingSource
+    : (next.servingGrams !== undefined ? next.servingSource : existing.servingSource);
+  // La foto se conserva si la nueva no trae una. Un análisis por texto no
+  // tiene imagen, y sin esto reconocer el mismo alimento sin foto borraría la
+  // que ya había — un dato que solo se recupera volviendo a fotografiar.
+  const imageUri = next.imageUri ?? existing.imageUri;
+  // Visible gana: un alimento que ella ya tenía a la vista no se esconde
+  // porque después lo guardó dentro de una receta, y uno oculto sale a la luz
+  // en cuanto lo confirma suelto.
+  const listed = (existing.listed ?? true) || (next.listed ?? true);
   const mix = (old: number, incoming: number): number =>
     Number(((old * weight + incoming) / (weight + 1)).toFixed(2));
   return {
@@ -195,7 +316,15 @@ export function blendCatalogEntry(
     lastSeenAt: next.lastSeenAt,
     ...(servingGrams === undefined ? {} : { servingGrams }),
     ...(servingLabel === undefined ? {} : { servingLabel }),
+    ...(servingSource === undefined ? {} : { servingSource }),
+    ...(imageUri === undefined ? {} : { imageUri }),
+    ...(listed ? {} : { listed: false }),
   };
+}
+
+/** Si un alimento se muestra suelto. Ausente = sí, por lo dicho en `CatalogFood.listed`. */
+export function isListedFood(food: Pick<CatalogFood, 'listed'>): boolean {
+  return food.listed !== false;
 }
 
 /**
@@ -274,6 +403,13 @@ export interface CatalogFoodEdit {
   /** `null` borra la porción de referencia y vuelve al default de 100 g. */
   servingGrams?: number | null;
   servingLabel?: string | null;
+  /**
+   * `null` quita la foto guardada; ausente la deja como está.
+   *
+   * Quitar es una acción explícita, igual que en el resto de la app: un campo
+   * que no viaja nunca borra nada.
+   */
+  imageUri?: string | null;
 }
 
 /**
@@ -300,6 +436,15 @@ export function applyCatalogEdit(existing: CatalogFood, edit: CatalogFoodEdit): 
   const servingLabel = edit.servingLabel === undefined
     ? existing.servingLabel
     : (edit.servingLabel ?? undefined);
+  const imageUri = edit.imageUri === undefined
+    ? existing.imageUri
+    : (edit.imageUri ?? undefined);
+  // Tocar la porción en este editor es la usuaria hablando, así que queda
+  // marcada como suya y ningún análisis posterior la pisa. Si no la tocó, se
+  // conserva la procedencia que ya tenía.
+  const servingSource: 'user' | 'ai' | undefined = servingGrams === undefined
+    ? undefined
+    : (edit.servingGrams !== undefined ? 'user' : (existing.servingSource ?? 'user'));
 
   const next: CatalogFood = {
     key: existing.key,
@@ -313,6 +458,10 @@ export function applyCatalogEdit(existing: CatalogFood, edit: CatalogFoodEdit): 
     kcalPer100g: edit.kcalPer100g ?? existing.kcalPer100g,
     ...(servingGrams === undefined ? {} : { servingGrams }),
     ...(servingLabel === undefined ? {} : { servingLabel }),
+    ...(servingSource === undefined ? {} : { servingSource }),
+    ...(imageUri === undefined ? {} : { imageUri }),
+    // Corregir macros no cambia si el alimento está a la vista.
+    ...(existing.listed === false ? { listed: false } : {}),
   };
   return isPlausibleCatalogEntry(next) ? next : null;
 }
@@ -345,6 +494,8 @@ export function catalogEntryFromPortion(
     lastSeenAt: seenAt,
     ...(base.servingGrams === undefined ? {} : { servingGrams: base.servingGrams }),
     ...(base.servingLabel === undefined ? {} : { servingLabel: base.servingLabel }),
+    ...(base.imageUri === undefined ? {} : { imageUri: base.imageUri }),
+    ...(base.listed === false ? { listed: false } : {}),
   };
   return isPlausibleCatalogEntry(entry) ? entry : null;
 }

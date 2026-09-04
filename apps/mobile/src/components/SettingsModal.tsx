@@ -27,6 +27,7 @@ import {
 } from '../sensorConnection';
 import { colors, radius, spacing } from '../theme';
 import { InsulinPicker, InsulinPickerSafetyNote, insulinProfileFields, type InsulinSelection } from './InsulinPicker';
+import { DAY_SEGMENTS, type DaySegmentKey } from '@type1a/domain';
 import type { ReminderAlertStyle, ReportExport } from '../types';
 import { ModalShell } from './ModalShell';
 
@@ -164,6 +165,7 @@ export function SettingsModal({
   onImportMySugrCsv,
   onSaveProfile,
   onSaveInsulins,
+  onClearSegmentDuration,
   onEnableQuickEntry,
   mealAlarmOffsets,
   onSaveMealAlarmOffsets,
@@ -196,6 +198,12 @@ export function SettingsModal({
    * inferencia de parámetros que `AGENTS.md` prohíbe.
    */
   onSaveInsulins: (profile: TherapyProfile) => Promise<void>;
+  /**
+   * Quitar la duración propia de un tramo y volver a la general. Adoptar una
+   * se hace en Resumen → Insulina, junto a los datos que la justifican; poder
+   * deshacerla tiene que estar donde ella mira su configuración.
+   */
+  onClearSegmentDuration: (segment: DaySegmentKey) => Promise<void>;
   /** Requests notification permission, posts the sticky notification, and — on success — persists it as enabled and starts the background refresh. */
   onEnableQuickEntry: () => Promise<boolean>;
   mealAlarmOffsets: number[];
@@ -232,6 +240,11 @@ export function SettingsModal({
   const [factorInput, setFactorInput] = useState(therapyConfigured ? String(profile.correctionFactor) : '');
   const [incrementInput, setIncrementInput] = useState(therapyConfigured ? String(profile.doseIncrement) : '');
   const [carbRatioInput, setCarbRatioInput] = useState(profile.carbRatio === undefined ? '' : String(profile.carbRatio));
+  /** Los tramos con duración propia, ordenados como el día. */
+  const segmentOverrides = DAY_SEGMENTS
+    .map((segment) => [segment.key, profile.segmentDurationHours?.[segment.key]] as const)
+    .filter((entry): entry is readonly [DaySegmentKey, number] => entry[1] !== undefined);
+
   const [rapidInsulin, setRapidInsulin] = useState<InsulinSelection>({
     id: profile.rapidInsulinId,
     durationHours: profile.rapidInsulinDurationHours,
@@ -935,11 +948,48 @@ export function SettingsModal({
           <Text style={styles.hint}>"Carbs por unidad" es opcional — déjalo vacío si aún no lo tienes definido con tu equipo clínico. Se usa para el registro combinado de comida + corrección.</Text>
           <Text style={styles.sectionTitle}>Tus insulinas</Text>
           <Text style={styles.copy}>
-            Cuál usas y cuánto dura. Sirve para leer mejor tus patrones — no para calcular dosis.
+            Cuál usas y cuánto dura. Desde el 2026-09-02 la duración hace **dos** trabajos: leer mejor tus
+            patrones y, ahora también, calcular cuánta insulina sigue actuando para descontarla de tus
+            correcciones. Un número mal puesto acá cambia una dosis que la app te propone.
           </Text>
           <InsulinPicker category="rapid" selection={rapidInsulin} onChange={setRapidInsulin} />
           <InsulinPicker category="basal" selection={basalInsulin} onChange={setBasalInsulin} />
           <InsulinPickerSafetyNote />
+
+          {/*
+            Los overrides por tramo se ADOPTAN en Resumen → Insulina, donde
+            están los datos que los justifican. Pero tienen que verse acá
+            también: es la pantalla donde ella viene a mirar "qué tengo
+            configurado", y un parámetro que cambia una dosis y solo existe en
+            otra pantalla es un dato escondido. Acá se ven y se pueden quitar;
+            adoptarlos sigue siendo allá, junto a la evidencia.
+          */}
+          {segmentOverrides.length === 0 ? null : (
+            <View style={styles.segmentBox}>
+              <Text style={styles.segmentTitle}>Duración por tramo del día</Text>
+              {segmentOverrides.map(([key, hours]) => (
+                <View key={key} style={styles.segmentRow}>
+                  <Text style={styles.segmentRowLabel}>
+                    {DAY_SEGMENTS.find((segment) => segment.key === key)?.label ?? key}
+                  </Text>
+                  <Text style={styles.segmentRowValue}>{hours} h</Text>
+                  <Pressable
+                    style={styles.segmentRemove}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Quitar la duración propia de ${key}`}
+                    onPress={() => { void onClearSegmentDuration(key as DaySegmentKey); }}
+                    hitSlop={8}
+                  >
+                    <Text style={styles.segmentRemoveText}>Quitar</Text>
+                  </Pressable>
+                </View>
+              ))}
+              <Text style={styles.copy}>
+                En esos tramos se usa esa duración en vez de la general. Los mides y los adoptas en Resumen →
+                Insulina, donde se ve de cuántos episodios sale cada uno.
+              </Text>
+            </View>
+          )}
           {/*
             Botón propio, separado del de parámetros de terapia (2026-08-25,
             tras la revisión de seguridad). Guardar las insulinas por
@@ -1019,6 +1069,13 @@ export function SettingsModal({
 }
 
 const styles = StyleSheet.create({
+  segmentBox: { backgroundColor: colors.background, borderRadius: radius.md, borderWidth: 1, borderColor: colors.line, padding: spacing.md, marginTop: spacing.md },
+  segmentTitle: { color: colors.ink, fontSize: 14, fontWeight: '800', marginBottom: spacing.xs },
+  segmentRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 44 },
+  segmentRowLabel: { flex: 1, color: colors.ink, fontSize: 13, fontWeight: '700' },
+  segmentRowValue: { color: colors.navy, fontSize: 14, fontWeight: '800' },
+  segmentRemove: { minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.sm },
+  segmentRemoveText: { color: colors.red, fontSize: 12, fontWeight: '800' },
   // Mismos tokens y medidas que la barra de pestañas de `SummaryModal`: las
   // dos pantallas con sub-páginas de la app tienen que leerse igual.
   tabBar: {

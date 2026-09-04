@@ -16,6 +16,7 @@ import {
   isValidServingGrams,
   MAX_SERVING_GRAMS,
   isValidServings,
+  isListedFood,
   scaleCatalogFoodByServings,
   servingGramsOf,
   type CatalogFood,
@@ -27,6 +28,8 @@ function food(overrides: Partial<FoodEstimate> = {}): FoodEstimate {
   return {
     name: 'Pan integral',
     estimatedGrams: 50,
+    servingGrams: null,
+    servingLabel: null,
     carbsG: 20,
     proteinG: 5,
     fatG: 2,
@@ -342,5 +345,140 @@ describe('applyCatalogEdit (la puerta de toda escritura manual al catálogo)', (
 
   it('un nombre en blanco no borra el que había', () => {
     expect(applyCatalogEdit(base, { name: '   ' })?.name).toBe('Arroz');
+  });
+});
+
+/**
+ * La foto del alimento (2026-08-27).
+ *
+ * Es **representación**, no evidencia de macros: nada la vuelve a analizar al
+ * leer el catálogo. Lo que sí exige es no perderse — una foto solo se
+ * recupera volviendo a fotografiar el plato.
+ */
+describe('imagen del catálogo', () => {
+  const base: CatalogFood = {
+    key: 'pan',
+    name: 'Pan',
+    carbsPer100g: 50,
+    proteinPer100g: 8,
+    fatPer100g: 3,
+    fiberPer100g: 4,
+    kcalPer100g: 260,
+    timesSeen: 3,
+    lastSeenAt: '2026-08-20T12:00:00.000Z',
+    imageUri: 'file:///pan.jpg',
+  };
+
+  it('toCatalogEntry propaga la foto de la comida analizada, sin inventarla', () => {
+    const conFoto = toCatalogEntry(
+      { name: 'Pan', estimatedGrams: 100, servingGrams: null, servingLabel: null, carbsG: 50, proteinG: 8, fatG: 3, fiberG: 4, caloriesKcal: 260, confidence: 0.8 },
+      '2026-08-27T12:00:00.000Z',
+      'file:///nueva.jpg',
+    );
+    expect(conFoto?.imageUri).toBe('file:///nueva.jpg');
+
+    const sinFoto = toCatalogEntry(
+      { name: 'Pan', estimatedGrams: 100, servingGrams: null, servingLabel: null, carbsG: 50, proteinG: 8, fatG: 3, fiberG: 4, caloriesKcal: 260, confidence: 0.8 },
+      '2026-08-27T12:00:00.000Z',
+    );
+    expect(sinFoto?.imageUri).toBeUndefined();
+  });
+
+  /**
+   * Un análisis por texto no trae imagen. Sin conservar la anterior, reconocer
+   * el mismo alimento sin foto borraría la que ya había.
+   */
+  it('blendCatalogEntry conserva la foto anterior cuando la nueva no trae una', () => {
+    const merged = blendCatalogEntry(base, {
+      key: 'pan',
+      name: 'Pan',
+      carbsPer100g: 52,
+      proteinPer100g: 8,
+      fatPer100g: 3,
+      fiberPer100g: 4,
+      kcalPer100g: 262,
+      lastSeenAt: '2026-08-27T12:00:00.000Z',
+    });
+    expect(merged.imageUri).toBe('file:///pan.jpg');
+  });
+
+  it('una foto nueva reemplaza a la anterior', () => {
+    const merged = blendCatalogEntry(base, {
+      key: 'pan',
+      name: 'Pan',
+      carbsPer100g: 50,
+      proteinPer100g: 8,
+      fatPer100g: 3,
+      fiberPer100g: 4,
+      kcalPer100g: 260,
+      lastSeenAt: '2026-08-27T12:00:00.000Z',
+      imageUri: 'file:///pan-2.jpg',
+    });
+    expect(merged.imageUri).toBe('file:///pan-2.jpg');
+  });
+
+  it('un alimento sin foto sigue siendo válido: no se le inventa una', () => {
+    const { imageUri: _omitted, ...sinFoto } = base;
+    void _omitted;
+    const merged = blendCatalogEntry(sinFoto, {
+      key: 'pan',
+      name: 'Pan',
+      carbsPer100g: 50,
+      proteinPer100g: 8,
+      fatPer100g: 3,
+      fiberPer100g: 4,
+      kcalPer100g: 260,
+      lastSeenAt: '2026-08-27T12:00:00.000Z',
+    });
+    expect(merged.imageUri).toBeUndefined();
+  });
+
+  it('applyCatalogEdit conserva la foto por defecto y la quita solo con null', () => {
+    expect(applyCatalogEdit(base, { name: 'Pan integral' })?.imageUri).toBe('file:///pan.jpg');
+    expect(applyCatalogEdit(base, { imageUri: null })?.imageUri).toBeUndefined();
+  });
+});
+
+describe('listed — "solo receta" no se lista suelto', () => {
+  const base: CatalogFood = {
+    key: 'arroz', name: 'Arroz',
+    carbsPer100g: 28, proteinPer100g: 2.7, fatPer100g: 0.3, fiberPer100g: 0.4, kcalPer100g: 130,
+    timesSeen: 3, lastSeenAt: AT,
+  };
+  // `timesSeen` se quita con `delete` y no destructurando: la regla de lint
+  // del repo rechaza la variable descartada, aunque lleve guion bajo.
+  const next = (over: Partial<Omit<CatalogFood, 'timesSeen'>> = {}): Omit<CatalogFood, 'timesSeen'> => {
+    const rest: Partial<CatalogFood> = { ...base, ...over };
+    delete rest.timesSeen;
+    return rest as Omit<CatalogFood, 'timesSeen'>;
+  };
+
+  it('ausente significa visible: toda fila anterior al campo lo es', () => {
+    expect(isListedFood(base)).toBe(true);
+    expect(isListedFood({ listed: false })).toBe(false);
+  });
+
+  it('al fusionar, visible gana: guardar un alimento dentro de una receta no lo esconde', () => {
+    const merged = blendCatalogEntry(base, next({ listed: false }));
+    expect(isListedFood(merged)).toBe(true);
+    // Y no se inventa el campo en una fila que nunca lo tuvo.
+    expect('listed' in merged).toBe(false);
+  });
+
+  it('confirmarlo suelto saca a la luz uno que estaba oculto', () => {
+    const merged = blendCatalogEntry({ ...base, listed: false }, next());
+    expect(isListedFood(merged)).toBe(true);
+  });
+
+  it('dos veces "solo receta" sigue oculto', () => {
+    const merged = blendCatalogEntry({ ...base, listed: false }, next({ listed: false }));
+    expect(merged.listed).toBe(false);
+  });
+
+  it('corregir macros o convertir una porción no cambia si está a la vista', () => {
+    const hidden = { ...base, listed: false };
+    expect(applyCatalogEdit(hidden, { carbsPer100g: 30 })?.listed).toBe(false);
+    expect(applyCatalogEdit(base, { carbsPer100g: 30 })).not.toHaveProperty('listed');
+    expect(catalogEntryFromPortion(hidden, { grams: 100, carbsG: 28, proteinG: 2.7, fatG: 0.3, fiberG: 0.4, caloriesKcal: 130 }, AT)?.listed).toBe(false);
   });
 });

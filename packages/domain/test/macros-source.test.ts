@@ -152,3 +152,33 @@ describe('resolveMacrosSource', () => {
     });
   });
 });
+
+/**
+ * El carrito del catálogo es una estimación, igual que una foto.
+ *
+ * El fallo que fija este test: los macros del carrito se precargaban en los
+ * campos y se guardaban marcados `'user'`, porque quien resolvía la
+ * procedencia comparaba solo contra el análisis de una foto — y el carrito no
+ * tiene análisis. El reporte del control médico imprimía "anotados por la
+ * usuaria" sobre una media de estimaciones de IA.
+ */
+describe('procedencia de unos macros venidos del catálogo o del carrito', () => {
+  const delCarrito = { proteinG: 20.8, fatG: 15.3, fiberG: 2.4, caloriesKcal: 347 };
+
+  it('sin tocar nada son de la IA, no de la usuaria', () => {
+    expect(resolveMacrosSource({ entered: delCarrito, aiProposed: delCarrito })).toBe('ai');
+  });
+
+  it('corregir uno los vuelve mezcla, nunca "user"', () => {
+    expect(resolveMacrosSource({
+      entered: { ...delCarrito, proteinG: 25 },
+      aiProposed: delCarrito,
+    })).toBe('mixed');
+  });
+
+  it('sin declarar de dónde vinieron se marcarían "user": ese es el fallo', () => {
+    // Documenta por qué `aiProposed` **tiene** que viajar. Con la referencia
+    // ausente, la misma entrada produce la afirmación equivocada.
+    expect(resolveMacrosSource({ entered: delCarrito })).toBe('user');
+  });
+});

@@ -44,49 +44,108 @@ en vez de abrir la pregunta de nuevo.
 | 2026-08-22 | Fase 19 (notificaciones por tipo) + Parte A (catálogo en "Nueva entrada") + Parte B (bug de input, sin código) | No — todo `apps/mobile`. |
 | 2026-08-22 | **Fase 23: el episodio captura todo su ventana + exclusión de episodios confundidos** | **SÍ, pero de bajo riesgo y NO urgente.** `apps/api/src/app.ts` no se tocó, pero sí `packages/ai/src/prompts.ts`: `glucoseInsightSystemPrompt` pasó de v2 a v3 para que el modelo pueda describir los `contextEvents` ("se registró una corrección de 2 U a las 2 h") sin evaluarlos. Hasta que se redespliegue, el backend sigue con el prompt v2: **el campo `contextEvents` viaja igual dentro de `MealEpisodeMetrics` pero el modelo no tiene instrucción sobre qué hacer con él**, así que probablemente lo ignore — no rompe nada, solo no aprovecha el dato. La parte que de verdad importaba de la Fase 23 (excluir episodios confundidos de las correlaciones) es **100 % cliente** y funciona con solo instalar el APK. Agrupar con el próximo redeploy en vez de gastar uno para esto. |
 | 2026-08-21 | **Catálogo de alimentos COMPARTIDO — backend completo** (`apps/api/src/food-catalog-store.ts`, endpoints `GET`/`POST /v1/food-catalog`, `docs/adr/0003-shared-food-catalog.md`) | **SÍ.** Primera vez que el backend gana un estado persistente (Postgres). Sin `DATABASE_URL`, los dos endpoints nuevos responden 503 y el resto del backend sigue exactamente igual — no es bloqueante para nada de lo que ya funciona, pero la función en sí no existe hasta el redeploy + la variable de entorno. |
+| 2026-08-25 | Fase 19 + Fase 23 + catálogo desde "Nueva entrada", y los 11 hallazgos de esa revisión | **SÍ.** `apps/api/src/*` no se tocó, pero sí `packages/ai/src/prompts.ts` y `packages/domain/src/ai-safety.ts`, que el backend importa. Ver la sección de abajo. |
+| 2026-08-31 | Modal Maestro, carrito, calendario, transacciones SQLite | No — `packages/domain`, `packages/schemas` y `apps/mobile`. |
+| 2026-09-01 | Porción propuesta por la IA, recetas, campos de IA separados, cobertura de días | **SÍ.** `FoodEstimateSchema` gana `servingGrams`/`servingLabel` y los tres prompts de comida pasan a v2. Sin redeploy la IA nunca propone porción. |
+| 2026-09-01 | Macros por porción, meta de fibra, hora local del resumen, y los hallazgos de su revisión | **SÍ** — desplegado el 2026-09-02 como `30a87fa` (DeepAgent, verificado con los tres curl: hora local 13:00 ✓, `servingGrams` ✓). |
+| 2026-09-02 | Recetas completas + `knownFoodNames` | **SÍ** — desplegado como `9f5251e`: v3 y `knownFoodNames` verificados. |
+| 2026-09-02 | El 502 de las fotos: `exclusiveMinimum` fuera del saneado del esquema | **SÍ, y es el que dispara este redeploy.** Sin él las fotos no se analizan. Ver abajo. |
 
 ## Qué cambió desde el último deploy
 
-Todo lo pendiente en producción, para no re-derivarlo — este es el que se
-junta en el prompt consolidado de más abajo:
+**Lo desplegado hoy es `30a87fa` (2026-09-02, DeepAgent)**, verificado por él y
+por Claude Code: la hora local del resumen tomó y `servingGrams` viene. Pero el
+deploy trajo un problema de infraestructura que el anterior no tenía, y el repo
+avanzó una vez más.
 
-1. **Tercer modo de `/v1/ai/meal-analysis`: edición por instrucción (Fase 17).**
-   `MealAnalysisBodySchema` acepta `{ instruction, current }`;
-   `AbacusMealVisionService` tiene su prompt propio (`mealEditSystemPrompt`)
-   y su guardrail de entrada (`requestsInsulinAdvice`). Sin redeploy, el
-   botón "Explícale el cambio" (comidas y catálogo, Fase 17/18) recibe
-   **HTTP 400 `invalid_meal_input`**.
-2. **Catálogo de alimentos compartido (backend completo, sin cliente aún).**
-   `GET`/`POST /v1/food-catalog`. Necesita `DATABASE_URL` apuntando al
-   Postgres que ya viene con esta instancia de app — sin esa variable, los
-   endpoints existen pero responden 503. El esquema se auto-provee solo al
-   arrancar: no hay SQL que correr a mano.
-3. **`glucoseInsightSystemPrompt` v3 (Fase 23, 2026-08-22)**: instrucción
-   para describir los `contextEvents` del episodio sin evaluarlos. Sin
-   redeploy el campo viaja y el modelo no sabe qué hacer con él — no rompe,
-   solo no lo aprovecha. Riesgo bajo, no urgente.
-   (El punto de "mg/dL" pendiente desde la Fase 13 quedó resuelto en el
-   redeploy del 2026-08-21.)
-4. **Diferido a propósito, no pendiente de confirmación.** Quitar
-   `LIBRELINKUP_EMAIL`/`LIBRELINKUP_PASSWORD` del entorno — Verónica ya
-   confirmó (2026-08-21) que su cuenta propia funciona conectada desde la
-   app, pero pidió dejarlo para el día que se vaya a producción real, no
-   para este redeploy. Ver la nota al final del prompt consolidado. No
-   preguntar de nuevo salvo que ella lo traiga.
+### 0. ✅ DESPLEGADO (2026-09-03): las fotos funcionan
 
-Cómo verificar, contra el servidor real, qué tan atrás está el deploy:
+Verificado contra el servidor real, no reportado: `POST /v1/ai/meal-analysis`
+con un cuerpo grande responde 200. El `exclusiveMinimum` está corregido en
+producción.
 
-```bash
-# Modo de edición por instrucción (Fase 17) — 400 = servidor viejo.
-curl -X POST https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
-  -H 'Content-Type: application/json' \
-  -d '{"instruction":"era media porción","current":{"confirmedCarbsG":30}}'
+**Lo que sigue pendiente es solo el punto 3.** La misma prueba mostró que el
+backend responde `meal-analysis-text.v3`, así que los prompts v4 con `waterMl`
+no están arriba: hoy devuelve `{"name":"Agua","estimatedGrams":250,
+"carbsG":0,...}` dentro de `foods`.
 
-# Catálogo compartido — 404 (ruta no existe) = servidor viejo;
-# 503 food_catalog_not_configured = servidor nuevo sin DATABASE_URL;
-# 200 con {"foods":[]} = servidor nuevo y ya configurado.
-curl https://237e8b7f1.abacusai.cloud/v1/food-catalog?q=arroz
-```
+**Ya no es urgente**: el cliente rescata esa agua por su cuenta
+(`separatePlainWater`, en `packages/domain`), así que la función anda igual y
+"Agua" no ensucia el catálogo. El redeploy la hace más limpia y ahorra un
+alimento inventado por análisis; no la desbloquea. **Puede esperar al próximo
+cambio de backend que sí haga falta.**
+
+### 1. ✅ El 502 de las fotos: no era el proxy, era el esquema
+
+Diagnóstico de DeepAgent (2026-09-02), verificado contra el código. **La
+hipótesis del `client_max_body_size` era falsa** y vale la pena guardar por qué:
+
+- Con la foto real de 379 KB, **saltándose nginx** (directo a `127.0.0.1:4188`),
+  también daba 502, y con cuerpo JSON: `AIServiceError: "Abacus RouteLLM
+  returned HTTP 400"`. El cuerpo **sí llegaba** a Fastify.
+- El 400 lo devuelve **RouteLLM**, y su motivo es el esquema, no el tamaño: el
+  validador de **`gemini-2.5-flash` rechaza `exclusiveMinimum`** ("Extra inputs
+  are not permitted"). Habla OpenAPI 3.0, donde la exclusividad es un booleano
+  al lado de `minimum`, no un número aparte.
+- **`route-llm` reparte por tamaño del payload**: fotos chicas → un GPT (200),
+  fotos grandes → Gemini (400). Por eso *parecía* un límite de ~8 KB.
+
+| Payload | `route-llm` | `gpt-5.6-sol` | `gemini-2.5-flash` |
+|---|---|---|---|
+| pequeño | 200 | 200 | 400 |
+| foto real grande | **400** | **200** | 400 |
+
+**Quién lo introdujo**: el `z.number().positive()` de `servingGrams`
+(2026-09-01) — el único campo del esquema que emite `exclusiveMinimum`. La
+lista `UNSUPPORTED_STRICT_JSON_SCHEMA_KEYWORDS` filtraba `minimum`, `maximum`,
+`minItems`, `maxItems` y `$schema`: cuatro de las cinco que importaban.
+
+**Arreglado en el repo** (opción A, la de código): se filtran también
+`exclusiveMinimum`, `exclusiveMaximum` y `default`. No debilita nada — el
+saneado solo afecta al esquema que se le **pide** al modelo; la respuesta se
+re-valida entera contra el Zod real, cotas incluidas. Y ahora hay un test que
+enumera lo que **sobrevive** al saneado contra una lista blanca, que fue el que
+encontró `default` antes de que llegara al teléfono.
+
+**No se fijó el modelo** (opción B): hardcodear `gpt-5.6-sol` deja el sistema
+atado a un nombre que puede desaparecer, pierde el enrutador, y no arregla la
+fragilidad — el próximo esquema podría romper también ese modelo. El
+endurecimiento de nginx que DeepAgent dejó (`client_max_body_size 15m`) es
+razonable y se conserva, aunque no era la causa.
+
+### 2. `knownFoodNames`: la IA reusa el nombre exacto de lo que ya existe
+
+Los tres modos de `/v1/ai/meal-analysis` aceptan `knownFoodNames` (solo
+nombres, máximo 300 de hasta 80 caracteres; `KnownFoodNamesSchema`). Los
+prompts de comida pasan a **v3** con la regla y su freno: reusar el nombre
+exacto solo si es el mismo alimento; corte, preparación, variedad o marca
+distinta es otro alimento. Sin redeploy, el campo viaja, Zod lo descarta en
+silencio y el modelo sigue inventando "pata de pollo" al lado de "muslo de
+pollo". Compatible hacia atrás: es opcional.
+
+### 3. Agua en el análisis de comida (2026-09-03)
+
+`MealAnalysisSchema` gana `waterMl` (`number | null`, `default null`) y los
+tres prompts pasan a **v4**: devuelven los mililitros de **agua sola** que se
+ven en la foto o que ella describió, para que un vaso no entre a `foods` como
+un alimento de 0 g y ensucie el catálogo.
+
+La regla que el prompt enumera en vez de dar por entendida: **solo agua**. Un
+jugo, una bebida, leche, café con leche, té con azúcar, sopa o caldo llevan
+carbohidratos y van en `foods`, donde reciben su dosis. Si el modelo mandara
+un jugo a `waterMl`, esos carbohidratos desaparecerían del registro **y de la
+dosis propuesta**. Sin volumen estimable, `null` — nunca un número redondo.
+
+Sin redeploy la app funciona igual, pero la IA no detecta agua: `waterMl` sale
+`null` siempre y el registro de agua queda solo manual (que sí funciona ya, con
+su acceso rápido). Compatible hacia atrás: el campo tiene default.
+
+### 4. Diferido a propósito, no pendiente de confirmación
+
+Quitar `LIBRELINKUP_EMAIL`/`LIBRELINKUP_PASSWORD` del entorno — Verónica ya
+confirmó (2026-08-21) que su cuenta propia funciona conectada desde la app,
+pero pidió dejarlo para el día que se vaya a producción real. No preguntar de
+nuevo salvo que ella lo traiga.
 
 ## Cuándo usarlo
 
@@ -107,56 +166,72 @@ Si el fallo resulta ser otra cosa (bug real de código, error del cliente,
 CGM/Junction caído, etc.), **no** dispares este prompt — arregla el código
 acá y commitea, o diagnostica el problema real primero.
 
-## El prompt consolidado (copiar/pegar a DeepAgent tal cual, completando rama y commit)
+## El prompt consolidado (copiar/pegar a DeepAgent tal cual)
 
-Junta el redeploy y el catálogo compartido en un solo pedido — es
-deliberado, ver la nota del principio de este documento.
+Actualizado el 2026-09-02 tras el diagnóstico de DeepAgent. Solo queda
+**desplegar**: la causa del 502 ya está arreglada en el repo.
 
 ```
-Necesito que redespliegues el backend de Type 1A (apps/api de
-github.com/cdevidts/type-1a) a producción, en el host que ya está
-sirviendo https://237e8b7f1.abacusai.cloud, y que fijes una variable de
-entorno nueva. No hay código que escribir de tu lado — ya está todo en el
-repo.
+Tenías razón y yo estaba equivocado: el 502 no era nginx. Tu diagnóstico dio en
+el clavo y lo confirmé contra el código.
 
-Rama: <RAMA>. Commit: <SHA>.
+El validador de gemini-2.5-flash rechaza exclusiveMinimum, route-llm manda las
+fotos grandes a Gemini y las chicas a un GPT, y por eso parecía un límite de
+tamaño. Lo introdujo un z.number().positive() nuevo en el campo servingGrams:
+era el único del esquema que emitía esa palabra, y la lista de palabras que
+saneábamos tenía cuatro de las cinco que importaban.
 
-Contexto de lo que trae este código nuevo:
-1. Un tercer modo del endpoint /v1/ai/meal-analysis (edición de una comida
-   por instrucción en lenguaje natural).
-2. Un catálogo de alimentos COMPARTIDO nuevo, en dos endpoints:
-   GET /v1/food-catalog y POST /v1/food-catalog. Usa Postgres. La tabla se
-   auto-crea sola la primera vez que el proceso arranca con DATABASE_URL
-   configurada (CREATE TABLE IF NOT EXISTS en el código) — no hace falta que
-   corras ninguna migración ni SQL a mano.
+Fui por tu opción A, la de código, y ya está arreglada y pusheada. Descarté la
+opción B (fijar ABACUS_ROUTE_LLM_MODEL) porque ata el sistema a un nombre de
+modelo que puede desaparecer y no arregla la fragilidad de fondo. Deja tu
+endurecimiento de nginx como está: no era la causa, pero es razonable.
 
-Por favor:
-1. Redespliega apps/api desde la rama <RAMA> (commit <SHA>) al mismo host
-   que ya sirve producción — no cambies el dominio ni la URL que usa la app
-   móvil (apps/mobile apunta a EXPO_PUBLIC_API_BASE_URL, ya configurada
-   contra ese host).
-2. Agrega la variable de entorno DATABASE_URL, apuntando al Postgres que ya
-   viene incluido con esta instancia de app (no crees una base nueva ni
-   contrates nada — es la que ya está provisionada). El resto de las
-   variables de entorno siguen igual: no las hardcodees ni las cambies (ver
-   apps/api/src/config.ts y .env.example en el repo).
-3. Después del deploy, confirma con estos dos curl que ambos cambios están
-   activos:
+Necesito un redeploy más, el mismo procedimiento de siempre.
 
-   curl -X POST https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
-     -H 'Content-Type: application/json' \
-     -d '{"instruction":"era media porción","current":{"confirmedCarbsG":30}}'
-   (debe dejar de responder 400 invalid_meal_input)
+Rama: claude/prompt-maestro-14-cambios-pa5ale
+Commit: el head de la rama (incluye fd3ad1a y todo lo posterior)
 
-   curl https://237e8b7f1.abacusai.cloud/v1/food-catalog?q=arroz
-   (debe responder 200 con {"foods":[]} — no 404 ni 503)
+Qué trae, en dos partes:
 
-Nota de arquitectura, por si es relevante para cómo lo despliegas: hasta
-ahora este backend era un proxy sin estado (ver docs/adr/0001-local-first.md
-del repo) — el catálogo de alimentos es la PRIMERA tabla que persiste datos,
-y está documentado en docs/adr/0003-shared-food-catalog.md. Es deliberadamente
-anónima: solo nombres de alimentos y macros por 100 g, ningún dato de
-usuaria, glucosa, insulina ni fotos pasa nunca por esos dos endpoints.
+1. sanitizeForStrictJsonSchema ahora filtra también exclusiveMinimum,
+   exclusiveMaximum y default. No debilita nada — eso solo afecta al esquema
+   que se le PIDE al modelo; la respuesta se sigue re-validando entera contra
+   el Zod real, con todas sus cotas. Y hay un test nuevo que enumera lo que
+   SOBREVIVE al saneado contra una lista blanca, para que la próxima palabra
+   rara falle ahí y no en el teléfono. Sin esto, TODAS las fotos dan 502.
+
+2. Los tres prompts de comida pasan a v4 y MealAnalysisSchema gana waterMl
+   (number | null, default null): el agua sola que se ve en la foto o que la
+   usuaria describe se devuelve aparte, para que un vaso no entre a `foods`
+   como un alimento de 0 g. SOLO agua: jugo, bebida, leche, café con leche, té
+   con azúcar, sopa y caldo van en `foods` con sus carbohidratos. Campo
+   opcional con default, compatible hacia atrás.
+
+Checkout, pnpm install --frozen-lockfile, reiniciar el servicio. Sin tocar
+dominio, puerto ni variables de entorno.
+
+Verificación, dos curl:
+
+   A) La foto grande, que es lo que estaba roto. Usa una imagen real de al
+      menos 300 KB en base64 (la que usaste para diagnosticar sirve):
+
+      curl -s -o /dev/null -w "%{http_code} %{time_total}s\n" -X POST \
+        https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
+        -H 'Content-Type: application/json' --data-binary @/tmp/foto.json
+
+      → 200. Si sigue en 502, mándame el cuerpo del error completo (el JSON
+        de la app, no el "error code: 502" de Cloudflare).
+
+   B) Que no se haya roto lo de texto:
+
+      curl -s -X POST https://237e8b7f1.abacusai.cloud/v1/ai/meal-analysis \
+        -H 'Content-Type: application/json' \
+        -d '{"description":"una manzana"}'
+
+      → 200, analysisId empezando con meal-analysis-text.v3.
+
+Y gracias por no aplicar A ni B sin preguntar. Fue lo correcto: la opción A
+toca código versionado y tenía que salir del repo, con su test.
 ```
 
 ### Diferido a propósito — NO agregar todavía

@@ -90,6 +90,7 @@ filtro de salida cubre lo que ese dato le permite decir.
 | Perfil de nutrición | `saveNutritionProfile` | deliberadamente separado de `TherapyProfile`, para que cambiar una meta de peso no toque algo que llega a una jeringa |
 | Alarmas, importación MySugr, conectar sensor | `save*Settings`, `importMySugrCsv`, `connectFreestyleLibre` | lo importado queda marcado como tal |
 | Catálogo COMPARTIDO | `GET`/`POST /v1/food-catalog` | backend listo, **sin cliente en mobile** (ADR 0003). La subida es la única W que no necesita confirmación: es anónima por construcción, no hay nada suyo que confirmar |
+| Recetas: ver, componer, reusar | `getRecipes`, `recipeTotals`, `updateRecipeItems`, `updateRecipe`, `recipeToCartLines`, `setCatalogFoodListed` | los totales **se derivan**, nunca se citan como guardados; reusar una receta es una línea por componente y sigue siendo estimación. Un componente `listed: false` existe solo dentro de sus recetas: no ofrecerlo suelto |
 
 ## Cálculo determinístico — el chat *muestra*, no inventa
 

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type GestureResponderHandlers } from 'react-native';
+import * as ImageManipulator from 'expo-image-manipulator';
+import * as ImagePicker from 'expo-image-picker';
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type GestureResponderHandlers } from 'react-native';
 
 // Subpath, nunca el barrel: Metro no hace tree-shaking (ver `/iconography`).
 import Search from 'lucide-react-native/icons/search';
@@ -7,6 +9,10 @@ import Trash2 from 'lucide-react-native/icons/trash-2';
 import WandSparkles from 'lucide-react-native/icons/wand-sparkles';
 
 import {
+  isListedFood,
+  recipeTotals,
+  scaleCatalogFood,
+  type Recipe,
   DEFAULT_SERVING_GRAMS,
   MAX_SERVING_GRAMS,
   isValidServingGrams,
@@ -25,7 +31,9 @@ import { editCatalogFoodWithInstruction, MobileApiError } from '../api';
 import { parseNonNegativeNumber } from '../format';
 import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
+import { FoodCard } from './FoodCard';
 import { ModalShell } from './ModalShell';
+import { RecipeDetail, type RecipeDetailActions } from './RecipeDetail';
 
 const numberText = (value: number): string => String(Number(value.toFixed(2)));
 
@@ -88,6 +96,17 @@ function FoodEditor({
   );
   const [servingLabel, setServingLabel] = useState(food.servingLabel ?? '');
   const [instruction, setInstruction] = useState('');
+  /** Quitar la foto es una acción explícita, no un efecto de guardar. */
+  const [removePhoto, setRemovePhoto] = useState(false);
+  /**
+   * Foto nueva elegida en esta edición, todavía sin guardar.
+   *
+   * Acá la foto es **solo representación** y por eso —a diferencia de los tres
+   * modales de comida— no se adopta junto a un análisis: no se re-estima nada
+   * a partir de ella, así que no hay riesgo de que una imagen quede
+   * describiendo macros que no son suyos.
+   */
+  const [pickedPhoto, setPickedPhoto] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -119,6 +138,17 @@ function FoodEditor({
           fatPer100g: parseNonNegativeNumber(fat) ?? 0,
           fiberPer100g: parseNonNegativeNumber(fiber) ?? 0,
           kcalPer100g: parseNonNegativeNumber(kcal) ?? 0,
+          // La porción que hay ahora mismo en el formulario, para que una
+          // instrucción como "una porción son dos rebanadas" corrija sobre
+          // algo en vez de inventarlo.
+          //
+          // El campo vacío se descarta **antes** de parsear: `Number('')` es
+          // 0, no `NaN`, así que `parseNonNegativeNumber('')` devuelve 0 y sin
+          // esta guarda la IA recibiría "una porción pesa 0 g".
+          ...(servingGrams.trim() === '' || parseNonNegativeNumber(servingGrams) === null
+            ? {}
+            : { servingGrams: parseNonNegativeNumber(servingGrams) as number }),
+          ...(servingLabel.trim() === '' ? {} : { servingLabel: servingLabel.trim() }),
         },
       });
       const revised = result.estimate.foods[0];
@@ -138,11 +168,55 @@ function FoodEditor({
       setFat(per100(revised.fatG));
       setFiber(per100(revised.fiberG));
       setKcal(per100(revised.caloriesKcal));
+      // La porción también, si la propuso: "una porción son dos rebanadas" es
+      // justo el tipo de corrección que se escribe acá, y sin esto la
+      // instrucción se aplicaba a los macros y la porción quedaba intacta.
+      if (revised.servingGrams !== null) setServingGrams(numberText(revised.servingGrams));
+      if (revised.servingLabel !== null) setServingLabel(revised.servingLabel);
       setMessage('Campos actualizados con la propuesta. Revísalos: no se guarda nada hasta que toques Guardar.');
     } catch (error) {
       setMessage(error instanceof MobileApiError
         ? `${error.message} El alimento sigue como estaba.`
         : 'No se pudo aplicar el cambio. El alimento sigue como estaba.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Adjunta una foto propia al alimento. Antes solo se podía **quitar** la que
+   * hubiera heredado de una comida, así que un alimento creado por texto se
+   * quedaba sin imagen para siempre.
+   */
+  async function pickPhoto(from: 'camera' | 'library'): Promise<void> {
+    setMessage(null);
+    if (from === 'camera') {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        setMessage('No hay permiso de cámara. Puedes elegir una imagen de la galería.');
+        return;
+      }
+    }
+    const picked = from === 'camera'
+      ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], allowsEditing: true, exif: false, quality: 1 })
+      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, exif: false, quality: 1 });
+    if (picked.canceled) return;
+    setBusy(true);
+    try {
+      const asset = picked.assets[0]!;
+      // Mismo tamaño y compresión que los modales de comida, para que el
+      // catálogo no acumule imágenes de varios megas. `exif: false` arriba y
+      // el re-render acá dejan la imagen sin metadatos.
+      const context = ImageManipulator.ImageManipulator.manipulate(asset.uri);
+      context.resize({ width: 1280, height: null });
+      const rendered = await context.renderAsync();
+      const compressed = await rendered.saveAsync({ compress: 0.72, format: ImageManipulator.SaveFormat.JPEG });
+      setPickedPhoto(compressed.uri);
+      setRemovePhoto(false);
+      setMessage('Foto lista. No se guarda hasta que toques Guardar.');
+    } catch (error) {
+      logSaveError('CatalogModal.pickPhoto', error);
+      setMessage('No se pudo preparar la imagen. El alimento sigue como estaba.');
     } finally {
       setBusy(false);
     }
@@ -187,6 +261,11 @@ function FoodEditor({
         kcalPer100g: parsed.kcalPer100g!,
         servingGrams: serving,
         servingLabel: servingLabel.trim() === '' ? null : servingLabel.trim(),
+        // Ausente deja la foto como está; `null` la quita. Un campo que no
+        // viaja nunca borra nada.
+        // Una foto nueva manda sobre el quitar: elegir una imagen ya es
+        // decir "quiero esta". Ausente deja la que había.
+        ...(pickedPhoto !== null ? { imageUri: pickedPhoto } : removePhoto ? { imageUri: null } : {}),
       });
       onCancel();
     } catch (error) {
@@ -229,6 +308,73 @@ function FoodEditor({
           accessibilityRole="button"
         >
           <Text style={styles.panelActionText}>{busy ? 'Consultando…' : 'Ver qué propone'}</Text>
+        </Pressable>
+      </View>
+
+      {/*
+        La foto del alimento. **Nunca se genera.** Puede venir heredada de la
+        comida donde se identificó —y entonces es del plato entero, no del
+        alimento— o elegirla ella acá, que es lo único que la vuelve una foto
+        del alimento de verdad. Es representación: nada se re-analiza a partir
+        de ella.
+      */}
+      <Text style={styles.sectionTitle}>Foto</Text>
+      {pickedPhoto !== null ? (
+        <>
+          <Text style={styles.sectionHint}>Foto nueva, elegida por ti. Se guarda al tocar Guardar.</Text>
+          <Image source={{ uri: pickedPhoto }} style={styles.editorPhoto} resizeMode="cover" />
+          <Pressable
+            style={styles.removePhoto}
+            onPress={() => { setPickedPhoto(null); }}
+            accessibilityRole="button"
+            accessibilityLabel="Descartar la foto nueva"
+          >
+            <Text style={styles.removePhotoText}>Descartar la foto nueva</Text>
+          </Pressable>
+        </>
+      ) : food.imageUri === undefined ? (
+        <Text style={styles.sectionHint}>
+          Este alimento no tiene foto. Puedes elegir una acá, o aparece sola la próxima vez que lo
+          registres con una foto de la comida.
+        </Text>
+      ) : (
+        <>
+          <Text style={styles.sectionHint}>
+            Esta la heredó de la comida donde se identificó, así que puede incluir otros alimentos. No sirve
+            para estimar la porción: para eso está el tamaño de porción de más abajo.
+          </Text>
+          <Image source={{ uri: food.imageUri }} style={styles.editorPhoto} resizeMode="cover" />
+          <Pressable
+            style={[styles.removePhoto, removePhoto && styles.removePhotoActive]}
+            onPress={() => { setRemovePhoto((previous) => !previous); }}
+            accessibilityRole="button"
+            accessibilityState={{ selected: removePhoto }}
+            accessibilityLabel={removePhoto ? 'Conservar la foto guardada' : 'Quitar la foto guardada'}
+          >
+            <Text style={[styles.removePhotoText, removePhoto && styles.removePhotoTextActive]}>
+              {removePhoto ? 'Se quitará al guardar · tocar para conservarla' : 'Quitar foto'}
+            </Text>
+          </Pressable>
+        </>
+      )}
+      <View style={styles.photoActions}>
+        <Pressable
+          style={[styles.photoButton, busy && styles.disabled]}
+          disabled={busy}
+          onPress={() => { void pickPhoto('camera'); }}
+          accessibilityRole="button"
+          accessibilityLabel={`Tomar una foto de ${food.name}`}
+        >
+          <Text style={styles.photoButtonText}>Tomar foto</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.photoButton, busy && styles.disabled]}
+          disabled={busy}
+          onPress={() => { void pickPhoto('library'); }}
+          accessibilityRole="button"
+          accessibilityLabel={`Elegir una foto de ${food.name} desde la galería`}
+        >
+          <Text style={styles.photoButtonText}>Elegir de la galería</Text>
         </Pressable>
       </View>
 
@@ -303,6 +449,9 @@ export function CatalogModal({
   onLoad,
   onSaveFood,
   onDeleteFood,
+  catalog,
+  recipes,
+  recipeActions,
   swipeHandlers,
 }: {
   visible: boolean;
@@ -310,6 +459,16 @@ export function CatalogModal({
   onLoad: (search: string) => Promise<CatalogFood[]>;
   onSaveFood: (key: string, edit: CatalogEdit) => Promise<void>;
   onDeleteFood: (food: CatalogFood) => Promise<void>;
+  /**
+   * El catálogo **entero**, ocultos incluidos. Es contra lo que se derivan
+   * los totales de las recetas: la lista buscada de arriba puede no contener
+   * un componente (está oculto, o la búsqueda lo dejó fuera), y sumar contra
+   * ella lo daría por "ya no está en el catálogo".
+   */
+  catalog: readonly CatalogFood[];
+  /** Las recetas del catálogo. Sus totales se derivan de `catalog` al vuelo. */
+  recipes: readonly Recipe[];
+  recipeActions: RecipeDetailActions;
   swipeHandlers?: GestureResponderHandlers | undefined;
 }) {
   const [search, setSearch] = useState('');
@@ -317,6 +476,13 @@ export function CatalogModal({
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [editing, setEditing] = useState<CatalogFood | null>(null);
+  /**
+   * La receta abierta, por id: se busca en `recipes` en cada render para que
+   * un guardado (nombre, foto, composición) se refleje sin reabrir. Si la
+   * borraron, deja de encontrarse y la vista vuelve a la lista sola.
+   */
+  const [openRecipeId, setOpenRecipeId] = useState<string | null>(null);
+  const openRecipe = openRecipeId === null ? null : (recipes.find((recipe) => recipe.id === openRecipeId) ?? null);
 
   // `onLoad` llega como arrow inline desde `App`, así que cambia de identidad
   // en cada render. Si `load` dependiera de él, el efecto de más abajo se
@@ -356,6 +522,11 @@ export function CatalogModal({
     return () => { clearTimeout(timer); };
   }, [search, visible, load]);
 
+  const foodsByKey = new Map(catalog.map((food) => [food.key, food]));
+  // "Solo receta" no se lista suelto. La fila existe —la receta la necesita
+  // para sumar— pero ella eligió no verla acá.
+  const listedFoods = foods.filter(isListedFood);
+
   function confirmDelete(food: CatalogFood): void {
     Alert.alert(
       `Borrar ${food.name}`,
@@ -376,8 +547,22 @@ export function CatalogModal({
   }
 
   return (
-    <ModalShell visible={visible} title="Catálogo" onClose={onClose} scroll={false} swipeHandlers={swipeHandlers}>
-      {editing !== null ? (
+    <ModalShell visible={visible} title={openRecipe === null ? 'Catálogo' : openRecipe.name} onClose={onClose} scroll={false} swipeHandlers={swipeHandlers}>
+      {openRecipe !== null ? (
+        // En lugar de la lista, no encima: ver `RecipeDetail`.
+        <ScrollView contentContainerStyle={styles.listBody} keyboardShouldPersistTaps="handled">
+          <RecipeDetail
+            recipe={openRecipe}
+            catalog={catalog}
+            actions={{
+              ...recipeActions,
+              onDelete: async (recipe) => { await recipeActions.onDelete(recipe); setOpenRecipeId(null); void load(search); },
+              onListFood: async (key) => { await recipeActions.onListFood(key); void load(search); },
+            }}
+            onBack={() => { setOpenRecipeId(null); }}
+          />
+        </ScrollView>
+      ) : editing !== null ? (
         <FoodEditor
           food={editing}
           onCancel={() => { setEditing(null); void load(search); }}
@@ -415,7 +600,7 @@ export function CatalogModal({
               </View>
             ) : null}
 
-            {!loading && !failed && foods.length === 0 ? (
+            {!loading && !failed && listedFoods.length === 0 && recipes.length === 0 ? (
               <View style={styles.empty}>
                 <Text style={styles.emptyTitle}>
                   {search.trim() === '' ? 'Todavía no hay alimentos' : 'Ningún alimento con ese nombre'}
@@ -428,36 +613,124 @@ export function CatalogModal({
               </View>
             ) : null}
 
-            {foods.map((food) => (
-              <View key={food.key} style={styles.card}>
+            {/*
+              La misma tarjeta que usa el carrito. Lo único que cambia es el
+              control de la derecha: acá un lápiz para editar, allá una X para
+              quitar la línea.
+
+              **Tocar el contenedor ya no abre la edición.** Recorriendo la
+              lista con el pulgar se abría el editor por accidente, y ese
+              editor cambia valores que después sugieren carbohidratos en cada
+              comida que reuse el alimento.
+            */}
+            {/*
+              Las recetas van primero y con su propia sección: son platos, no
+              alimentos, y mezclarlas en la misma grilla haría imposible saber
+              si "Arroz con pollo" es una cosa o dos. Sus macros **se derivan**
+              de sus componentes contra este mismo `foods`, así que corregir un
+              alimento corrige la receta sin tocarla.
+            */}
+            {recipes.length === 0 ? null : (
+              <View style={styles.recipesSection}>
+                <Text style={styles.sectionHeading}>Recetas</Text>
+                {recipes.map((recipe) => {
+                  const totals = recipeTotals(recipe, foodsByKey);
+                  const names = recipe.items
+                    .map((item) => foodsByKey.get(item.foodKey)?.name ?? item.foodKey)
+                    .join(' · ');
+                  return (
+                    <View key={recipe.id}>
+                      <FoodCard
+                        name={recipe.name}
+                        subtitle={`${recipe.items.length} alimentos · ${numberText(totals.grams)} g · ${names}`}
+                        {...(recipe.imageUri === undefined ? {} : { imageUri: recipe.imageUri })}
+                        macros={{
+                          carbsG: totals.carbsG,
+                          proteinG: totals.proteinG,
+                          fatG: totals.fatG,
+                          fiberG: totals.fiberG,
+                          caloriesKcal: totals.caloriesKcal,
+                        }}
+                        macrosCaption={`Macros de la receta completa · ${numberText(totals.grams)} g`}
+                        // Abrir, no borrar: el borrado vive dentro del detalle,
+                        // confirmado y lejos del gesto de "ver qué lleva".
+                        action={{
+                          kind: 'edit',
+                          label: `Abrir la receta ${recipe.name}`,
+                          onPress: () => { setOpenRecipeId(recipe.id); },
+                        }}
+                      />
+                      {totals.missingFoodKeys.length === 0 ? null : (
+                        // Un total que ignora un componente ausente miente
+                        // hacia abajo; se dice en vez de callarlo.
+                        <Text style={styles.recipeWarn}>
+                          Le falta {totals.missingFoodKeys.length}{' '}
+                          {totals.missingFoodKeys.length === 1 ? 'alimento' : 'alimentos'} del catálogo, así
+                          que este total es un mínimo.
+                        </Text>
+                      )}
+                    </View>
+                  );
+                })}
+                <Text style={styles.sectionHeading}>Alimentos</Text>
+              </View>
+            )}
+
+            {/*
+              **Los chips van por porción, no por 100 g.**
+
+              El catálogo se guarda normalizado a 100 g —eso no cambia— pero
+              mostrarlo así inflaba la tarjeta de todo lo que se come en
+              cantidades chicas: una cucharada de aceite aparecía con 100 g de
+              grasa, y un alimento denso se leía como si una porción tuviera
+              varias veces los carbohidratos que tiene. Esos números son los
+              que después se reusan para sugerir carbohidratos, así que la
+              lectura equivocada no se quedaba en lo estético.
+
+              La porción es la de la usuaria (`servingGramsOf`, 100 g solo
+              cuando no hay otra), y la leyenda dice cuál es: los mismos cinco
+              chips sobre otro denominador son otros cinco números.
+            */}
+            {listedFoods.map((food) => {
+              const serving = servingGramsOf(food);
+              const perServing = scaleCatalogFood(food, serving);
+              return (
+              <View key={food.key}>
+                <FoodCard
+                  name={food.name}
+                  subtitle={`Porción ${numberText(serving)} g`
+                    + `${food.servingLabel === undefined ? '' : ` (${food.servingLabel})`}`
+                    + ` · ${numberText(food.carbsPer100g)} g carbos/100 g`
+                    + ` · ${food.timesSeen} ${food.timesSeen === 1 ? 'vez' : 'veces'}`}
+                  {...(food.imageUri === undefined ? {} : { imageUri: food.imageUri })}
+                  macros={{
+                    carbsG: perServing.carbsG,
+                    proteinG: perServing.proteinG,
+                    fatG: perServing.fatG,
+                    fiberG: perServing.fiberG,
+                    caloriesKcal: perServing.caloriesKcal,
+                  }}
+                  macrosCaption={`Macros por porción de ${numberText(serving)} g`}
+                  action={{ kind: 'edit', label: `Editar ${food.name}`, onPress: () => { setEditing(food); } }}
+                />
+                {/*
+                  El borrado sigue siendo explícito, confirmado y **separado
+                  del lápiz**: es la única acción destructiva de esta pantalla
+                  y no puede compartir gesto con la de corregir.
+                */}
                 <Pressable
-                  style={styles.cardMain}
-                  onPress={() => { setEditing(food); }}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Editar ${food.name}`}
-                >
-                  <Text style={styles.cardName}>{food.name}</Text>
-                  <Text style={styles.cardMacros}>
-                    {numberText(food.carbsPer100g)} g carbos · {numberText(food.proteinPer100g)} g proteína · {numberText(food.fatPer100g)} g grasa, por 100 g
-                  </Text>
-                  <Text style={styles.cardMeta}>
-                    Porción: {numberText(servingGramsOf(food))} g
-                    {food.servingLabel === undefined ? '' : ` (${food.servingLabel})`}
-                    {' · '}
-                    {food.timesSeen} {food.timesSeen === 1 ? 'vez' : 'veces'}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  style={styles.deleteButton}
+                  style={styles.deleteRow}
                   onPress={() => { confirmDelete(food); }}
                   accessibilityRole="button"
-                  accessibilityLabel={`Borrar ${food.name}`}
+                  accessibilityLabel={`Borrar ${food.name} del catálogo`}
                   hitSlop={8}
                 >
-                  <Trash2 size={20} color={colors.red} />
+                  <Trash2 size={16} color={colors.red} />
+                  <Text style={styles.deleteRowText}>Borrar del catálogo</Text>
                 </Pressable>
               </View>
-            ))}
+              );
+            })}
           </ScrollView>
         </>
       )}
@@ -497,19 +770,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.tealSoft,
   },
   retryText: { fontSize: 14, fontWeight: '700', color: colors.teal },
-  card: {
+  deleteRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.lg,
-    marginBottom: spacing.sm,
+    gap: spacing.xs,
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+    marginTop: -spacing.xs,
+    marginBottom: spacing.md,
   },
-  cardMain: { flex: 1, minHeight: 44, justifyContent: 'center' },
-  cardName: { fontSize: 16, fontWeight: '700', color: colors.ink },
-  cardMacros: { fontSize: 12, color: colors.muted, marginTop: 2, lineHeight: 16 },
-  cardMeta: { fontSize: 12, color: colors.muted, marginTop: 2 },
-  deleteButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  deleteRowText: { fontSize: 12, fontWeight: '700', color: colors.red },
   editorBody: { padding: spacing.lg, paddingBottom: spacing.xxl },
   editorTitle: { fontSize: 20, fontWeight: '800', color: colors.ink },
   editorMeta: { fontSize: 12, color: colors.muted, marginTop: spacing.xs, marginBottom: spacing.lg, lineHeight: 16 },
@@ -570,6 +840,26 @@ const styles = StyleSheet.create({
     color: colors.ink,
     textAlignVertical: 'top',
   },
+  editorPhoto: { width: '100%', height: 160, borderRadius: radius.md, marginBottom: spacing.sm },
+  photoActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  photoButton: {
+    flex: 1, minHeight: 44, justifyContent: 'center', alignItems: 'center',
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.teal, paddingHorizontal: spacing.md,
+  },
+  photoButtonText: { color: colors.teal, fontSize: 13, fontWeight: '800' },
+  recipesSection: { marginBottom: spacing.sm },
+  sectionHeading: {
+    color: colors.navy, fontSize: 12, fontWeight: '900', letterSpacing: 0.4,
+    marginTop: spacing.md, marginBottom: spacing.xs, textTransform: 'uppercase',
+  },
+  recipeWarn: { color: colors.warning, fontSize: 11, lineHeight: 16, marginTop: -4, marginBottom: spacing.sm },
+  removePhoto: {
+    minHeight: 44, justifyContent: 'center', alignItems: 'center',
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.red,
+  },
+  removePhotoActive: { backgroundColor: colors.redSoft },
+  removePhotoText: { fontSize: 13, fontWeight: '700', color: colors.red },
+  removePhotoTextActive: { fontWeight: '900' },
   message: { fontSize: 13, color: colors.navy, marginTop: spacing.md, lineHeight: 18 },
   editorActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xl },
   secondaryButton: {

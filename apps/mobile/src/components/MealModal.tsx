@@ -4,19 +4,29 @@ import * as ImagePicker from 'expo-image-picker';
 import { Image, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import {
-  calculateMealBolus,
+  activeInsulinUnits,
+  type InsulinActionModel,  calculateMealBolus,
+  cartLineGrams,
   catalogEntryFromPortion,
   resolveMacrosSource,
   scaleCatalogFood,
+  type CartLine,
+  type Recipe,
   type CatalogFood,
+  waterEstimateIsTrustworthy,
+  WATER_PRESETS_ML,
 } from '@type1a/domain';
-import type { MealAnalysisResult } from '@type1a/schemas';
+import type { InsulinEvent, MealAnalysisResult } from '@type1a/schemas';
 
-import { analyzeMealDescription, analyzeMealImage, MobileApiError } from '../api';
+import { analyzeMealDescription, analyzeMealImage, editMealWithInstruction, MobileApiError } from '../api';
 import { parseBlankAsUnset, parseNonNegativeNumber, parsePositiveNumber } from '../format';
+import { knownFoodNamesFrom } from '../knownFoods';
 import { logSaveError } from '../log';
+import { mealNoteFrom } from '../mealNote';
+import { InsulinBreakdown } from './InsulinBreakdown';
+import { MealAiFields } from './MealAiFields';
 import { colors, radius, spacing } from '../theme';
-import { CatalogQuickAdd, type CatalogPortion } from './CatalogQuickAdd';
+import { MealCart } from './MealCart';
 import { MacroFields } from './MacroFields';
 import { ModalShell } from './ModalShell';
 
@@ -49,8 +59,24 @@ export interface ConfirmedMealDraft {
    * ella: la calculadora solo aplica su propio `carbRatio`.
    */
   rapidUnits?: number;
+  /**
+   * Agua bebida junto con esta comida, en mL.
+   *
+   * Llega precargada cuando la IA vio un vaso en la foto o lo leyó en la
+   * descripción, y ella la revisa antes de confirmar — lo estimado por IA no
+   * se guarda solo, igual que los macros.
+   */
+  waterMl?: number;
+  /** Cómo llegó ese volumen. Ausente = lo escribió ella. */
+  waterFromAi?: 'photo' | 'text';
   imageUri?: string;
   analysis?: MealAnalysisResult;
+  /**
+   * Qué se comió, en palabras, para que el registro del timeline diga algo
+   * más que gramos. Lo resuelve `mealNoteFrom`; antes este modal usaba su
+   * cuadro de texto solo para la llamada a la IA y lo tiraba.
+   */
+  note?: string;
   confirmedCarbsG: number;
   /**
    * Macros opcionales (Fase 13, ítem 7). Se omiten si la usuaria los deja en
@@ -104,6 +130,10 @@ export function MealModal({
   onClose,
   onConfirm,
   catalogFoods,
+  recentRapid,
+  actionModel,
+  recipes,
+  presetCartLines,
   carbRatio,
   therapyConfigured,
   targetGlucose,
@@ -115,6 +145,26 @@ export function MealModal({
   onConfirm: (draft: ConfirmedMealDraft) => Promise<void>;
   /** Alimentos ya conocidos, para reusar sin llamar a la IA (Fase 15). */
   catalogFoods: readonly CatalogFood[];
+  /**
+   * Dosis rápidas recientes: de ahí sale la insulina activa que el conteo
+   * descuenta de la corrección.
+   */
+  recentRapid?: readonly InsulinEvent[] | undefined;
+  /**
+   * La curva de acción de su insulina rápida, ya resuelta por `App` (este
+   * modal recibe los parámetros de terapia sueltos, no el perfil entero).
+   * `undefined` = no eligió insulina, y entonces no hay insulina activa que
+   * mostrar ni descontar.
+   */
+  actionModel?: InsulinActionModel | undefined;
+  /** Recetas, para que el carrito pueda reusarlas. */
+  recipes?: readonly Recipe[] | undefined;
+  /**
+   * Líneas con las que arranca el carrito al abrir: es cómo "Usar en una
+   * comida" desde una receta llega acá. Se aplican al abrir y nada más; una
+   * comida siguiente vuelve a empezar vacía.
+   */
+  presetCartLines?: readonly CartLine[] | null | undefined;
   /**
    * Parámetros de terapia de la usuaria, para la calculadora por conteo.
    * `carbRatio` es opcional en el perfil: sin él la calculadora no aparece,
@@ -136,11 +186,16 @@ export function MealModal({
 }) {
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<MealAnalysisResult | null>(null);
+  /** Agua de esta comida, en mL. La IA la precarga; ella la confirma. */
+  const [waterMl, setWaterMl] = useState('');
+  const [waterFromAi, setWaterFromAi] = useState<'photo' | 'text' | null>(null);
   const [description, setDescription] = useState('');
+  /** Corrección sobre la propuesta ya hecha. Ver `MealAiFields`. */
+  const [instruction, setInstruction] = useState('');
   const [confirmedCarbs, setConfirmedCarbs] = useState('');
   const [busy, setBusy] = useState(false);
   const [macrosOpen, setMacrosOpen] = useState(false);
-  const [catalogResetToken, setCatalogResetToken] = useState(0);
+  const [cartLines, setCartLines] = useState<CartLine[]>([]);
   const [registerToTimeline, setRegisterToTimeline] = useState(true);
   const [saveToCatalog, setSaveToCatalog] = useState(true);
   const [rapidInput, setRapidInput] = useState('');
@@ -156,6 +211,18 @@ export function MealModal({
    * calculadora sin la salvaguarda.
    */
   const [calcBasisCarbsG, setCalcBasisCarbsG] = useState<number | null>(null);
+  /**
+   * El desglose del último conteo, para mostrarlo. Desde que se descuenta
+   * insulina activa el total no se puede rehacer con lo que está en pantalla.
+   */
+  const [doseBreakdown, setDoseBreakdown] = useState<{
+    mealUnits: number;
+    correctionUnits: number;
+    activeInsulinAppliedUnits?: number | undefined;
+    activeInsulinUnits: number | undefined;
+    activeDoseCount: number;
+    totalUnits: number;
+  } | null>(null);
   const [proteinInput, setProteinInput] = useState('');
   const [fatInput, setFatInput] = useState('');
   const [fiberInput, setFiberInput] = useState('');
@@ -184,6 +251,7 @@ export function MealModal({
     setImageUri(null);
     setAnalysis(null);
     setDescription('');
+    setInstruction('');
     setConfirmedCarbs('');
     setMessage(null);
     // Todo lo de macros y catálogo también, o la comida siguiente hereda los
@@ -197,11 +265,10 @@ export function MealModal({
     setFiberInput('');
     setAiMacros(null);
     setMacrosOpen(false);
-    // Remonta `CatalogQuickAdd`, que es donde vive ahora el alimento a medio
-    // elegir. Un `key` nuevo garantiza que no quede nada de la comida
-    // anterior: heredar los números de la comida previa ya costó una corrida
-    // en este mismo modal.
-    setCatalogResetToken((previous) => previous + 1);
+    // El carrito se vacía: heredar los alimentos de la comida anterior ya
+    // costó una corrida en este mismo modal. Lo único que entra es lo que
+    // quien abre pidió explícitamente (una receta desde el catálogo).
+    setCartLines(presetCartLines === null || presetCartLines === undefined ? [] : [...presetCartLines]);
     setCatalogSuggestedCarbsG(null);
     setAppliedCatalog(null);
     setCatalogQuestion(null);
@@ -215,6 +282,7 @@ export function MealModal({
     setSaveToCatalog(true);
     setRapidInput('');
     setCalcBasisCarbsG(null);
+    setDoseBreakdown(null);
   }, [visible]);
 
   async function captureAndAnalyze(): Promise<void> {
@@ -249,11 +317,13 @@ export function MealModal({
         throw new Error('No base64 image');
       }
       const nextAnalysis = await analyzeMealImage({
+        knownFoodNames: knownFoodNamesFrom(catalogFoods),
         imageBase64: compressed.base64,
         mimeType: 'image/jpeg',
         ...(description.trim() === '' ? {} : { description: description.trim() }),
       });
       setAnalysis(nextAnalysis);
+      adoptWaterFrom(nextAnalysis, 'photo');
       prefillMacrosFrom(nextAnalysis);
       setMessage('Estimación lista: proteína, grasa y fibra quedaron precargadas y puedes corregirlas. Los carbohidratos los confirmas tú.');
     } catch (error) {
@@ -294,24 +364,46 @@ export function MealModal({
    * la usuaria, igual que con una estimación por foto.
    */
   /**
-   * Qué hace esta pantalla con una porción del catálogo.
+   * Qué hace esta pantalla cuando la usuaria toca "Usar N g como confirmados".
    *
-   * La elección y el escalado los resuelve `CatalogQuickAdd`; acá solo se
-   * decide dónde aterriza. Los carbohidratos **no** se escriben en el campo de
-   * confirmación: se recuerda de dónde salió la sugerencia. Sin eso, si ella
-   * transcribe el número sin haber sacado foto, la comida queda sin
-   * `aiEstimatedCarbsG` y ese carbo —que viene de una media de estimaciones de
-   * IA— se vuelve indistinguible de uno pesado en balanza, tanto para ella
-   * como para el reporte al médico.
+   * La elección y el escalado los resuelve `MealCart`; acá solo se decide
+   * dónde aterriza.
+   *
+   * ## Los carbohidratos SÍ se escriben en el campo, y por qué
+   *
+   * El botón del carrito dice literalmente "como confirmados": es la acción
+   * explícita que exige `AGENTS.md` para que una estimación pase a dato
+   * confirmado. Antes esta función mostraba "se transcribieron 62 g" y **no
+   * tocaba el campo**, así que "Calcular por conteo" seguía leyendo los 20 g
+   * que hubiera escrito antes: una dosis para 20 g creyendo que cubría 62.
+   * Una pantalla que afirma un valor distinto del que usa la fórmula es peor
+   * que una que no afirma nada.
+   *
+   * El rastro de que ese número es una estimación no se pierde:
+   * `catalogSuggestedCarbsG` se guarda como `aiEstimatedCarbsG`.
    */
-  function applyCatalogPortion(portion: CatalogPortion): void {
-    setProteinInput(String(portion.proteinG));
-    setFatInput(String(portion.fatG));
-    setFiberInput(String(portion.fiberG));
-    setAiMacros({ proteinG: portion.proteinG, fatG: portion.fatG, fiberG: portion.fiberG });
+  function applyCart(totals: { carbsG: number; proteinG: number; fatG: number; fiberG: number; caloriesKcal: number }): void {
+    setConfirmedCarbs(String(totals.carbsG));
+    // Los gramos cambiaron, así que cualquier dosis ya calculada dejó de
+    // corresponder. Misma invalidación que al teclear el campo a mano.
+    if (calcBasisCarbsG !== null) {
+      setCalcBasisCarbsG(null);
+      setRapidInput('');
+    }
+    setProteinInput(String(totals.proteinG));
+    setFatInput(String(totals.fatG));
+    setFiberInput(String(totals.fiberG));
+    setAiMacros({ proteinG: totals.proteinG, fatG: totals.fatG, fiberG: totals.fiberG });
     setMacrosOpen(true);
-    setCatalogSuggestedCarbsG(portion.carbsG);
-    setAppliedCatalog({ food: portion.food, grams: portion.grams });
+    setCatalogSuggestedCarbsG(totals.carbsG);
+    // **La pregunta de tres salidas solo aplica a un alimento.** Con una sola
+    // línea, una corrección de los macros es inequívocamente de ese alimento
+    // y ofrecer "corregir el alimento / guardar variante / solo esta comida"
+    // tiene sentido. Con dos o más, la diferencia no se puede atribuir a
+    // ninguno en concreto, y atribuírsela corrompería el catálogo en
+    // silencio: `appliedCatalog` queda en `null` y la pregunta no aparece.
+    const only = cartLines.length === 1 ? cartLines[0] : undefined;
+    setAppliedCatalog(only === undefined ? null : { food: only.food, grams: cartLineGrams(only) });
   }
 
   async function analyzeFromDescription(): Promise<void> {
@@ -323,8 +415,9 @@ export function MealModal({
     setBusy(true);
     setAnalysis(null);
     try {
-      const nextAnalysis = await analyzeMealDescription(description.trim());
+      const nextAnalysis = await analyzeMealDescription(description.trim(), knownFoodNamesFrom(catalogFoods));
       setAnalysis(nextAnalysis);
+      adoptWaterFrom(nextAnalysis, 'text');
       prefillMacrosFrom(nextAnalysis);
       setMessage('Estimación lista desde el texto (sin foto, la incertidumbre es mayor). Proteína, grasa y fibra quedaron precargadas y puedes corregirlas; los carbohidratos los confirmas tú.');
     } catch (error) {
@@ -334,6 +427,86 @@ export function MealModal({
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * Corrige la propuesta que ya está en pantalla, **sin volver a mandar la
+   * foto**: `editMealWithInstruction` trabaja sobre la composición actual.
+   *
+   * Los macros se vuelven a precargar con `prefillMacrosFrom`, que es el mismo
+   * camino de un análisis nuevo — y por lo tanto el que invalida la dosis
+   * calculada. Una corrección cambia los carbohidratos, así que una dosis
+   * anterior deja de corresponder.
+   */
+  async function refineAnalysis(): Promise<void> {
+    setMessage(null);
+    if (analysis === null) return;
+    if (instruction.trim() === '') {
+      setMessage('Escribe qué hay que corregir, por ejemplo "es menos arroz del que pensaste".');
+      return;
+    }
+    setBusy(true);
+    try {
+      const next = await editMealWithInstruction({
+        knownFoodNames: knownFoodNamesFrom(catalogFoods),
+        instruction: instruction.trim(),
+        current: {
+          confirmedCarbsG: analysis.totals.carbsG,
+          foods: analysis.estimate.foods,
+          ...(description.trim() === '' ? {} : { note: description.trim() }),
+        },
+      });
+      setAnalysis(next);
+      // Una corrección se escribe con palabras: la procedencia es texto.
+      adoptWaterFrom(next, 'text');
+      prefillMacrosFrom(next);
+      setInstruction('');
+      setMessage('Propuesta corregida. Revísala: los carbohidratos los confirmas tú, y una dosis calculada antes ya no corresponde.');
+    } catch (error) {
+      // La propuesta anterior **queda como estaba**: degradar a lo que ya
+      // había es siempre una salida válida.
+      setMessage(error instanceof MobileApiError
+        ? `${error.message} La propuesta anterior sigue como estaba.`
+        : 'No se pudo aplicar la corrección. La propuesta anterior sigue como estaba.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+
+  /**
+   * El agua del formulario, en mL. `null` = el campo está vacío o el texto no
+   * es un número; nunca un `NaN` que tumbe el guardado de la comida entera.
+   */
+
+  /**
+   * El agua que la IA vio o leyó se **precarga** en el campo, visible y
+   * editable — nunca se guarda sola: es la misma regla que rige los macros
+   * estimados. Solo si el campo está vacío: un análisis posterior no pisa un
+   * número que ella ya escribió.
+   */
+  function adoptWaterFrom(next: MealAnalysisResult, origin: 'photo' | 'text'): void {
+    const detected = next.estimate.waterMl;
+    if (detected === null || detected === undefined) return;
+    if (waterMl.trim() !== '') return;
+    // Filtro estructural además del prompt: un jugo mal clasificado se lleva
+    // sus carbohidratos del registro y de la dosis. Ver `ai-safety.ts`.
+    const trusted = waterEstimateIsTrustworthy({
+      waterMl: detected,
+      foodNames: next.estimate.foods.map((food) => food.name),
+      ...(description.trim() === '' ? {} : { description: description.trim() }),
+    });
+    if (!trusted) return;
+    setWaterMl(String(Math.round(detected)));
+    setWaterFromAi(origin);
+  }
+
+  function parsedWaterMl(): number | null {
+    const text = waterMl.trim();
+    if (text === '') return null;
+    const parsed = Number(text.replace(',', '.'));
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return Math.round(parsed);
   }
 
   async function confirm(): Promise<void> {
@@ -379,6 +552,14 @@ export function MealModal({
         return;
       }
 
+      // Lo que ella escribió manda; si no escribió, los alimentos que la IA
+      // identificó o el del catálogo que reusó. Ver `mealNote.ts`.
+      const note = mealNoteFrom({
+        description,
+        ...(analysis === null ? {} : { analysis }),
+        ...(appliedCatalog === null ? {} : { catalogFoodName: appliedCatalog.food.name }),
+      });
+
       const draft: ConfirmedMealDraft = {
         confirmedCarbsG: parsed,
         registerToTimeline,
@@ -389,9 +570,12 @@ export function MealModal({
         ...(catalogSuggestedCarbsG === null ? {} : { catalogSuggestedCarbsG }),
         ...(imageUri === null ? {} : { imageUri }),
         ...(analysis === null ? {} : { analysis }),
+        ...(note === undefined ? {} : { note }),
         ...(protein === undefined ? {} : { proteinG: protein }),
         ...(fat === undefined ? {} : { fatG: fat }),
         ...(fiber === undefined ? {} : { fiberG: fiber }),
+        ...(parsedWaterMl() === null ? {} : { waterMl: parsedWaterMl()! }),
+        ...(waterFromAi === null || parsedWaterMl() === null ? {} : { waterFromAi }),
       };
 
       // La pregunta de tres salidas (Fase 18). Solo se hace si la comida vino
@@ -531,23 +715,21 @@ export function MealModal({
         <Text style={styles.aiText}>No calcula insulina. Los carbohidratos de IA quedan separados hasta que tú escribes y confirmas un valor.</Text>
       </View>
 
-      <Text style={styles.label}>Contexto opcional de la porción</Text>
-      <TextInput
-        style={styles.description}
-        value={description}
-        onChangeText={setDescription}
-        placeholder="Ej.: plato de 24 cm, comí la mitad"
-        placeholderTextColor={colors.muted}
-        maxLength={500}
-        multiline
+      <MealAiFields
+        description={description}
+        onChangeDescription={setDescription}
+        hasPhoto={imageUri !== null}
+        hasAnalysis={analysis !== null}
+        instruction={instruction}
+        onChangeInstruction={setInstruction}
+        busy={busy}
+        onEstimateFromText={() => { void analyzeFromDescription(); }}
+        onRefine={() => { void refineAnalysis(); }}
       />
 
       <Pressable style={[styles.cameraButton, busy && styles.disabled]} disabled={busy} onPress={() => { void captureAndAnalyze(); }}>
         <Text style={styles.cameraIcon}>◎</Text>
-        <Text style={styles.cameraText}>{busy ? 'Procesando imagen…' : 'Tomar foto y estimar'}</Text>
-      </Pressable>
-      <Pressable style={[styles.textEstimateButton, busy && styles.disabled]} disabled={busy} onPress={() => { void analyzeFromDescription(); }}>
-        <Text style={styles.textEstimateText}>Estimar por texto, sin foto</Text>
+        <Text style={styles.cameraText}>{busy ? 'Procesando imagen…' : imageUri === null ? 'Tomar foto y estimar' : 'Tomar otra foto'}</Text>
       </Pressable>
 
       {imageUri === null ? null : <Image source={{ uri: imageUri }} style={styles.preview} resizeMode="cover" />}
@@ -579,10 +761,27 @@ export function MealModal({
         </View>
       )}
 
-      <CatalogQuickAdd
-        key={catalogResetToken}
+      {/*
+        El carrito multi-alimento. Reemplaza al picker de un alimento por vez:
+        elegir el segundo borraba al primero, así que un sándwich obligaba a
+        sumar de cabeza o a registrar tres comidas.
+      */}
+      <MealCart
         foods={catalogFoods}
-        onApply={applyCatalogPortion}
+        recipes={recipes ?? []}
+        lines={cartLines}
+        onChange={(next) => {
+          setCartLines(next);
+          // Cambiar el carrito invalida la atribución al alimento único y
+          // cualquier dosis calculada con el total anterior.
+          setAppliedCatalog(null);
+          setCatalogQuestion(null);
+          setCatalogPreview(null);
+        }}
+        onUseCarbs={(totals) => {
+          applyCart(totals);
+          setMessage(`Se escribieron ${totals.carbsG} g en "carbohidratos que confirmas". Revísalos antes de guardar; si calculaste una dosis antes, vuelve a calcularla.`);
+        }}
         onMessage={setMessage}
       />
 
@@ -608,7 +807,10 @@ export function MealModal({
         />
         <Text style={styles.confirmUnit}>g</Text>
       </View>
-      <Text style={styles.confirmFoot}>No se completa automáticamente con la estimación.</Text>
+      <Text style={styles.confirmFoot}>
+        La estimación de una foto nunca lo completa sola. El carrito sí lo escribe, pero solo cuando tocas
+        "Usar N g como confirmados": revisa el número antes de guardar.
+      </Text>
 
       {/*
         Opcionales y colapsados por defecto: el registro frecuente es
@@ -748,6 +950,45 @@ export function MealModal({
       </View>
 
       {registerToTimeline ? (
+        <View style={styles.waterBlock}>
+          <Text style={styles.choiceTitle}>Agua (opcional)</Text>
+          <View style={styles.waterRow}>
+            <TextInput
+              style={styles.waterInput}
+              value={waterMl}
+              onChangeText={(next) => { setWaterMl(next); setWaterFromAi(null); }}
+              keyboardType="decimal-pad"
+              placeholder="—"
+              placeholderTextColor={colors.muted}
+              accessibilityLabel="Agua bebida en mililitros"
+            />
+            <Text style={styles.waterUnit}>mL</Text>
+            {WATER_PRESETS_ML.map((preset) => (
+              <Pressable
+                key={preset.ml}
+                style={styles.waterPreset}
+                onPress={() => {
+                  const current = Number(waterMl.replace(',', '.'));
+                  const base = Number.isFinite(current) && current > 0 ? current : 0;
+                  setWaterMl(String(Math.round(base + preset.ml)));
+                  setWaterFromAi(null);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`Sumar ${preset.label}`}
+              >
+                <Text style={styles.waterPresetText}>+{preset.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={styles.choiceHint}>
+            {waterFromAi === null
+              ? 'Solo agua. Un jugo o una bebida con azúcar van arriba, con sus carbohidratos y su dosis.'
+              : `Este volumen lo estimó la IA ${waterFromAi === 'photo' ? 'de la foto' : 'de lo que escribiste'}. Revísalo: se guarda lo que quede acá.`}
+          </Text>
+        </View>
+      ) : null}
+
+      {registerToTimeline ? (
         <View style={styles.insulinBlock}>
           <View style={styles.insulinRow}>
             <View style={styles.choiceCopy}>
@@ -796,6 +1037,13 @@ export function MealModal({
                   setMessage('Escribe primero los carbohidratos confirmados.');
                   return;
                 }
+                // Sin glucosa actual acá no hay corrección que calcular, así
+                // que tampoco hay de qué descontar el activo: este botón
+                // cuenta carbohidratos. El activo se muestra igual, porque
+                // saber que tienes 3 U actuando cambia lo que decides hacer.
+                const active = actionModel === undefined
+                  ? undefined
+                  : activeInsulinUnits(recentRapid ?? [], new Date().toISOString(), actionModel);
                 const result = calculateMealBolus({
                   carbsG: carbsNow,
                   carbRatio,
@@ -811,17 +1059,34 @@ export function MealModal({
                 }
                 setRapidInput(String(result.totalRoundedUnits));
                 setCalcBasisCarbsG(carbsNow);
+                setDoseBreakdown({
+                  mealUnits: result.mealUnits,
+                  correctionUnits: 0,
+                  activeInsulinUnits: active?.units,
+                  activeDoseCount: active?.doseCount ?? 0,
+                  totalUnits: result.totalRoundedUnits,
+                });
                 setMessage(`Por conteo: ${result.mealFormula} = ${result.totalRoundedUnits} U. Revísalo antes de guardar.`);
               }}
             >
               <Text style={styles.calcButtonText}>Calcular por conteo</Text>
             </Pressable>
           )}
+          {doseBreakdown === null ? null : (
+            <InsulinBreakdown
+              {...doseBreakdown}
+              insulinConfigured={actionModel !== undefined}
+              // Acá no se restó: este botón cuenta carbohidratos y no calcula
+              // corrección. El activo se informa, no se descuenta.
+              activeWasSubtracted={false}
+            />
+          )}
           <Text style={styles.insulinFoot}>
             Type 1A no decide ni sugiere dosis: solo aplica los valores que cargaste. Confirma la cantidad antes
             de guardar.{'\n\n'}
-            El conteo no descuenta insulina que siga actuando de una dosis anterior — la app no calcula insulina
-            activa. Si te pinchaste hace poco, tenlo en cuenta antes de confirmar.
+            {actionModel === undefined
+              ? 'Este conteo no descuenta insulina que siga actuando, porque todavía no elegiste tu insulina rápida en Ajustes → Terapia. Si te pinchaste hace poco, tenlo en cuenta.'
+              : 'Este botón cuenta carbohidratos: no corrige glucosa, así que no hay corrección de la cual descontar el activo. Lo que ya tienes actuando se muestra arriba para que lo tengas presente.'}
           </Text>
         </View>
       ) : null}
@@ -849,6 +1114,22 @@ export function MealModal({
 
 
 const styles = StyleSheet.create({
+  waterBlock: {
+    borderTopWidth: 1, borderTopColor: colors.line, marginTop: spacing.md, paddingTop: spacing.md,
+  },
+  waterRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
+  waterInput: {
+    minWidth: 84, minHeight: 44, paddingHorizontal: spacing.md,
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface,
+    color: colors.ink, fontSize: 16, fontWeight: '700',
+  },
+  waterUnit: { color: colors.muted, fontSize: 13, fontWeight: '700' },
+  waterPreset: {
+    minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.md,
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.background,
+  },
+  waterPresetText: { color: colors.navy, fontSize: 13, fontWeight: '800' },
+  choiceHint: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: spacing.sm },
   sectionLabel: { color: colors.navy, fontSize: 13, fontWeight: '800', letterSpacing: 0.5, marginTop: spacing.xl },
   choiceRow: {
     flexDirection: 'row',

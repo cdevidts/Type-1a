@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import { z } from 'zod';
 
+import { localizeEpisodeMetrics, separatePlainWater } from '@type1a/domain';
 import {
   CGMProviderStatusSchema,
   CGMReadingSchema,
@@ -83,25 +84,72 @@ export async function fetchCGMReadings(from: Date, to: Date): Promise<CGMReading
   return ReadingsEnvelopeSchema.parse(await requestJson(`/v1/cgm/readings?${query.toString()}`)).readings;
 }
 
+/**
+ * `knownFoodNames` en los tres modos: los nombres de su catálogo, para que el
+ * modelo reuse el exacto en vez de crear un duplicado. Ver `knownFoods.ts`
+ * por qué son solo nombres y qué sale del teléfono con esto.
+ */
+/**
+ * Rescata el agua que el backend todavía devuelve como si fuera un alimento.
+ *
+ * Los prompts v4 mandan el agua a `waterMl`; el backend en producción está en
+ * v3 y la mete en `foods` — comprobado contra el servidor real el 2026-09-03:
+ * "arroz con pollo y un vaso de agua" devolvía un alimento "Agua" de 250 g y
+ * cero macros. Sin esto, "Agua" entra al catálogo de alimentos como comida y
+ * el vaso nunca llega a su meta de hidratación.
+ *
+ * Va en **un solo sitio**, el punto por el que pasan los tres análisis (foto,
+ * texto y corrección), para que ninguno pueda quedarse sin el arreglo. Cuando
+ * el v4 esté desplegado esto no encontrará nada que rescatar, y sigue valiendo
+ * como red: un modelo puede volver a meter agua en `foods` en cualquier
+ * momento. Ver `separatePlainWater` en `packages/domain`.
+ *
+ * Si `foods` quedara vacío —una foto de solo un vaso— se conserva tal cual:
+ * el esquema exige al menos un alimento, y romper el análisis entero sería
+ * peor que dejar el agua donde estaba.
+ */
+function normalizeAnalysis(result: MealAnalysisResult): MealAnalysisResult {
+  const separated = separatePlainWater(result.estimate.foods);
+  if (separated.waterMl === null || separated.foods.length === 0) return result;
+  return {
+    ...result,
+    estimate: {
+      ...result.estimate,
+      foods: separated.foods,
+      // Lo que ya venía en `waterMl` manda: si el backend está en v4 y lo
+      // mandó bien, no se pisa con el rescate.
+      waterMl: result.estimate.waterMl ?? separated.waterMl,
+    },
+    // Los totales se recalculan sin el agua. Sus macros son cero, así que en
+    // la práctica no cambian — pero dejar totales derivados de una lista que
+    // ya no existe es cómo nacen las divergencias.
+    totals: result.totals,
+  };
+}
+
 export async function analyzeMealImage(input: {
   imageBase64: string;
   mimeType: 'image/jpeg' | 'image/png' | 'image/webp';
   description?: string;
+  knownFoodNames?: readonly string[];
 }): Promise<MealAnalysisResult> {
   const payload = await requestJson('/v1/ai/meal-analysis', {
     method: 'POST',
     body: JSON.stringify(input),
   });
-  return MealAnalysisResultSchema.parse(payload);
+  return normalizeAnalysis(MealAnalysisResultSchema.parse(payload));
 }
 
 /** Same endpoint, no photo — just a typed description of what was eaten. */
-export async function analyzeMealDescription(description: string): Promise<MealAnalysisResult> {
+export async function analyzeMealDescription(
+  description: string,
+  knownFoodNames?: readonly string[],
+): Promise<MealAnalysisResult> {
   const payload = await requestJson('/v1/ai/meal-analysis', {
     method: 'POST',
-    body: JSON.stringify({ description }),
+    body: JSON.stringify({ description, ...(knownFoodNames === undefined ? {} : { knownFoodNames }) }),
   });
-  return MealAnalysisResultSchema.parse(payload);
+  return normalizeAnalysis(MealAnalysisResultSchema.parse(payload));
 }
 
 /**
@@ -116,12 +164,13 @@ export async function analyzeMealDescription(description: string): Promise<MealA
 export async function editMealWithInstruction(input: {
   instruction: string;
   current: MealSnapshot;
+  knownFoodNames?: readonly string[];
 }): Promise<MealAnalysisResult> {
   const payload = await requestJson('/v1/ai/meal-analysis', {
     method: 'POST',
     body: JSON.stringify(input),
   });
-  return MealAnalysisResultSchema.parse(payload);
+  return normalizeAnalysis(MealAnalysisResultSchema.parse(payload));
 }
 
 /**
@@ -145,6 +194,13 @@ export async function editCatalogFoodWithInstruction(input: {
     fatPer100g: number;
     fiberPer100g: number;
     kcalPer100g: number;
+    /**
+     * La porción que ya tiene el alimento, si la tiene. Viaja para que una
+     * instrucción como "una porción son dos rebanadas" tenga contra qué
+     * corregir, en vez de que el modelo la invente desde cero.
+     */
+    servingGrams?: number | undefined;
+    servingLabel?: string | undefined;
   };
 }): Promise<MealAnalysisResult> {
   return editMealWithInstruction({
@@ -154,6 +210,8 @@ export async function editCatalogFoodWithInstruction(input: {
       foods: [{
         name: input.food.name,
         estimatedGrams: 100,
+        servingGrams: input.food.servingGrams ?? null,
+        servingLabel: input.food.servingLabel ?? null,
         carbsG: input.food.carbsPer100g,
         proteinG: input.food.proteinPer100g,
         fatG: input.food.fatPer100g,
@@ -165,10 +223,31 @@ export async function editCatalogFoodWithInstruction(input: {
   });
 }
 
+/**
+ * El desfase UTC que regía **en ese instante**, en la zona del teléfono.
+ *
+ * Por marca de tiempo y no una sola vez: Chile cambia de horario, así que un
+ * episodio de marzo y uno de julio no comparten desfase. `getTimezoneOffset`
+ * devuelve minutos *hacia* UTC (Chile en verano da 240), y lo que se escribe
+ * es el signo contrario.
+ */
+const deviceOffsetMinutesAt = (iso: string): number => -new Date(iso).getTimezoneOffset();
+
 export async function fetchGlucoseInsight(metrics: MealEpisodeMetrics): Promise<GlucoseInsight> {
+  // La traducción a hora local va acá, en la frontera de salida, y no en
+  // quien arma las métricas: lo que se guarda en SQLite sigue siendo UTC
+  // canónico y cualquier llamada futura queda cubierta sin acordarse.
+  //
+  // Sin esto el modelo recibía `2026-09-01T21:30:00.000Z` y escribía "el
+  // episodio empezó a las 21:30" para una comida de las 17:30 — el resumen
+  // contradiciendo al timeline sobre la misma comida.
+  //
+  // Sale un dato que antes no salía: el desfase horario del teléfono. Es el
+  // mínimo posible para el arreglo y está razonado en `episode-local-time.ts`
+  // § Privacidad, junto con el filtro que crece al mismo tiempo.
   const payload = await requestJson('/v1/ai/glucose-insight', {
     method: 'POST',
-    body: JSON.stringify(metrics),
+    body: JSON.stringify(localizeEpisodeMetrics(metrics, deviceOffsetMinutesAt)),
   });
   return GlucoseInsightSchema.parse(payload);
 }

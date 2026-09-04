@@ -81,6 +81,17 @@ export const NutritionProfileSchema = z.object({
   weightKg: z.number().min(25).max(350),
   activityLevel: z.enum(['sedentary', 'light', 'moderate', 'active', 'veryActive']),
   goal: z.enum(['lose', 'maintain', 'gain', 'trackOnly']),
+  /**
+   * Meta diaria de agua **bebida**, en mL, escrita por la usuaria.
+   *
+   * Ausente = se usa la referencia poblacional del IOM que calcula
+   * `nutrition-targets.ts`. Existe el override porque la necesidad de líquido
+   * varía con el clima, el ejercicio y —lo que más importa acá— porque hay
+   * condiciones (renales, cardíacas) donde la indicación es **restringir**
+   * líquidos. Una app que empuja a beber 3 L sin dejar bajar ese número
+   * estaría contradiciendo a un equipo clínico.
+   */
+  waterMlTarget: z.number().int().positive().max(6000).optional(),
   updatedAt: IsoTimestampSchema,
 });
 export type NutritionProfile = z.infer<typeof NutritionProfileSchema>;
@@ -100,17 +111,39 @@ export const TherapyProfileSchema = z.object({
   // Qué insulina usa la persona, elegida de `INSULIN_CATALOG` (domain), y
   // cuánto dura según la ficha técnica del fabricante.
   //
-  // ⚠️ Estos campos existen SOLO para higiene de datos: decidir si había otra
-  // dosis actuando dentro de la ventana de un episodio, y por lo tanto si ese
-  // episodio entra a un promedio descriptivo. **No son insulina activa (IOB)
-  // y no pueden alimentar ninguna calculadora de dosis** — `AGENTS.md`
-  // prohíbe IOB y dosificación automática en el MVP. Ver la cabecera de
-  // `packages/domain/src/insulin-catalog.ts`.
+  // Desde el 2026-09-02 estos campos hacen **dos** trabajos: higiene de datos
+  // (decidir si había otra dosis actuando dentro de la ventana de un
+  // episodio) y, ahora también, alimentar la curva de insulina activa que la
+  // calculadora descuenta de la corrección — `packages/domain/src/iob.ts`,
+  // bajo las condiciones de `docs/adr/0005`. Sigue prohibida la dosificación
+  // automática: la app propone y la usuaria confirma.
+  //
+  // ⚠️ Consecuencia de ese cambio: una duración mal configurada ya no solo
+  // excluye un episodio de un promedio, **cambia una dosis propuesta**.
   //
   // Opcionales a propósito: sin elegir, no se supone ninguna. Un default
   // silencioso excluiría episodios por una suposición que nadie confirmó.
   rapidInsulinId: z.string().trim().max(40).optional(),
   basalInsulinId: z.string().trim().max(40).optional(),
+  /**
+   * Duración de la insulina rápida **por tramo del día**, cuando ella decidió
+   * fijar una distinta (2026-09-02).
+   *
+   * Nace de una observación real: la curva de efecto puede alargarse en la
+   * mañana. La app la **mide** (`insulin-duration.ts`) y se la muestra en
+   * Resumen → Insulina; adoptarla es un acto explícito de ella. Un tramo sin
+   * override usa `rapidInsulinDurationHours`, la duración general.
+   *
+   * `AGENTS.md`: never infer therapy parameters. La app puede decir "en tus
+   * datos la mañana dura 6 h"; no puede escribirlo sola en el parámetro que
+   * después descuenta unidades de una dosis.
+   */
+  segmentDurationHours: z.object({
+    madrugada: z.number().min(1).max(72).finite().optional(),
+    manana: z.number().min(1).max(72).finite().optional(),
+    tarde: z.number().min(1).max(72).finite().optional(),
+    noche: z.number().min(1).max(72).finite().optional(),
+  }).optional(),
   // `.min(1)` y no solo `.positive()`: el mismo piso que
   // `MIN_INSULIN_DURATION_HOURS` en `packages/domain`. La UI ya lo validaba y
   // el esquema no, así que un camino de guardado que se saltara la UI (el
@@ -131,6 +164,29 @@ export const InsulinEventSchema = z.object({
   // (e.g. for CSV imports that separate meal vs. correction boluses); it
   // never feeds back into any dose calculation.
   purpose: z.enum(['meal', 'correction', 'combined']).optional(),
+  /**
+   * El **desglose** de una dosis calculada: cuántas unidades cubrían los
+   * carbohidratos, cuántas corregían la glucosa, y cuánta insulina activa se
+   * descontó al proponerla (2026-09-02).
+   *
+   * `purpose` decía *para qué* fue la dosis; esto dice *cuánto de cada cosa*,
+   * que no es lo mismo y faltaba. Una dosis `combined` de 5,5 U no guardaba si
+   * eran 4 de comida y 1,5 de corrección o al revés, así que ni la pantalla de
+   * detalle ni el reporte médico podían decirlo, y no había forma de mirar
+   * después qué tan bien funcionaron **las correcciones** por separado.
+   *
+   * Son **lo que la calculadora propuso**, no lo que ella se inyectó: `units`
+   * sigue siendo el número real y manda siempre. Si los edita y dejan de
+   * sumar, la pantalla muestra las dos cosas en vez de reescribir el desglose
+   * — un cálculo no se corrige solo para que cuadre con otra cifra.
+   *
+   * Ausentes en toda dosis escrita a mano y en todo registro anterior a este
+   * campo. Ausencia = "no se sabe el desglose", nunca cero.
+   */
+  mealUnits: z.number().nonnegative().max(100).finite().optional(),
+  correctionUnits: z.number().nonnegative().max(100).finite().optional(),
+  /** Insulina activa que se restó de la corrección al proponer esta dosis. */
+  iobUnits: z.number().nonnegative().max(100).finite().optional(),
   source: z.enum(['manual', 'imported']),
   createdAt: IsoTimestampSchema,
 });
@@ -157,6 +213,38 @@ export const ActivityEventSchema = z.object({
   createdAt: IsoTimestampSchema,
 });
 export type ActivityEvent = z.infer<typeof ActivityEventSchema>;
+
+/**
+ * Agua bebida. Un evento propio y no un campo de comida, a propósito.
+ *
+ * El agua se toma **entre** comidas tanto como con ellas, y colgarla de una
+ * comida obligaría a inventar una comida para registrar un vaso. Además no
+ * tiene macros: meterla en `MealEvent` haría que un vaso de agua entrara en
+ * los conteos de carbohidratos como un cero, y un cero registrado no es lo
+ * mismo que un dato ausente en las pantallas que promedian.
+ *
+ * **Solo agua.** No hay campo de "tipo de bebida": un jugo tiene
+ * carbohidratos y eso es una comida, con su bolo. Confundir las dos cosas
+ * sería registrar carbohidratos como si fueran agua, que es exactamente el
+ * error que no puede pasar en esta app.
+ */
+export const WaterEventSchema = z.object({
+  id: z.string().min(1),
+  timestamp: IsoTimestampSchema,
+  /**
+   * Mililitros. El tope de 5 L por registro no es una meta ni un límite de
+   * salud: es un freno a un dedo que escribe 20000 en vez de 200.
+   */
+  ml: z.number().positive().max(5000).finite(),
+  /**
+   * `ai_photo` y `ai_text` existen para que la procedencia no se pierda: un
+   * vaso que la IA vio en una foto no es lo mismo que uno que ella escribió,
+   * y la pantalla lo distingue igual que hace con los macros estimados.
+   */
+  source: z.enum(['manual', 'quick', 'ai_photo', 'ai_text', 'imported']),
+  createdAt: IsoTimestampSchema,
+});
+export type WaterEvent = z.infer<typeof WaterEventSchema>;
 
 export const NoteEventSchema = z.object({
   id: z.string().min(1),
@@ -206,6 +294,36 @@ export type HbA1cLabResult = z.infer<typeof HbA1cLabResultSchema>;
 export const FoodEstimateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   estimatedGrams: z.number().nonnegative().max(3000).finite().nullable(),
+  /**
+   * Cuánto pesa **una porción típica** de este alimento, independiente de
+   * cuánto se comió ahora.
+   *
+   * Es el denominador que le faltaba al catálogo. `estimatedGrams` dice
+   * cuánto había en el plato y el prompt manda devolverlo `null` cuando no se
+   * puede estimar —una lata de bebida descrita por texto, por ejemplo—, y sin
+   * él `toCatalogEntry` descartaba el alimento **en silencio**: no se podía
+   * normalizar por 100 g. Una porción típica sí se puede saber sin ver el
+   * plato ("una lata son 473 ml", "dos rebanadas son 60 g"), así que rescata
+   * exactamente esos casos.
+   *
+   * Y resuelve el otro lado: sin esto el catálogo caía siempre a 100 g, y
+   * reusar un alimento obligaba a averiguar por fuera qué fracción de 100 g
+   * es una porción de verdad.
+   *
+   * `null` cuando el modelo no puede afirmarlo. **Nunca se rellena con un
+   * default**: un 100 inventado se multiplica por todos los macros y termina
+   * en los carbohidratos sugeridos.
+   */
+  servingGrams: z.number().positive().max(2000).finite().nullable().default(null),
+  /**
+   * Cómo se dice esa porción: "1 lata (473 ml)", "2 rebanadas", "1 taza".
+   *
+   * Ambos con `.default(null)` a propósito: si el modelo omite el campo, se
+   * pierde la porción y nada más. Exigirlo haría que una respuesta incompleta
+   * tumbara el análisis entero y la comida cayera a registro manual — un
+   * precio desproporcionado por un dato accesorio.
+   */
+  servingLabel: z.string().trim().min(1).max(60).nullable().default(null),
   carbsG: z.number().nonnegative().max(500).finite(),
   proteinG: z.number().nonnegative().max(500).finite(),
   fatG: z.number().nonnegative().max(500).finite(),
@@ -217,6 +335,25 @@ export type FoodEstimate = z.infer<typeof FoodEstimateSchema>;
 
 export const MealAnalysisSchema = z.object({
   foods: z.array(FoodEstimateSchema).min(1).max(30),
+  /**
+   * Agua **sola** que se ve en la foto o que ella describió, en mL.
+   *
+   * Va aparte de `foods` a propósito, y es la única bebida con trato especial:
+   * el agua no tiene macros ni carbohidratos, así que no es un alimento del
+   * catálogo — es un registro de hidratación. Un vaso de agua entrando a
+   * `foods` sumaría un alimento de 0 g a la lista y ensuciaría el catálogo con
+   * "vaso de agua" como si fuera una comida.
+   *
+   * **Solo agua.** Un jugo, una bebida o un café con leche tienen
+   * carbohidratos y van en `foods`, donde reciben su dosis. Confundirlos sería
+   * registrar carbohidratos como si fueran agua, que es el error que no puede
+   * pasar en esta app.
+   *
+   * `null` cuando no se ve agua o no se puede estimar el volumen. Nunca un
+   * default: un vaso inventado se suma a la meta del día sin que nadie lo haya
+   * bebido.
+   */
+  waterMl: z.number().positive().max(3000).finite().nullable().default(null),
   uncertaintyNotes: z.array(z.string().trim().min(1).max(300)).max(12),
 });
 export type MealAnalysis = z.infer<typeof MealAnalysisSchema>;
@@ -270,9 +407,27 @@ export type MealSnapshot = z.infer<typeof MealSnapshotSchema>;
  * media porción"). La salida es una `MealAnalysis` completa, no un diff —
  * fusionar un diff en el cliente es donde se cuelan los errores.
  */
+/**
+ * Nombres de alimentos que la usuaria ya tiene en su catálogo, para que el
+ * modelo **reuse el nombre exacto** cuando identifica lo mismo (2026-09-02).
+ *
+ * Existe porque el emparejamiento por nombre del teléfono
+ * (`catalog-similarity.ts`) es deliberadamente tonto —plural/singular y
+ * mismas palabras— y no puede saber que "pata de pollo" es su "Muslo de
+ * pollo"; el modelo sí. Con el nombre exacto, el catálogo fusiona por clave y
+ * no nace un duplicado.
+ *
+ * **Solo nombres.** Ni macros, ni cuántas veces se comió, ni cuándo: es el
+ * mínimo que hace falta para deduplicar (`AGENTS.md`, "send the minimum
+ * necessary data"). Que el esquema no tenga dónde poner otra cosa es la
+ * frontera, no una instrucción del prompt.
+ */
+export const KnownFoodNamesSchema = z.array(z.string().trim().min(1).max(80)).max(300);
+
 export const MealEditInputSchema = z.object({
   instruction: z.string().trim().min(1).max(300),
   current: MealSnapshotSchema,
+  knownFoodNames: KnownFoodNamesSchema.optional(),
 });
 export type MealEditInput = z.infer<typeof MealEditInputSchema>;
 
@@ -464,3 +619,131 @@ export const SharedCatalogFoodSchema = z.object({
   servingLabel: z.string().optional(),
 });
 export type SharedCatalogFood = z.infer<typeof SharedCatalogFoodSchema>;
+
+// ---------------------------------------------------------------------------
+// Archivo de respaldo `.t1a.json` — ADR 0007
+// ---------------------------------------------------------------------------
+
+/**
+ * El respaldo es **el reemplazo de la sincronización**, no un extra.
+ *
+ * ADR 0007 decidió que ningún dato de salud sale del teléfono hacia una base
+ * nuestra. Lo que la sincronización iba a dar —cambiar de teléfono sin perder
+ * años de registros— lo da este archivo, y por eso tiene que volver a entrar
+ * **completo, sin pérdida y sin duplicar**. Un PDF o un Excel bonito no
+ * garantizan ninguna de las tres cosas; este formato existe para eso.
+ *
+ * Es input externo: se valida entero con Zod al importar, como manda
+ * `AGENTS.md`. Un archivo que no pasa este esquema no se importa a medias.
+ */
+export const BACKUP_FORMAT = 'type1a.backup' as const;
+
+/**
+ * Sube **solo** cuando un archivo viejo deje de poder leerse tal cual.
+ * Agregar una sección nueva con `.default([])` no rompe a un archivo viejo:
+ * la sección llega vacía y la versión se queda donde está.
+ */
+export const BACKUP_FORMAT_VERSION = 1 as const;
+
+/** Una receta, tal como se respalda. Espeja `Recipe` de `packages/domain`. */
+export const BackupRecipeSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(120),
+  key: z.string().min(1),
+  items: z.array(z.object({
+    foodKey: z.string().min(1),
+    grams: z.number().positive().finite(),
+  })),
+  imageUri: z.string().min(1).optional(),
+  createdAt: IsoTimestampSchema,
+  lastSeenAt: IsoTimestampSchema,
+  timesSeen: z.number().int().nonnegative(),
+});
+export type BackupRecipe = z.infer<typeof BackupRecipeSchema>;
+
+/**
+ * Un alimento del catálogo **local**. No confundir con
+ * `SharedCatalogFoodSchema`: aquel viaja al backend y es anónimo por
+ * construcción; este se queda en el archivo de la usuaria y sí lleva sus
+ * ediciones y su foto.
+ */
+export const BackupCatalogFoodSchema = z.object({
+  key: z.string().min(1),
+  name: z.string().min(1).max(120),
+  carbsPer100g: z.number().nonnegative().finite(),
+  proteinPer100g: z.number().nonnegative().finite(),
+  fatPer100g: z.number().nonnegative().finite(),
+  fiberPer100g: z.number().nonnegative().finite(),
+  kcalPer100g: z.number().nonnegative().finite(),
+  timesSeen: z.number().int().nonnegative(),
+  lastSeenAt: IsoTimestampSchema,
+  servingGrams: z.number().positive().finite().optional(),
+  servingLabel: z.string().max(60).optional(),
+  servingSource: z.enum(['user', 'ai']).optional(),
+  imageUri: z.string().min(1).optional(),
+  listed: z.boolean().optional(),
+});
+export type BackupCatalogFood = z.infer<typeof BackupCatalogFoodSchema>;
+
+/** Un episodio post-comida ya medido. Espeja `StoredMealEpisode`. */
+export const BackupMealEpisodeSchema = z.object({
+  id: z.string().min(1),
+  mealId: z.string().min(1),
+  mealTimestamp: IsoTimestampSchema,
+  status: z.enum(['collecting', 'complete', 'incomplete']),
+  insulinContextConfirmed: z.boolean(),
+  rapidInsulinEventId: z.string().min(1).optional(),
+  metrics: MealEpisodeMetricsSchema.optional(),
+  insight: GlucoseInsightSchema.optional(),
+});
+export type BackupMealEpisode = z.infer<typeof BackupMealEpisodeSchema>;
+
+/**
+ * Los datos. Cada sección trae `.default(...)`, así que un archivo al que le
+ * falta una sección entera se importa igual — con esa sección vacía — en vez
+ * de fallar entero. Es la diferencia entre un formato que sobrevive a sus
+ * propias versiones y uno que no.
+ */
+export const BackupDataSchema = z.object({
+  therapyProfile: TherapyProfileSchema.nullable().default(null),
+  nutritionProfile: NutritionProfileSchema.nullable().default(null),
+  /** Ajustes de la app, tal cual están en `app_settings`. */
+  settings: z.record(z.string(), z.string()).default({}),
+  glucose: z.array(CGMReadingSchema).default([]),
+  insulin: z.array(InsulinEventSchema).default([]),
+  carbs: z.array(CarbEventSchema).default([]),
+  meals: z.array(MealEventSchema).default([]),
+  activity: z.array(ActivityEventSchema).default([]),
+  water: z.array(WaterEventSchema).default([]),
+  notes: z.array(NoteEventSchema).default([]),
+  vitals: z.array(VitalsEventSchema).default([]),
+  hba1c: z.array(HbA1cLabResultSchema).default([]),
+  recipes: z.array(BackupRecipeSchema).default([]),
+  foodCatalog: z.array(BackupCatalogFoodSchema).default([]),
+  mealEpisodes: z.array(BackupMealEpisodeSchema).default([]),
+});
+export type BackupData = z.infer<typeof BackupDataSchema>;
+
+export const BackupFileSchema = z.object({
+  format: z.literal(BACKUP_FORMAT),
+  formatVersion: z.number().int().positive(),
+  exportedAt: IsoTimestampSchema,
+  /** Versión de la app que exportó. Informativa: no cambia cómo se lee. */
+  appVersion: z.string().max(40).optional(),
+  /**
+   * Zona horaria del teléfono al exportar. Las marcas de tiempo llevan su
+   * offset, así que esto no se usa para convertir nada — sirve para que un
+   * reporte hecho desde el archivo pueda agrupar por día como lo hacía el
+   * teléfono original.
+   */
+  timeZone: z.string().max(60).optional(),
+  /**
+   * Huella de integridad del bloque `data`. **Detecta corrupción, no
+   * manipulación**: es una función pura sin secreto, así que cualquiera puede
+   * recalcularla. Sirve para lo que tiene que servir — un archivo truncado por
+   * un traspaso a medias se rechaza en vez de importarse incompleto.
+   */
+  checksum: z.string().min(1),
+  data: BackupDataSchema,
+});
+export type BackupFile = z.infer<typeof BackupFileSchema>;

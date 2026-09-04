@@ -17,6 +17,7 @@ import {
 } from '@type1a/cgm';
 import { assessFreshness } from '@type1a/domain';
 import {
+  KnownFoodNamesSchema,
   MealEditInputSchema,
   MealEpisodeMetricsSchema,
   SharedCatalogUploadSchema,
@@ -46,11 +47,13 @@ const MealAnalysisBodySchema = z.union([
     imageBase64: z.string().min(16).max(10_000_000),
     mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']),
     description: z.string().trim().max(500).optional(),
+    knownFoodNames: KnownFoodNamesSchema.optional(),
   }),
   // Text-only path: no photo, just a description. `description` is required
   // here since it's the only signal the model has.
   z.object({
     description: z.string().trim().min(1).max(500),
+    knownFoodNames: KnownFoodNamesSchema.optional(),
   }),
   // Edit path (Fase 17): an already-logged meal plus a correction in the
   // user's own words. `MealEditInputSchema` has no insulin/glucose/therapy
@@ -230,8 +233,9 @@ export async function buildApp(config: AppConfig, dependencies: AppDependencies 
     }
     const body = MealAnalysisBodySchema.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: { code: 'invalid_meal_input', message: 'Falta una imagen válida o una descripción de texto.', retryable: false } });
+    const known = body.data.knownFoodNames === undefined ? {} : { knownFoodNames: body.data.knownFoodNames };
     if ('instruction' in body.data) {
-      return mealVision.analyze({ instruction: body.data.instruction, current: body.data.current });
+      return mealVision.analyze({ instruction: body.data.instruction, current: body.data.current, ...known });
     }
     return mealVision.analyze(
       'imageBase64' in body.data
@@ -239,8 +243,9 @@ export async function buildApp(config: AppConfig, dependencies: AppDependencies 
             imageBase64: body.data.imageBase64,
             mimeType: body.data.mimeType,
             ...(body.data.description === undefined ? {} : { description: body.data.description }),
+            ...known,
           }
-        : { description: body.data.description },
+        : { description: body.data.description, ...known },
     );
   });
 

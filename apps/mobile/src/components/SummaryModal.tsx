@@ -4,18 +4,26 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, useWindowDi
 import {
   buildAmbulatoryProfile,
   buildNutritionInsights,
+  describeCoverage,
+  insulinEffectCurveFrom,
+  MIN_EPISODES_PER_CURVE_POINT,
+  MIN_EPISODES_PER_SEGMENT,
   MIN_SAMPLE_FOR_RATE,
+  observeCorrectionsFrom,
+  RELIABLE_COVERAGE_DAYS,
   summarizeGlucose,
+  summarizeObservedDuration,
+  type DaySegmentKey,
   type MealWindowInsight,
 } from '@type1a/domain';
-import type { CGMReading } from '@type1a/schemas';
+import type { CGMReading, TherapyProfile } from '@type1a/schemas';
 
 import { logSaveError } from '../log';
 import { colors, glucoseBands, radius, spacing } from '../theme';
 import type { SummaryData } from '../types';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ModalShell } from './ModalShell';
-import { AgpChart, AgpLegend, DayGlucoseChart, isNonSensorReading, RangeBar } from './SummaryCharts';
+import { AgpChart, AgpLegend, DayGlucoseChart, InsulinEffectCurve, isNonSensorReading, RangeBar } from './SummaryCharts';
 
 /**
  * Pantalla "Resumen" (Fase 11 + parte descriptiva de la Fase 12). Tres
@@ -29,12 +37,13 @@ import { AgpChart, AgpLegend, DayGlucoseChart, isNonSensorReading, RangeBar } fr
  * documentada en `nutrition-insights.ts`.
  */
 
-type SummaryTab = 'days' | 'metrics' | 'food';
+type SummaryTab = 'days' | 'metrics' | 'food' | 'insulin';
 
 const TABS: { key: SummaryTab; label: string }[] = [
   { key: 'days', label: 'Días' },
   { key: 'metrics', label: 'Métricas' },
   { key: 'food', label: 'Comidas' },
+  { key: 'insulin', label: 'Insulina' },
 ];
 
 /**
@@ -66,11 +75,22 @@ export function SummaryModal({
   visible,
   onClose,
   onLoadSummary,
+  therapy,
+  onAdoptSegmentDuration,
   swipeHandlers,
 }: {
   visible: boolean;
   onClose: () => void;
   onLoadSummary: (range: { from: Date; to: Date }) => Promise<SummaryData>;
+  /** Para leer la duración configurada y los overrides ya adoptados. */
+  therapy: TherapyProfile;
+  /**
+   * Adoptar la duración observada de un tramo. Es un acto **de la usuaria**:
+   * la app mide y propone, ella decide — `AGENTS.md` prohíbe que la app fije
+   * un parámetro de terapia por su cuenta, y desde el ADR 0005 este número
+   * cambia una dosis.
+   */
+  onAdoptSegmentDuration: (segment: DaySegmentKey, hours: number | null) => Promise<void>;
   /** Navegación lateral por gesto — es un destino de la barra inferior. */
   swipeHandlers?: GestureResponderHandlers;
 }) {
@@ -232,6 +252,15 @@ export function SummaryModal({
               <MetricsTab summary={summary} profile={profile} chartWidth={chartWidth} rangeDays={rangeDays} />
             ) : null}
             {tab === 'food' ? <FoodTab insights={insights} rangeDays={rangeDays} /> : null}
+            {tab === 'insulin' ? (
+              <InsulinTab
+                data={data}
+                rangeDays={rangeDays}
+                therapy={therapy}
+                chartWidth={chartWidth}
+                onAdoptSegment={onAdoptSegmentDuration}
+              />
+            ) : null}
           </ScrollView>
         </ErrorBoundary>
       )}
@@ -321,6 +350,7 @@ function MetricsTab({
       />
     );
   }
+  const coverage = describeCoverage({ daysCovered: summary.daysCovered, rangeDays });
   return (
     <View>
       <View style={styles.statRow}>
@@ -354,16 +384,29 @@ function MetricsTab({
 
       <View style={styles.noteBox}>
         <Text style={styles.noteTitle}>Cómo leer estos números</Text>
+        {/*
+          La cobertura va **siempre**, y arriba. Antes solo aparecía por debajo
+          del umbral clínico de 14 días, así que en 30 o 90 días con datos
+          suficientes para pasarlo se esfumaba y la pantalla se leía como si el
+          promedio resumiera el rango completo. Son dos afirmaciones distintas:
+          cuánto está cubierto (descriptivo) y si alcanza para que la HbA1c
+          estimada sea confiable (clínico). Ver `coverage.ts`.
+        */}
+        <Text style={[styles.noteText, coverage.isPartial && styles.notePartial]}>
+          {coverage.isPartial
+            ? `Estos números cubren ${coverage.text}, no los ${coverage.rangeDays} completos.`
+            : `Estos números cubren ${coverage.text}.`}
+        </Text>
         <Text style={styles.noteText}>
           La HbA1c estimada (GMI) la calcula esta app desde tu promedio de glucosa sobre {summary.readingCount} lecturas
-          en {summary.daysCovered} día(s). No reemplaza una HbA1c de laboratorio, que mide algo distinto y puede
+          en {coverage.daysCovered} día(s). No reemplaza una HbA1c de laboratorio, que mide algo distinto y puede
           diferir. Las metas indicadas son las de consenso internacional para diabetes tipo 1, no un objetivo
           personal: ese lo define tu equipo clínico.
         </Text>
-        {summary.daysCovered < 14 ? (
+        {coverage.isBelowReliableThreshold ? (
           <Text style={styles.noteWarning}>
-            Cobertura de {summary.daysCovered} día(s): con menos de 14 días la HbA1c estimada y el día promedio
-            son poco representativos.
+            Con menos de {RELIABLE_COVERAGE_DAYS} días de datos la HbA1c estimada y el día promedio son poco
+            representativos.
           </Text>
         ) : null}
         {summary.excludedSyntheticCount > 0 ? (
@@ -371,6 +414,260 @@ function MetricsTab({
             Se excluyeron {summary.excludedSyntheticCount} lectura(s) sintética(s) del modo de desarrollo.
           </Text>
         ) : null}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * Cuánto dura de verdad tu insulina, por tramo del día.
+ *
+ * ## Por qué esta pantalla existe
+ *
+ * Verónica lo pidió para ver si su curva de efecto se alarga en la mañana. Y
+ * desde el ADR 0005 dejó de ser curiosidad: la duración configurada **cambia
+ * una dosis propuesta**, así que poder contrastarla con lo que de verdad pasa
+ * en sus datos es control de calidad de un parámetro clínico.
+ *
+ * ## Las reglas que la gobiernan
+ *
+ * - **El `n` va siempre, la cifra solo cuando la sostiene.** Un "tu insulina
+ *   dura 2 h en la mañana" sacado de un episodio se lee como patrón, y acá
+ *   puede terminar restando unidades de una dosis real.
+ * - **Nada se adopta solo.** El botón es de ella. La app mide y propone;
+ *   fijar un parámetro de terapia es un acto suyo (`AGENTS.md`).
+ * - **La barra no comunica sola**: cada tramo lleva su número, su `n` y su
+ *   rango escritos (`contracts/ux-checklist.md`).
+ */
+function InsulinTab({
+  data,
+  rangeDays,
+  therapy,
+  chartWidth,
+  onAdoptSegment,
+}: {
+  data: SummaryData | null;
+  rangeDays: number;
+  therapy: TherapyProfile;
+  chartWidth: number;
+  onAdoptSegment: (segment: DaySegmentKey, hours: number | null) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState<DaySegmentKey | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const summary = useMemo(() => {
+    if (data === null) return null;
+    // El filtrado de qué episodio cuenta vive en `packages/domain`: es
+    // justamente la parte que puede producir un número equivocado.
+    return summarizeObservedDuration(observeCorrectionsFrom({
+      insulin: data.insulin,
+      meals: data.meals,
+      readings: data.readings,
+    }));
+  }, [data]);
+
+  const curves = useMemo(() => {
+    if (data === null) return null;
+    return insulinEffectCurveFrom({
+      insulin: data.insulin,
+      meals: data.meals,
+      readings: data.readings,
+    });
+  }, [data]);
+
+  if (summary === null || curves === null) return null;
+
+  const configuredHours = therapy.rapidInsulinDurationHours;
+  const hoursText = (minutes: number): string => `${(minutes / 60).toFixed(1)} h`;
+  const longest = Math.max(60, ...summary.segments.map((s) => s.medianMinutes ?? 0));
+
+  return (
+    <View>
+      <Text style={styles.sectionTitle}>Cuánto dura tu insulina, en tus datos</Text>
+      <Text style={styles.sectionHint}>
+        Mide, después de <Text style={styles.noteStrong}>cada dosis rápida</Text> —de comida o de corrección—,
+        cuánto tardó tu glucosa en dejar de bajar y en qué momento bajó más rápido. La ventana se recorta en la
+        dosis siguiente en vez de descartar el episodio.
+        {' '}Últimos {rangeDays} días · {summary.totalEpisodes} {summary.totalEpisodes === 1 ? 'episodio' : 'episodios'} utilizables
+        {summary.cleanEpisodes === summary.totalEpisodes
+          ? ', ninguno con comida en la ventana'
+          : `, ${summary.cleanEpisodes} sin comida en la ventana`}.
+        {summary.adjusted
+          ? ' Las medianas están descontadas por los carbohidratos y las unidades de cada episodio.'
+          : ' Las medianas son crudas: todavía no hay muestra para descontar el efecto de los carbohidratos.'}
+      </Text>
+
+      {summary.totalEpisodes === 0 ? (
+        <Text style={styles.empty}>
+          Todavía no hay episodios medibles en este rango. Hace falta que entre una dosis y la siguiente pasen al
+          menos 2 h con lecturas del sensor, y que la glucosa baje al menos 15 mg/dL. Prueba con un rango más largo.
+        </Text>
+      ) : null}
+
+      {summary.segments.map((segment) => {
+        const override = therapy.segmentDurationHours?.[segment.segment];
+        const width = segment.medianMinutes === undefined ? 0 : (segment.medianMinutes / longest) * 100;
+        return (
+          <View key={segment.segment} style={styles.segmentBlock}>
+            <View style={styles.segmentHead}>
+              <Text style={styles.segmentLabel}>{segment.label}</Text>
+              <Text style={styles.segmentValue}>
+                {segment.medianMinutes === undefined ? 'sin datos suficientes' : hoursText(segment.medianMinutes)}
+              </Text>
+            </View>
+            <View style={styles.segmentTrack}>
+              <View style={[styles.segmentFill, { width: `${width}%` }]} />
+            </View>
+            <Text style={styles.segmentMeta}>
+              {segment.episodeCount} {segment.episodeCount === 1 ? 'episodio' : 'episodios'}
+              {segment.cleanCount === segment.episodeCount ? '' : ` (${segment.cleanCount} sin comida)`}
+              {segment.medianMinutes === undefined
+                ? ` · hacen falta ${MIN_EPISODES_PER_SEGMENT} para publicar una mediana`
+                : segment.rangeMinutes === undefined
+                  ? ''
+                  : ` · entre ${hoursText(segment.rangeMinutes.min)} y ${hoursText(segment.rangeMinutes.max)}`}
+              {segment.medianPeakMinutes === undefined
+                ? ''
+                : ` · bajó más rápido a los ${segment.medianPeakMinutes} min`}
+              {override === undefined ? '' : ` · estás usando ${override} h en este tramo`}
+            </Text>
+            {segment.cleanMedianMinutes === undefined ? (
+              segment.medianMinutes === undefined ? null : (
+                // Se ve el número para comparar tramos, pero no se puede
+                // adoptar: la mediana ajustada conserva el aporte medio de la
+                // comida, y adoptarla metería la digestión dentro de la
+                // duración de la insulina.
+                <Text style={styles.segmentMeta}>
+                  Para poder usarlo como tu duración hacen falta {MIN_EPISODES_PER_SEGMENT} episodios
+                  {' '}sin comida en la ventana; en este tramo hay {segment.cleanCount}.
+                </Text>
+              )
+            ) : (
+              <View style={styles.segmentActions}>
+                <Pressable
+                  style={[styles.segmentButton, busy !== null && styles.disabled]}
+                  disabled={busy !== null}
+                  accessibilityRole="button"
+                  onPress={() => {
+                    const hours = Number((segment.cleanMedianMinutes! / 60).toFixed(1));
+                    setBusy(segment.segment);
+                    setMessage(null);
+                    void onAdoptSegment(segment.segment, hours)
+                      .then(() => { setMessage(`${segment.label}: ahora se usan ${hours} h para calcular la insulina activa.`); })
+                      .catch(() => { setMessage('No se pudo guardar. Tu configuración sigue como estaba.'); })
+                      .finally(() => { setBusy(null); });
+                  }}
+                >
+                  <Text style={styles.segmentButtonText}>Usar {hoursText(segment.cleanMedianMinutes)} en este tramo</Text>
+                </Pressable>
+                {override === undefined ? null : (
+                  <Pressable
+                    style={[styles.segmentButtonPlain, busy !== null && styles.disabled]}
+                    disabled={busy !== null}
+                    accessibilityRole="button"
+                    onPress={() => {
+                      setBusy(segment.segment);
+                      setMessage(null);
+                      void onAdoptSegment(segment.segment, null)
+                        .then(() => { setMessage(`${segment.label}: vuelve a usar tu duración general.`); })
+                        .catch(() => { setMessage('No se pudo guardar. Tu configuración sigue como estaba.'); })
+                        .finally(() => { setBusy(null); });
+                    }}
+                  >
+                    <Text style={styles.segmentButtonPlainText}>Volver a la general</Text>
+                  </Pressable>
+                )}
+              </View>
+            )}
+          </View>
+        );
+      })}
+
+      {message === null ? null : <Text style={styles.adoptMessage}>{message}</Text>}
+
+      <Text style={styles.sectionTitle}>Tu curva de efecto, hora por hora</Text>
+      <Text style={styles.sectionHint}>
+        Cuánto se movió tu glucosa 1, 2, 3… horas después de inyectarte, según la hora en que{' '}
+        <Text style={styles.noteStrong}>empezó</Text> la inyección. Bajo la línea = bajó; sobre la línea = subió.
+        Los cuatro comparten la misma escala, así que se leen de un vistazo.
+      </Text>
+
+      {curves.totalDoses === 0 ? (
+        <Text style={styles.empty}>
+          Todavía no hay dosis con glucosa registrada al momento de inyectarte. La curva aparece sola en cuanto
+          el sensor tenga una lectura cerca de una dosis.
+        </Text>
+      ) : (
+        curves.segments.map((segment) => {
+          const drawn = segment.points.filter((point) => point.medianDeltaMgDl !== undefined);
+          return (
+            <View key={segment.segment} style={styles.curveBlock}>
+              <Text style={styles.curveLabel}>
+                {segment.label} · {segment.doseCount} {segment.doseCount === 1 ? 'dosis' : 'dosis'}
+              </Text>
+              {segment.doseCount === 0 ? (
+                <Text style={styles.curveEmpty}>Sin dosis registradas que empiecen en este tramo.</Text>
+              ) : (
+                <>
+                  <InsulinEffectCurve
+                    segment={segment}
+                    extremeDeltaMgDl={curves.extremeDeltaMgDl}
+                    width={chartWidth}
+                  />
+                  {/*
+                    El `n` de CADA punto, no el del mejor. Antes la leyenda
+                    mostraba el máximo entre horas, así que una hora sostenida
+                    por un episodio heredaba el respaldo de la hora 1 — y el
+                    botón de adoptar duración está justo arriba.
+                  */}
+                  <Text style={styles.curveMeta}>
+                    Horas desde la inyección · mg/dL respecto del momento de pincharte.{' '}
+                    {drawn.length === 0
+                      ? `Ningún punto llega todavía a ${MIN_EPISODES_PER_CURVE_POINT} episodios, así que no se dibuja ninguno.`
+                      : drawn.map((point) => `${point.hour} h: n=${point.sampleSize}${point.cleanSampleSize === point.sampleSize ? '' : ` (${point.cleanSampleSize} sin comida)`}`).join(' · ')}
+                  </Text>
+                </>
+              )}
+            </View>
+          );
+        })
+      )}
+
+      <View style={styles.noteBox}>
+        <Text style={styles.noteTitle}>Por qué la curva y la duración no dicen lo mismo</Text>
+        <Text style={styles.noteText}>
+          La <Text style={styles.noteStrong}>duración</Text> de arriba busca cuándo tu glucosa dejó de bajar, y
+          para eso mira hasta tu dosis siguiente. En la mañana el almuerzo llega a las 5 h; de noche no llega
+          nada. Un tramo con más espacio tiene más oportunidades de encontrar un mínimo tardío, así que la tarde
+          y la noche salen más largas aunque tu insulina se comporte igual.{'\n\n'}
+          La <Text style={styles.noteStrong}>curva</Text> no tiene ese problema: mide el mismo instante en todos
+          los episodios —una hora después, dos horas después— así que cada punto se compara con su igual. Si te
+          inyectas temprano y recién te baja a las 4-5 h, acá se ve.{'\n\n'}
+          Los dos tramos se deciden por <Text style={styles.noteStrong}>cuándo te inyectaste</Text>, nunca por
+          cuándo hizo efecto: una dosis de las 8:00 que sigue actuando a las 16:00 pertenece entera a la mañana.
+        </Text>
+      </View>
+
+      <View style={styles.noteBox}>
+        <Text style={styles.noteTitle}>Qué es y qué no es este número</Text>
+        <Text style={styles.noteText}>
+          Es cuándo dejó de verse el efecto en <Text style={styles.noteStrong}>tu</Text> glucosa, que llega antes
+          que el final teórico de la insulina en la ficha técnica. No es una medición de laboratorio: la
+          absorción cambia con el sitio de inyección, la temperatura y el ejercicio. Un episodio con comida
+          adentro mide la insulina menos los carbohidratos; por eso los carbohidratos entran como covariable y
+          la pantalla dice arriba si el descuento se pudo aplicar o no.
+          {configuredHours === undefined
+            ? ' Todavía no tienes una duración configurada en Ajustes → Terapia, así que la app no descuenta insulina activa de ninguna dosis.'
+            : ` Hoy usas ${configuredHours} h como duración general.`}
+        </Text>
+        <Text style={styles.noteWarning}>
+          La cifra que se compara entre tramos y la que se puede adoptar no son la misma: para adoptar solo se
+          usan los episodios sin comida en la ventana, porque la mediana ajustada conserva el aporte medio de la
+          comida y adoptarla metería la digestión dentro de la duración de tu insulina.{'\n\n'}
+          Adoptar una duración cambia cuánta insulina activa se descuenta de tus correcciones, o sea la dosis que
+          la app te propone. Es tu decisión y conviene conversarla con tu equipo clínico. Type 1A nunca la cambia
+          sola.
+        </Text>
       </View>
     </View>
   );
@@ -537,6 +834,29 @@ function FoodStat({ value, label, meta }: { value: string; label: string; meta: 
 }
 
 const styles = StyleSheet.create({
+  sectionHint: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 4 },
+  disabled: { opacity: 0.55 },
+  segmentBlock: { marginTop: spacing.lg },
+  segmentHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
+  segmentLabel: { color: colors.ink, fontSize: 15, fontWeight: '800' },
+  segmentValue: { color: colors.navy, fontSize: 15, fontWeight: '800' },
+  segmentTrack: { height: 8, borderRadius: 4, backgroundColor: colors.line, overflow: 'hidden', marginTop: 6 },
+  segmentFill: { height: '100%', borderRadius: 4, backgroundColor: colors.teal },
+  segmentMeta: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: 4 },
+  segmentActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
+  segmentButton: {
+    minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.md,
+    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.teal, backgroundColor: colors.surface,
+  },
+  segmentButtonText: { color: colors.teal, fontSize: 12, fontWeight: '800' },
+  segmentButtonPlain: { minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.sm },
+  segmentButtonPlainText: { color: colors.muted, fontSize: 12, fontWeight: '700' },
+  curveBlock: { marginTop: spacing.md },
+  curveLabel: { color: colors.ink, fontSize: 14, fontWeight: '800' },
+  curveEmpty: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: 4 },
+  curveMeta: { color: colors.muted, fontSize: 11, lineHeight: 15, marginTop: 2 },
+  adoptMessage: { color: colors.navy, backgroundColor: colors.tealSoft, borderRadius: radius.sm, padding: spacing.md, fontSize: 13, lineHeight: 19, marginTop: spacing.md },
+  noteStrong: { fontWeight: '800' },
   tabBar: {
     flexDirection: 'row',
     backgroundColor: colors.line,
@@ -603,6 +923,7 @@ const styles = StyleSheet.create({
   noteBox: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.sm, gap: spacing.sm },
   noteTitle: { color: colors.ink, fontSize: 13, fontWeight: '800' },
   noteText: { color: colors.muted, fontSize: 12, lineHeight: 18 },
+  notePartial: { fontWeight: '800', color: colors.navy },
   noteWarning: { color: colors.warning, fontSize: 12, lineHeight: 18, fontWeight: '600' },
   foodStatsRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
   foodStat: { flex: 1 },

@@ -373,6 +373,37 @@ export async function scheduleEpisodeNotifications(
 }
 
 /**
+ * Cancela las notificaciones ya programadas de un episodio.
+ *
+ * ## Por qué existe
+ *
+ * Desde que se puede **corregir la hora** de una comida, las alarmas de
+ * +60/+120/+180 min que se programaron para las 21:00 dejan de describir nada
+ * cuando esa comida pasa a ser de las 13:00. Sin cancelar primero, mover una
+ * comida no reemplazaba las alarmas: las **sumaba**, y el teléfono terminaba
+ * avisando seis veces por un solo plato. La fatiga de alarma no es una
+ * molestia estética en una app de diabetes — es cómo se deja de mirar la que
+ * sí importa.
+ *
+ * Se identifican por el `url` que llevan en `data` (`type1a://episode/<id>`),
+ * que es el mismo que `scheduleEpisodeNotifications` estampa. Ese formato es
+ * un identificador que ya salió del repo (Regla 3a): no se renombra.
+ *
+ * **Cancelar va siempre antes de programar**, nunca después: al revés, una
+ * cancelación que barre por episodio se llevaría por delante las que se acaban
+ * de crear.
+ */
+export async function cancelEpisodeNotifications(episodeId: string): Promise<void> {
+  const target = `type1a://episode/${episodeId}`;
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  await Promise.all(
+    scheduled
+      .filter((notification) => notification.content.data?.url === target)
+      .map((notification) => Notifications.cancelScheduledNotificationAsync(notification.identifier)),
+  );
+}
+
+/**
  * Computed reminder clock times, evenly spaced across the awake window.
  * `count` reminders anchored at `wakeStart`, one interval (window/count)
  * apart. Pure and deterministic so it can be previewed in Ajustes and unit
@@ -500,7 +531,7 @@ export async function scheduleCorrectionReminder(timestamp: string, offsetMinute
   await Notifications.scheduleNotificationAsync({
     content: {
       title: `${look.emoji} Revisa tu glucosa tras la corrección · +${offsetMinutes} min`,
-      body: 'Revisa tu glucosa. Type 1A no calcula insulina activa: si hace poco te corregiste, tenlo en cuenta antes de una nueva dosis.',
+      body: 'Revisa tu glucosa antes de decidir otra dosis: la corrección anterior puede seguir actuando. La calculadora la descuenta si configuraste tu insulina rápida.',
       // Deliberately no `categoryIdentifier`/quick-action buttons here —
       // this is a checkpoint before a possible second dose, not a shortcut
       // to log one. Tapping opens the app to Corrección, which already

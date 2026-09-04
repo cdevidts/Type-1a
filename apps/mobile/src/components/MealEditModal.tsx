@@ -9,14 +9,19 @@ import Camera from 'lucide-react-native/icons/camera';
 import PencilLine from 'lucide-react-native/icons/pencil-line';
 import WandSparkles from 'lucide-react-native/icons/wand-sparkles';
 
-import { resolveMacrosSource } from '@type1a/domain';
+import { resolveMacrosSource, type CartLine, type CatalogFood,
+  type Recipe,
+} from '@type1a/domain';
 import type { MealAnalysisResult, MealEvent, MealSnapshot } from '@type1a/schemas';
 
 import { analyzeMealDescription, analyzeMealImage, editMealWithInstruction, MobileApiError } from '../api';
 import { parseBlankAsClear, parseBlankAsUnset } from '../format';
+import { knownFoodNamesFrom } from '../knownFoods';
 import { logSaveError } from '../log';
+import { MealAiFields } from './MealAiFields';
 import { colors, radius, spacing } from '../theme';
 import { MacroFields } from './MacroFields';
+import { MealCart } from './MealCart';
 import { ModalShell } from './ModalShell';
 
 /**
@@ -35,7 +40,12 @@ export interface MealEditResult {
   fiberG?: number | null;
   caloriesKcal?: number | null;
   imageUri?: string | null;
-  macrosSource?: MealEvent['macrosSource'];
+  /**
+   * `null` **borra** la procedencia, que es lo que corresponde cuando la
+   * comida se quedó sin macros: una etiqueta "estimados por IA" colgando
+   * sobre campos vacíos miente en el reporte médico.
+   */
+  macrosSource?: MealEvent['macrosSource'] | null;
   analysis?: { aiEstimatedCarbsG: number; aiAnalysisId: string };
 }
 
@@ -73,11 +83,24 @@ function DiffRow({ label, before, after, unit }: { label: string; before: string
 
 export function MealEditModal({
   meal,
+  catalogFoods,
+  recipes,
   onClose,
   onSave,
 }: {
   /** `null` cierra el modal. */
   meal: MealEvent | null;
+  /**
+   * El catálogo, para el carrito multi-alimento.
+   *
+   * Faltaba acá y estaba en el modal de creación: corregir una comida no
+   * podía reusar un alimento guardado, así que había que escribir los macros
+   * a mano o salir y rehacerla. Es la misma asimetría que ya obligó a extraer
+   * `CatalogQuickAdd` una vez.
+   */
+  catalogFoods: readonly CatalogFood[];
+  /** Recetas, para que el carrito pueda reusarlas. */
+  recipes?: readonly Recipe[] | undefined;
   onClose: () => void;
   onSave: (mealId: string, result: MealEditResult) => Promise<void>;
 }) {
@@ -106,6 +129,9 @@ export function MealEditModal({
   /** Lo que precargó la propuesta, para saber después si ella lo corrigió. */
   const [aiMacros, setAiMacros] = useState<{ proteinG: number; fatG: number; fiberG: number; caloriesKcal: number } | null>(null);
   const [appliedAnalysis, setAppliedAnalysis] = useState<MealAnalysisResult | null>(null);
+  const [cartLines, setCartLines] = useState<CartLine[]>([]);
+  /** `true` = la usuaria pidió quitar la foto que ya estaba guardada. */
+  const [imageRemoved, setImageRemoved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -129,6 +155,8 @@ export function MealEditModal({
     setAppliedImageUri(null);
     setAiMacros(null);
     setAppliedAnalysis(null);
+    setCartLines([]);
+    setImageRemoved(false);
     setBusy(false);
     setMessage(null);
   }, [meal]);
@@ -196,6 +224,7 @@ export function MealEditModal({
       });
       if (compressed.base64 === undefined) throw new Error('No base64 image');
       const next = await analyzeMealImage({
+        knownFoodNames: knownFoodNamesFrom(catalogFoods),
         imageBase64: compressed.base64,
         mimeType: 'image/jpeg',
         ...(description.trim() === '' ? {} : { description: description.trim() }),
@@ -221,7 +250,7 @@ export function MealEditModal({
     setBusy(true);
     setProposal(null);
     try {
-      const next = await analyzeMealDescription(description.trim());
+      const next = await analyzeMealDescription(description.trim(), knownFoodNamesFrom(catalogFoods));
       setProposal(next);
       setMessage('Propuesta lista desde el texto (sin foto, la incertidumbre es mayor). No se guarda nada hasta que toques Guardar.');
     } catch (error) {
@@ -240,7 +269,7 @@ export function MealEditModal({
     setBusy(true);
     setProposal(null);
     try {
-      const next = await editMealWithInstruction({ instruction: instruction.trim(), current: snapshot() });
+      const next = await editMealWithInstruction({ instruction: instruction.trim(), current: snapshot(), knownFoodNames: knownFoodNamesFrom(catalogFoods) });
       setProposal(next);
       setMessage('Propuesta lista. Revísala abajo: no se guarda nada hasta que toques Guardar.');
     } catch (error) {
@@ -323,8 +352,13 @@ export function MealEditModal({
         fatG: fat,
         fiberG: fiber,
         caloriesKcal: calories,
-        ...(macrosSource === undefined ? {} : { macrosSource }),
-        ...(appliedImageUri === null ? {} : { imageUri: appliedImageUri }),
+        // Se manda **siempre**, `null` incluido: si ya no hay macros, la
+        // etiqueta de procedencia tiene que irse con ellos.
+        macrosSource: macrosSource ?? null,
+        // Quitar la foto es explícito y gana sobre "no se tocó". Una foto
+        // nueva solo llega acá si su propuesta se aplicó (`appliedImageUri`),
+        // así que foto y análisis nunca quedan desalineados.
+        ...(imageRemoved ? { imageUri: null } : (appliedImageUri === null ? {} : { imageUri: appliedImageUri })),
         ...(appliedAnalysis === null
           ? {}
           : {
@@ -377,25 +411,17 @@ export function MealEditModal({
       </Pressable>
 
       {textOpen ? (
-        <View style={styles.aiPanel}>
-          <TextInput
-            style={styles.textArea}
-            value={description}
-            onChangeText={setDescription}
-            placeholder="Ej.: pollo al horno con arroz y ensalada"
-            placeholderTextColor={colors.muted}
-            maxLength={500}
-            multiline
-          />
-          <Pressable
-            style={[styles.panelAction, busy && styles.disabled]}
-            disabled={busy}
-            onPress={() => { void reanalyzeFromText(); }}
-            accessibilityRole="button"
-          >
-            <Text style={styles.panelActionText}>Estimar desde el texto</Text>
-          </Pressable>
-        </View>
+        <MealAiFields
+          description={description}
+          onChangeDescription={setDescription}
+          hasPhoto={appliedImageUri !== null || (meal?.imageUri !== undefined && !imageRemoved)}
+          hasAnalysis={false}
+          instruction=""
+          onChangeInstruction={() => { /* la corrección vive en su propio panel, abajo */ }}
+          busy={busy}
+          onEstimateFromText={() => { void reanalyzeFromText(); }}
+          onRefine={() => { /* no aplica acá */ }}
+        />
       ) : null}
 
       <View style={styles.aiPanel}>
@@ -425,8 +451,55 @@ export function MealEditModal({
         </Pressable>
       </View>
 
+      {/*
+        La foto **guardada**, visible al abrir. Antes no se mostraba: había que
+        confiar en que seguía ahí, y quitarla o reemplazarla no tenía botón.
+        Va rotulada y separada de la propuesta nueva, porque una imagen recién
+        tomada y una que ya estaba en el registro son indistinguibles si nadie
+        lo escribe — y ahí es donde la foto deja de ser evidencia de lo que
+        dice el registro.
+      */}
+      {meal?.imageUri === undefined || imageRemoved ? null : (
+        <View style={styles.imageBlock}>
+          <Text style={styles.imageLabel}>Foto guardada de esta comida</Text>
+          <Image source={{ uri: meal.imageUri }} style={styles.preview} resizeMode="cover" />
+          <View style={styles.imageActions}>
+            <Pressable
+              style={styles.imageAction}
+              disabled={busy}
+              onPress={() => { void reanalyzeFromPhoto(); }}
+              accessibilityRole="button"
+              accessibilityLabel="Reemplazar la foto guardada tomando otra"
+            >
+              <Text style={styles.imageActionText}>Reemplazar con otra foto</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.imageAction, styles.imageActionDanger]}
+              onPress={() => {
+                setImageRemoved(true);
+                setMessage('La foto se quitará al guardar. Los macros y los carbohidratos no se tocan.');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Quitar la foto guardada"
+            >
+              <Text style={styles.imageActionDangerText}>Quitar foto</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+      {imageRemoved ? (
+        <Text style={styles.sectionHint}>
+          La foto guardada se quitará al guardar. Toma otra si quieres reemplazarla en vez de dejarla sin imagen.
+        </Text>
+      ) : null}
+
       {pendingImageUri === null ? null : (
-        <Image source={{ uri: pendingImageUri }} style={styles.preview} resizeMode="cover" />
+        <View style={styles.imageBlock}>
+          <Text style={styles.imageLabelPending}>
+            Foto nueva · todavía sin aplicar. Reemplaza a la guardada solo si aceptas su propuesta.
+          </Text>
+          <Image source={{ uri: pendingImageUri }} style={styles.preview} resizeMode="cover" />
+        </View>
       )}
 
       {proposal === null ? null : (
@@ -441,6 +514,17 @@ export function MealEditModal({
               <Text style={styles.foodCarbs}>{food.carbsG} g</Text>
             </View>
           ))}
+
+          {proposal.estimate.waterMl === null || proposal.estimate.waterMl === undefined ? null : (
+            // Este editor cambia la COMIDA; el agua es un registro aparte y se
+            // edita en el maestro. Si la IA la detectó y no se dijera acá, el
+            // dato se perdería en silencio — y un dato que la app vio y no
+            // dice es peor que uno que no vio.
+            <Text style={styles.waterNote}>
+              La IA también vio unos {Math.round(proposal.estimate.waterMl)} mL de agua. El agua se registra
+              aparte de la comida: anótala con el botón Agua, o abriendo esta entrada desde el timeline.
+            </Text>
+          )}
 
           <View style={styles.diffBox}>
             <DiffRow label="Carbohidratos" before={carbsInput} after={String(proposal.totals.carbsG)} unit="g" />
@@ -468,6 +552,42 @@ export function MealEditModal({
           </View>
         </View>
       )}
+
+      {/*
+        El carrito multi-alimento, también acá. Corregir una comida podía
+        usar foto e IA pero no reusar un alimento guardado: la misma asimetría
+        que ya obligó a extraer el catálogo de `MealModal` una vez.
+      */}
+      <Text style={styles.sectionTitle}>Agregar del catálogo</Text>
+      <MealCart
+        foods={catalogFoods}
+        recipes={recipes ?? []}
+        lines={cartLines}
+        onChange={setCartLines}
+        onUseCarbs={(totals) => {
+          // Acción explícita. Los números del carrito son estimación del
+          // catálogo; pasan al campo de confirmados porque ella lo pidió, y
+          // se rotula que los revise.
+          setCarbsInput(String(totals.carbsG));
+          setProteinInput(String(totals.proteinG));
+          setFatInput(String(totals.fatG));
+          setFiberInput(String(totals.fiberG));
+          setCaloriesInput(String(totals.caloriesKcal));
+          // **Los macros del carrito son una estimación precargada.** Sin
+          // registrarlos acá, `resolveMacrosSource` no tenía contra qué
+          // comparar y los guardaba como `'user'`: el reporte del control
+          // médico imprimía "anotados por la usuaria" sobre una media de
+          // estimaciones de IA del catálogo.
+          setAiMacros({
+            proteinG: totals.proteinG,
+            fatG: totals.fatG,
+            fiberG: totals.fiberG,
+            caloriesKcal: totals.caloriesKcal,
+          });
+          setMessage(`Se transcribieron ${totals.carbsG} g del carrito a los campos de abajo. Revísalos antes de guardar.`);
+        }}
+        onMessage={setMessage}
+      />
 
       <Text style={styles.sectionTitle}>Valores guardados</Text>
       <Text style={styles.sectionHint}>
@@ -591,6 +711,14 @@ const styles = StyleSheet.create({
   },
   panelActionText: { fontSize: 14, fontWeight: '700', color: colors.teal },
   preview: { width: '100%', height: 180, borderRadius: radius.md, marginBottom: spacing.md },
+  imageBlock: { marginBottom: spacing.sm },
+  imageLabel: { color: colors.navy, fontSize: 11, fontWeight: '800', marginBottom: 4 },
+  imageLabelPending: { color: colors.warning, fontSize: 11, fontWeight: '800', marginBottom: 4, lineHeight: 16 },
+  imageActions: { flexDirection: 'row', gap: spacing.sm, marginTop: -spacing.sm, marginBottom: spacing.md },
+  imageAction: { flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: radius.sm, borderWidth: 1, borderColor: colors.line },
+  imageActionText: { color: colors.navy, fontSize: 13, fontWeight: '700' },
+  imageActionDanger: { borderColor: colors.red },
+  imageActionDangerText: { color: colors.red, fontSize: 13, fontWeight: '700' },
   proposalBox: {
     backgroundColor: colors.warningSoft,
     borderRadius: radius.md,
@@ -598,6 +726,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     marginBottom: spacing.md,
   },
+  waterNote: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: spacing.sm },
   proposalTitle: { fontSize: 15, fontWeight: '700', color: colors.warning, marginBottom: spacing.sm },
   foodRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.xs },
   foodNameWrap: { flex: 1, paddingRight: spacing.md },

@@ -66,12 +66,35 @@ interface StructuredCompletionInput {
 // the *model* to constrain its output to — every response is still fully
 // re-validated against the real Zod schema (including those same bounds)
 // after parsing, so this never weakens what we accept.
+//
+// `exclusiveMinimum`/`exclusiveMaximum` se agregaron el 2026-09-02, y su
+// historia es la lección: esta lista tenía cuatro de las cinco palabras que
+// importan. `route-llm` reparte por tamaño del payload —fotos chicas a un
+// modelo, grandes a Gemini—, y el validador de Gemini habla OpenAPI 3.0,
+// donde la exclusividad es un booleano al lado de `minimum` y no un número
+// aparte; recibirla suelta le da "Extra inputs are not permitted" → HTTP 400,
+// que la app envuelve en un 502. Un solo `z.number().positive()` nuevo
+// (`servingGrams`) bastó para romper TODAS las fotos, mientras el texto y las
+// imágenes chicas seguían funcionando porque iban al otro modelo.
+//
+// Por eso hay un test que enumera lo que **sobrevive** al saneado contra una
+// lista blanca explícita: el modificador de Zod que mañana emita una palabra
+// nueva tiene que fallar acá y no en el teléfono de Verónica.
 const UNSUPPORTED_STRICT_JSON_SCHEMA_KEYWORDS = new Set([
   '$schema',
   'minItems',
   'maxItems',
   'minimum',
   'maximum',
+  'exclusiveMinimum',
+  'exclusiveMaximum',
+  // `default` lo emitió el mismo cambio del 2026-09-01 (`.default(null)` en
+  // los campos de porción) y lo encontró el test de lista blanca, no
+  // producción. Se filtra por partida doble: varios validadores estrictos
+  // tampoco lo aceptan, y decirle al modelo "puedes omitirlo y queda null" es
+  // lo contrario de lo que se quiere — que decida la porción o diga que no
+  // hay. El default sigue aplicándose donde corresponde: al parsear con Zod.
+  'default',
 ]);
 
 // `isPropertiesMap` is true only while recursing through the *values* of a
@@ -155,19 +178,34 @@ export class AbacusRouteLLMClient {
   }
 }
 
+/** Ver `KnownFoodNamesSchema`: solo nombres, para que el modelo reuse el exacto. */
+type KnownFoods = { knownFoodNames?: readonly string[] | undefined };
+
 export type MealVisionInput =
-  | { imageBase64: string; mimeType: 'image/jpeg' | 'image/png' | 'image/webp'; description?: string }
+  | ({ imageBase64: string; mimeType: 'image/jpeg' | 'image/png' | 'image/webp'; description?: string } & KnownFoods)
   // Text-only: no photo. Verónica asked for this explicitly — being able to
   // type what she ate instead of always needing a picture. `description` is
   // required here (there's nothing else for the model to go on), unlike the
   // image case where it's optional context.
-  | { description: string }
+  | ({ description: string } & KnownFoods)
   // Edit mode (Fase 17): an already-logged meal plus a correction written in
   // the user's own words. `current` is a `MealSnapshot`, which by
   // construction carries no insulin, glucose or therapy field — see the
   // schema's comment for why the boundary lives in the type and not in the
   // prompt.
-  | { instruction: string; current: MealSnapshot };
+  | ({ instruction: string; current: MealSnapshot } & KnownFoods);
+
+/**
+ * El bloque de nombres conocidos que se le pega al mensaje de la usuaria.
+ *
+ * Va en el mensaje y no en el system prompt: es dato de esta llamada, no una
+ * regla. Vacío = ninguna línea, para que un catálogo vacío no cambie el prompt.
+ */
+export function knownFoodsBlock(names: readonly string[] | undefined): string {
+  const clean = (names ?? []).map((name) => name.trim()).filter((name) => name !== '');
+  if (clean.length === 0) return '';
+  return `\n\nAlimentos que la usuaria ya tiene en su catálogo (usa el nombre EXACTO solo si es el mismo alimento):\n${clean.map((name) => `- ${name}`).join('\n')}`;
+}
 
 export interface MealVisionService {
   analyze(input: MealVisionInput): Promise<MealAnalysisResult>;
@@ -194,13 +232,14 @@ export class AbacusMealVisionService implements MealVisionService {
     const content: unknown[] = [
       {
         type: 'text',
-        text: isEdit
+        text: (isEdit
           ? `Comida guardada actualmente:\n${JSON.stringify(input.current)}\n\nCorrección de la usuaria: ${input.instruction.trim()}`
           : hasImage
             ? (input.description?.trim()
               ? `Analiza la comida. Contexto del usuario: ${input.description.trim()}`
               : 'Analiza la comida visible y explicita la incertidumbre de porción.')
-            : `Analiza esta comida a partir únicamente de la descripción del usuario, sin foto. Descripción: ${input.description.trim()}`,
+            : `Analiza esta comida a partir únicamente de la descripción del usuario, sin foto. Descripción: ${input.description.trim()}`)
+          + knownFoodsBlock(input.knownFoodNames),
       },
     ];
     if (hasImage) {

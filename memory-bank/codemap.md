@@ -1,7 +1,6 @@
 # Codemap — vas a tocar X, lee Y
 
-Índice semántico para ubicar el archivo correcto sin leer el árbol. No es un
-inventario: los archivos obvios por su nombre no están acá.
+Índice semántico para ubicar código sin leer el árbol. No es un inventario.
 
 ## Vista general
 
@@ -41,19 +40,28 @@ Puro, determinístico, con test. **Ningún `.tsx` calcula una métrica de salud.
 
 | Archivo | Qué resuelve |
 |---|---|
-| `correction.ts`, `bolus.ts` | aritmética de dosis sobre parámetros que cargó la usuaria. Nunca IOB |
+| `correction.ts`, `bolus.ts` | aritmética de dosis sobre parámetros que cargó la usuaria. Descuentan IOB **solo de la corrección** |
 | `ai-safety.ts` | `containsTherapyRecommendation` — el filtro por el que pasa toda salida de IA |
 | `freshness.ts` | `assessFreshness`; distingue `sourceTimestamp` de `ingestedAt` |
 | `glucose-thresholds.ts` | 54/70/180/250 mg/dL. Nadie los redeclara |
 | `glucose-metrics.ts`, `agp.ts` | TIR, HbA1c estimada, percentiles, perfil AGP |
 | `episode-context.ts` | qué eventos caen en la ventana de un episodio |
+| `episode-local-time.ts` | la hora que el resumen tiene derecho a citar: reescribe las marcas del episodio con desfase local **antes** de salir a la IA. El desfase se pide por marca, no se lee: el horario de verano existe |
 | `macro-glucose.ts` | subida tardía por grasa+proteína, ajustada por covariables |
 | `regression.ts` | OLS por ecuaciones normales. Centra al ajustar; sus β **no salen** de aquí |
-| `nutrition-insights.ts`, `nutrition-targets.ts` | patrones de comida y metas |
+| `nutrition-insights.ts`, `nutrition-targets.ts` | patrones de comida y metas. La de fibra es un **piso** (14 g/1000 kcal) y nunca se descuenta de los carbohidratos |
 | `macros-source.ts` | `resolveMacrosSource()` — quién puso los macros de una comida. Se imprime en el reporte médico; ningún `.tsx` lo decide |
-| `vitals-summary.ts` | cómo se lee un registro de vitales, con la banda de cetonas de `assessKetones`. El componente elige el color; no decide qué es urgente |
-| `insulin-catalog.ts` | catálogo de insulinas y su duración. Devuelve `undefined` si no está configurada — nunca un default silencioso |
-| `food-catalog.ts` | `foodKey`, `blendCatalogEntry`; misma implementación en teléfono y servidor |
+| `vitals-summary.ts` | cómo se lee un registro de vitales, con la banda de `assessKetones`. El componente elige el color; no decide qué es urgente |
+| `insulin-catalog.ts` | catálogo de insulinas, su duración y su nombre. `undefined` si no está configurada — nunca un default silencioso |
+| `food-catalog.ts` | `foodKey`, `blendCatalogEntry`; misma implementación en teléfono y servidor. `imageUri` es representación, nunca base de un macro. `listed` = "solo receta": ausente es visible, y visible gana al fusionar |
+| `meal-cart.ts` | el carrito multi-alimento: suma líneas y declara qué macro falta. Su total es **estimación**; confirmarlo es un acto de la usuaria |
+| `recipe.ts` | una receta y sus componentes. **Los totales se derivan, nunca se guardan**: corregir un alimento corrige todas las recetas que lo usan. Redondea igual que el carrito a propósito |
+| `catalog-similarity.ts` | qué alimento del catálogo ya cubre uno recién identificado. **Solo propone**: emparejar mal mezcla macros de dos alimentos y eso sugiere carbohidratos sin delatarse |
+| `iob.ts` | insulina activa: exponencial de LoopKit/OpenAPS. Se descuenta **solo de la corrección**, nunca de la comida; sin insulina configurada devuelve `undefined`, no cero. Ver `docs/adr/0005` |
+| `backup.ts` | el archivo `.t1a.json`: JSON canónico, huella de integridad, lectura tolerante y **plan de importación idempotente** — importar dos veces no duplica, y lo que ya está en el teléfono nunca se pisa. Ver `docs/adr/0007` |
+| `insulin-effect-curve.ts` | cuánto se movió la glucosa a 1..8 h de cada dosis, por tramo de **inicio de la inyección**. Descriptivo: no propone ni adopta. No sufre la censura de la dosis siguiente que sí afecta a `insulin-duration` |
+| `insulin-duration.ts` | cuánto dura y cuándo pega su insulina, por tramo del día, sobre **toda** dosis rápida: ventana recortada en la siguiente, carbohidratos como covariable. Comparar y adoptar son cifras distintas. Ver `reference/insulin-duration-method.md` |
+| `coverage.ts` | cuánto del rango elegido tiene datos. Separa "faltan días" (descriptivo) de "no alcanza para la HbA1c estimada" (clínico, 14 días de consenso) |
 | `report.ts`, `units.ts`, `ketones.ts`, `meal.ts`, `mysugr-import.ts` | reporte, conversión, cetonas, comida, importación |
 
 ## `packages/cgm`
@@ -87,32 +95,56 @@ modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
 - **Navegación**: no hay librería. Una pantalla es un `Modal` vía `ModalShell`;
   sub-páginas son pestañas (`SummaryModal.tsx`). `BottomNav.tsx` +
   `useSwipeNavigation.ts` + `swipeOrder.ts`.
-- **Modal Maestro**: `UnifiedEntryModal.tsx` es el formulario único de
-  creación (`projectbrief.md`). `EntrySection.tsx` pliega sus secciones y
-  `masterModal.ts` tiene sus dos reglas, puras y con test.
-  `CatalogQuickAdd.tsx` es el agregado rápido desde el catálogo, y lo montan
-  **los dos** caminos de comida: si una facultad vive en uno solo, es una
-  asimetría. `MealModal` y
-  `MealEditModal` siguen siendo modales hospedados: son las herramientas de
-  catálogo e IA, pendientes de absorber.
-- **Formularios de comida**: `UnifiedEntryModal`, `MealModal`, `MealEditModal`,
-  `TimelineDetailModal`. Son cuatro flujos distintos a propósito, pero **lo que
-  comparten se comparte**: `MacroFields.tsx` (el trío proteína/grasa/fibra y el
-  campo numérico de la app) y los `parseBlankAs*` de `format.ts`. Un campo
-  nuevo va ahí primero, no suelto en un modal.
-- **Gráficos**: `GlucoseChart.tsx`, `SummaryCharts.tsx` (`react-native-svg`);
-  `reportExport.ts` dibuja SVG inline para el PDF.
-- `notifications.ts` — un canal de Android por tipo de alarma. Android congela
-  sonido y vibración al crear el canal.
-- `timelineVitals.ts` — las cetonas y demás vitales **sueltos** del timeline.
-  Puro y con test: un `WHERE` de más los escondió una vez, y son el dato de
-  triage de cetoacidosis.
-- `mealFields.ts` — qué campos **son** una comida. Puro y con test porque
-  decide si la fila se escribe y si se conserva: un `false` de más borra
-  historial. Si agregas un campo de comida a `UnifiedEntryInput`, va acá.
-- `theme.ts` — todos los tokens. `branding.ts` — el logo, en una variable.
-- `sensorConnection.ts` — cada usuaria conecta su propia cuenta LibreLinkUp.
+- **Modal Maestro**: `UnifiedEntryModal.tsx` crea **y** edita (`mode` dice cuál).
+  Sus reglas puras están en `masterModal.ts`: dónde escribe cada tipo (`masterTargetOf`),
+  qué carga (`masterSeedFrom`), qué se abre (`masterSectionsFor`, **por contenido**).
+  `TimelineDetailModal.tsx` solo lee.
+- **Formularios de comida**: el maestro, `MealModal` (rápido) y `MealEditModal` (con
+  IA). **Lo que comparten se comparte** —`MacroFields.tsx`, `MealCart.tsx`,
+  `MealAiFields.tsx`—: un campo nuevo va ahí, no en un modal.
+- **Accesos rápidos**: `MealModal`, `CorrectionModal` y `QuickNumericModal.tsx`
+  (uno solo, para Basal y Cetonas). Breves a propósito, con salida al maestro.
+- `FoodCard.tsx` — la tarjeta de un alimento, **la misma** en catálogo y carrito;
+  solo cambia el control de la derecha (lápiz o X) y tocar el contenedor no edita.
+  Calorías en chip neutro: no son un macro. En el catálogo los chips son **por
+  porción** y `macrosCaption` dice el denominador: otra base, otros cinco números.
+- `RecipeFixModal.tsx` — la salida al "no se puede borrar", **todo o nada**.
+  `RecipeDetail.tsx` — el detalle **en lugar de** la lista; "Usar en una comida" la
+  expande al carrito, una línea por componente.
+- **Agua** (2026-09-03): `WaterEventSchema` + tabla `water_events`; meta en
+  `nutrition-targets.ts`; se registra desde el maestro, Comida y su acceso rápido;
+  la IA la propone en `analysis.waterMl` y **ella confirma**. Un jugo es comida.
+- `InsulinBreakdown.tsx` — de dónde sale la dosis, en los tres modales que calculan: con IOB descontada el total ya no se rehace con lo que se ve. Declara el activo que **no** se usó (ADR 0006).
+- `knownFoods.ts` — qué nombres del catálogo viajan con un análisis (solo nombres,
+  máx. 300) para que la IA reuse el exacto y no nazca un duplicado.
+- `MealAiFields.tsx` — los **dos** cuadros de texto de la IA, en los tres
+  modales: pista para la foto y corrección sobre lo propuesto (**no reenvía la
+  foto**). Adoptar una propuesta invalida la dosis calculada.
+- **Gráficos**: `GlucoseChart.tsx`, `SummaryCharts.tsx` (incluye `InsulinEffectCurve`, pequeños múltiplos con escala compartida); `reportExport.ts` dibuja SVG inline para el PDF.
+- `notifications.ts` — un canal por alarma; Android congela sonido y vibración al crearlo. `timelineVitals.ts` — cetonas y vitales **sueltos**; un `WHERE` de más los escondió. Agua: mismo patrón, tabla propia.
+- `mealFields.ts` — qué campos **son** una comida; un `false` de más borra historial.
+  `promotesLooseCarbToMeal` decide cuándo un carbohidrato suelto pasa a ser un
+  plato — o sea cuándo nace un episodio y suenan alarmas.
+- `mealNote.ts` — la nota de una comida. `note` es `max(300)`: pasarse hace que Zod rechace la comida entera.
+- `mealCarbMirror.ts` — qué carbohidrato **es** una comida visible; de menos se cuenta dos veces.
+- `entryTime.ts` — días, meses y la hora de un registro histórico (y la aritmética
+  de `StripCalendar.tsx`). "Cuándo pasó" agrupa episodios y recorta ventanas.
+- `dbWriteQueue.ts` — la **única** cola FIFO por la que pasa toda transacción de
+  `db.ts`. Puro y con test. `expo-sqlite` abre el `BEGIN` dentro del `try`: dos
+  solapadas no fallan limpio — la segunda hace un `ROLLBACK` ajeno y la primera
+  escribe suelta. La tarea de fondo abre la suya (`useNewConnection`).
+- `catalog-proposal.ts` (dominio) — qué propone la IA guardar al catálogo y **qué
+  se rechaza con su razón**. Escribir directo daba dos fallas opuestas: alimentos
+  descartados en silencio y porción siempre en 100 g. `confirmProposal` marca lo
+  confirmado `'user'`, que es lo que protege `blendCatalogEntry`.
+- `entryGroupClaim.ts` — promoción + edición en una sola transacción: relectura del
+  grupo ganador, alineación del espejo y rollback conjunto. Puro, con tests de fallo,
+  idempotencia y carrera; el adaptador SQLite lo pone `db.ts`.
+- En `db.ts`: `promoteEventToEntryGroup` (suelto → grupo, idempotente y sin perder
+  identidad), `moveEntryGroupRows` (mover la hora sin tocar `ingestedAt`) y
+  `applyVitalsPatchRows` (parche: corregir una cetona no borra el peso).
+
+- `theme.ts` — tokens. `branding.ts` — el logo. `sensorConnection.ts` — su cuenta LibreLinkUp.
 
 ## `docs/adr`
-
 Append-only. `README.md` es el índice; nunca se renumera ni se borra un ADR.
