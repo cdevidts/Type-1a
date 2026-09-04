@@ -619,3 +619,131 @@ export const SharedCatalogFoodSchema = z.object({
   servingLabel: z.string().optional(),
 });
 export type SharedCatalogFood = z.infer<typeof SharedCatalogFoodSchema>;
+
+// ---------------------------------------------------------------------------
+// Archivo de respaldo `.t1a.json` — ADR 0007
+// ---------------------------------------------------------------------------
+
+/**
+ * El respaldo es **el reemplazo de la sincronización**, no un extra.
+ *
+ * ADR 0007 decidió que ningún dato de salud sale del teléfono hacia una base
+ * nuestra. Lo que la sincronización iba a dar —cambiar de teléfono sin perder
+ * años de registros— lo da este archivo, y por eso tiene que volver a entrar
+ * **completo, sin pérdida y sin duplicar**. Un PDF o un Excel bonito no
+ * garantizan ninguna de las tres cosas; este formato existe para eso.
+ *
+ * Es input externo: se valida entero con Zod al importar, como manda
+ * `AGENTS.md`. Un archivo que no pasa este esquema no se importa a medias.
+ */
+export const BACKUP_FORMAT = 'type1a.backup' as const;
+
+/**
+ * Sube **solo** cuando un archivo viejo deje de poder leerse tal cual.
+ * Agregar una sección nueva con `.default([])` no rompe a un archivo viejo:
+ * la sección llega vacía y la versión se queda donde está.
+ */
+export const BACKUP_FORMAT_VERSION = 1 as const;
+
+/** Una receta, tal como se respalda. Espeja `Recipe` de `packages/domain`. */
+export const BackupRecipeSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(120),
+  key: z.string().min(1),
+  items: z.array(z.object({
+    foodKey: z.string().min(1),
+    grams: z.number().positive().finite(),
+  })),
+  imageUri: z.string().min(1).optional(),
+  createdAt: IsoTimestampSchema,
+  lastSeenAt: IsoTimestampSchema,
+  timesSeen: z.number().int().nonnegative(),
+});
+export type BackupRecipe = z.infer<typeof BackupRecipeSchema>;
+
+/**
+ * Un alimento del catálogo **local**. No confundir con
+ * `SharedCatalogFoodSchema`: aquel viaja al backend y es anónimo por
+ * construcción; este se queda en el archivo de la usuaria y sí lleva sus
+ * ediciones y su foto.
+ */
+export const BackupCatalogFoodSchema = z.object({
+  key: z.string().min(1),
+  name: z.string().min(1).max(120),
+  carbsPer100g: z.number().nonnegative().finite(),
+  proteinPer100g: z.number().nonnegative().finite(),
+  fatPer100g: z.number().nonnegative().finite(),
+  fiberPer100g: z.number().nonnegative().finite(),
+  kcalPer100g: z.number().nonnegative().finite(),
+  timesSeen: z.number().int().nonnegative(),
+  lastSeenAt: IsoTimestampSchema,
+  servingGrams: z.number().positive().finite().optional(),
+  servingLabel: z.string().max(60).optional(),
+  servingSource: z.enum(['user', 'ai']).optional(),
+  imageUri: z.string().min(1).optional(),
+  listed: z.boolean().optional(),
+});
+export type BackupCatalogFood = z.infer<typeof BackupCatalogFoodSchema>;
+
+/** Un episodio post-comida ya medido. Espeja `StoredMealEpisode`. */
+export const BackupMealEpisodeSchema = z.object({
+  id: z.string().min(1),
+  mealId: z.string().min(1),
+  mealTimestamp: IsoTimestampSchema,
+  status: z.enum(['collecting', 'complete', 'incomplete']),
+  insulinContextConfirmed: z.boolean(),
+  rapidInsulinEventId: z.string().min(1).optional(),
+  metrics: MealEpisodeMetricsSchema.optional(),
+  insight: GlucoseInsightSchema.optional(),
+});
+export type BackupMealEpisode = z.infer<typeof BackupMealEpisodeSchema>;
+
+/**
+ * Los datos. Cada sección trae `.default(...)`, así que un archivo al que le
+ * falta una sección entera se importa igual — con esa sección vacía — en vez
+ * de fallar entero. Es la diferencia entre un formato que sobrevive a sus
+ * propias versiones y uno que no.
+ */
+export const BackupDataSchema = z.object({
+  therapyProfile: TherapyProfileSchema.nullable().default(null),
+  nutritionProfile: NutritionProfileSchema.nullable().default(null),
+  /** Ajustes de la app, tal cual están en `app_settings`. */
+  settings: z.record(z.string(), z.string()).default({}),
+  glucose: z.array(CGMReadingSchema).default([]),
+  insulin: z.array(InsulinEventSchema).default([]),
+  carbs: z.array(CarbEventSchema).default([]),
+  meals: z.array(MealEventSchema).default([]),
+  activity: z.array(ActivityEventSchema).default([]),
+  water: z.array(WaterEventSchema).default([]),
+  notes: z.array(NoteEventSchema).default([]),
+  vitals: z.array(VitalsEventSchema).default([]),
+  hba1c: z.array(HbA1cLabResultSchema).default([]),
+  recipes: z.array(BackupRecipeSchema).default([]),
+  foodCatalog: z.array(BackupCatalogFoodSchema).default([]),
+  mealEpisodes: z.array(BackupMealEpisodeSchema).default([]),
+});
+export type BackupData = z.infer<typeof BackupDataSchema>;
+
+export const BackupFileSchema = z.object({
+  format: z.literal(BACKUP_FORMAT),
+  formatVersion: z.number().int().positive(),
+  exportedAt: IsoTimestampSchema,
+  /** Versión de la app que exportó. Informativa: no cambia cómo se lee. */
+  appVersion: z.string().max(40).optional(),
+  /**
+   * Zona horaria del teléfono al exportar. Las marcas de tiempo llevan su
+   * offset, así que esto no se usa para convertir nada — sirve para que un
+   * reporte hecho desde el archivo pueda agrupar por día como lo hacía el
+   * teléfono original.
+   */
+  timeZone: z.string().max(60).optional(),
+  /**
+   * Huella de integridad del bloque `data`. **Detecta corrupción, no
+   * manipulación**: es una función pura sin secreto, así que cualquiera puede
+   * recalcularla. Sirve para lo que tiene que servir — un archivo truncado por
+   * un traspaso a medias se rechaza en vez de importarse incompleto.
+   */
+  checksum: z.string().min(1),
+  data: BackupDataSchema,
+});
+export type BackupFile = z.infer<typeof BackupFileSchema>;
