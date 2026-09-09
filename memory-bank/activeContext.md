@@ -1,6 +1,6 @@
 # Active Context
 
-_Última actualización: 2026-09-04 (se descarta sincronizar; el respaldo `.t1a.json`)._
+_Última actualización: 2026-09-09 (plan del agente; el gráfico de velocidad, a fase)._
 
 ## Ni sincronización ni datos de salud en un servidor (2026-09-04)
 
@@ -9,21 +9,19 @@ descartó al día siguiente. La **Ley 21.719** entra en plena vigencia el 1 de
 diciembre de 2026: guardar glucosa, insulina y comidas de terceros convierte esto
 en responsable de datos sensibles —consentimiento expreso, brecha en 72 h,
 derechos ARCOP, multas de hasta 20.000 UTM— desde la primera usuaria y para
-siempre. Un consentimiento firmado es la **base legal**, no el cumplimiento: los
-derechos ARCOP son pantallas, no un checkbox.
+siempre. Un consentimiento firmado es la **base legal**, no el cumplimiento.
 
 `docs/adr/0007` fija tres reglas: **ningún dato de salud sale del teléfono**
 (reafirma ADR 0001 en vez de revocarlo), **la cuenta es solo para cobrar** y la
 app sigue usable sin ella, y **ADR 0003 no cambia** — el catálogo compartido ya
-es anónimo por construcción y sigue siendo la única excepción de estado.
+es anónimo por construcción. ⚠️ **WhatsApp reabriría esta decisión**: Meta vería
+todo y nuestro backend recibiría el webhook. No es una interfaz más.
 
-La portabilidad la resuelve un archivo que ella controla:
-**`.t1a.json`** (`packages/domain/src/backup.ts`), con tres promesas probadas —
-completo, sin pérdida y **sin duplicar al importar dos veces**. Lo que ya existe
-en el teléfono nunca se pisa, ni el perfil de terapia. La huella se verifica
-contra el bloque **crudo**, no contra lo que Zod normalizó: comparar después
-haría fallar justo a los archivos viejos que las secciones con `.default()`
-existen para admitir. **Falta cablearlo** a SQLite y a las pantallas.
+La portabilidad la resuelve **`.t1a.json`** (`packages/domain/src/backup.ts`),
+con tres promesas probadas — completo, sin pérdida y **sin duplicar al importar
+dos veces**. Lo que ya existe en el teléfono nunca se pisa, ni el perfil de
+terapia. La huella se verifica contra el bloque **crudo**, no contra lo que Zod
+normalizó. **Falta cablearlo** a SQLite y a las pantallas.
 
 ## Insulina activa (IOB), que era el riesgo mayor (2026-09-02)
 
@@ -34,21 +32,20 @@ producían **dos correcciones completas** por la misma glucosa. Lo encontró ell
 Cinco condiciones, en el código: modelo publicado y citado (exponencial de
 LoopKit/OpenAPS, `iob.ts`), parámetros que ella configuró, resta **solo de la
 mitad de corrección**, desglose entero en pantalla, y sin insulina elegida **no
-hay estimación**: `undefined`, no cero. Cada dosis guarda de cuánto se compuso
-(`mealUnits`/`correctionUnits`/`iobUnits`). La duración por tramo se propone en
-Resumen → Insulina; **adoptar es de ella**.
+hay estimación**: `undefined`, no cero. Cada dosis guarda de cuánto se compuso.
+La duración por tramo se propone en Resumen → Insulina; **adoptar es de ella**.
 
 Tres cosas salieron de revisar a mano (el subagente se cortó por gasto):
 
 - **La ventana de dosis no cubría el modelo**: 6 h fijas contra una regular de
   8 h. El activo salía de menos, y de menos **sube** la dosis propuesta.
 - **Seis pantallas prometían que la app no calcula insulina activa**, una impresa
-  en el reporte clínico. Ninguna prueba lo detectó: una promesa vieja no rompe
-  nada, solo miente. `safetyCopy.test.ts` es el test que faltaba.
+  en el reporte clínico. Una promesa vieja no rompe nada, solo miente;
+  `safetyCopy.test.ts` es el test que faltaba.
 - **La pestaña salió vacía igual**: el filtro pedía una ventana que con varias
   dosis diarias no existe despierto. Ahora cuenta toda dosis rápida, recorta en la
-  siguiente, mide desde el máximo y usa los carbohidratos como covariable.
-  **Comparar y adoptar son cifras distintas** (`reference/insulin-duration-method.md`).
+  siguiente y usa los carbohidratos como covariable. **Comparar y adoptar son
+  cifras distintas** (`reference/insulin-duration-method.md`).
 
 ## El IOB se comía la comida, y el agua entró a Nutrición (2026-09-03)
 
@@ -63,16 +60,15 @@ insulina de comida —práctica estándar de las bombas, y sin modelar COB, que 
 inferir absorción, lo seguro es contarla entera.
 
 **La curva de efecto.** Ella dudó del resumen: "me inyecto a las 6 y recién me baja
-a las 10-11, pero dice que en la tarde me dura más". El tramo nunca estuvo mal
-(siempre fue por hora de inyección), pero la **duración observada sufre censura**:
-su ventana se corta en la dosis siguiente, y de noche no llega ninguna.
-`insulin-effect-curve.ts` no tiene ese sesgo — mide el mismo instante en todos los
-episodios (1..8 h) y cada punto lleva su `n`.
+a las 10-11, pero dice que en la tarde me dura más". El tramo nunca estuvo mal,
+pero la **duración observada sufre censura**: su ventana se corta en la dosis
+siguiente, y de noche no llega ninguna. La curva mide el mismo instante en todos
+los episodios — aunque tiene sus propios defectos: **D1–D4 en `progress.md`**.
 
 **Agua.** Meta diaria (IOM, override de ella), barra en Nutrición, sección en el
 maestro, campo en Comida, acceso rápido, ítem de timeline, y la IA la propone desde
 foto o texto. **Solo agua**: un jugo es comida, con su dosis — el prompt enumera
-las bebidas que no cuentan en vez de confiar en que se entienda.
+las bebidas que no cuentan.
 
 ## Lo que cambió el foco
 
@@ -86,33 +82,29 @@ que nació un registro no limita lo que se le suma después.
 
 - **La edición retroactiva no tiene límite de tipo.** `promoteEventToEntryGroup`
   conserva id, hora, `created_at`, `source` y procedencia, en **una** transacción.
-- **Comida y carbohidratos son un solo hecho visible**; uno huérfano sí se muestra.
+  Comida y carbohidratos son un solo hecho; uno huérfano sí se muestra.
 - **`ingestedAt` y la hora de una lectura externa no se mueven nunca.** Un blanco
-  no es un cero: vitales, foto y análisis son parches. El nombre de la insulina
-  es configuración, no un campo por registro.
+  no es un cero. El nombre de la insulina es configuración, no un campo por registro.
 
 ## Las transacciones SQLite, cerradas (2026-08-28)
 
-La tarea de fondo recibía la **misma conexión nativa** que la pantalla y le corría
-un `BEGIN` encima; `expo-sqlite` lo pone dentro del `try`, así que la segunda hacía
-un `ROLLBACK` ajeno y la primera escribía suelta. Hoy el fondo abre con
-`useNewConnection` y **toda** transacción pasa por una cola FIFO.
+El fondo recibía la **misma conexión nativa** que la pantalla y le corría un
+`BEGIN` encima; el `ROLLBACK` de una cerraba la transacción de la otra. Hoy abre
+con `useNewConnection` y **toda** transacción pasa por una cola FIFO.
 
 ## Catálogo, porción, fibra y la hora del resumen (2026-09-01)
 
-**Cuánto pesa una porción** faltaba: sin eso una Monster Zero no llegaba al
-catálogo y el resto quedaba en 100 g. La IA propone `servingGrams`,
-`CatalogServingModal` lo confirma —y confirmarlo lo vuelve `'user'`—, y lo
-rechazado se muestra con su razón. Los macros **se muestran por porción**, se
-guardan por 100 g, y la leyenda dice el denominador. **La fibra tiene meta**: 14 g
-por cada 1000 kcal (IOM/ADA), piso y no techo, y **no se resta a los carbos**.
+**Cuánto pesa una porción** faltaba: sin eso el catálogo caía siempre a 100 g. La
+IA propone `servingGrams`, `CatalogServingModal` lo confirma —y confirmarlo lo
+vuelve `'user'`—, y lo rechazado se muestra con su razón. Los macros **se muestran
+por porción**, se guardan por 100 g, y la leyenda dice el denominador. **La fibra
+tiene meta**: 14 g por cada 1000 kcal (IOM/ADA), piso y no techo.
 
 **El resumen post-comida citaba la hora en UTC** (17:30 salía "21:30"). Cada marca
 lleva ahora desfase local explícito (`localizeEpisodeMetrics`, **por marca**,
 porque el horario de verano existe) y SQLite sigue guardando UTC. Lo que crece con
 eso es lo que el modelo **puede decir**: una hora local significa algo sobre su
-vida, así que el mismo cambio le prohíbe juzgar o aconsejar la hora de comer, y
-`ai-safety.ts` lo respalda en estructura.
+vida, así que el mismo cambio le prohíbe juzgar o aconsejar la hora de comer.
 
 **Y dos bugs del botón rápido**: la dosis se escribía sin `entryGroupId` —el
 timeline agrupa solo por eso— y si fallaba, el aviso de éxito la pisaba.
@@ -134,17 +126,25 @@ timeline agrupa solo por eso— y si fallaba, el aviso de éxito la pisaba.
 
 ## Backlog de producto priorizado
 
-1. **Los tres formatos de exportación.** PDF y Excel para que los lea una
-   persona —legibilidad, **iconografía**, síntesis clínica que describe y
-   **nunca** evalúa una dosis (`contracts/safety-acceptance.md`), marcas que no
-   se distingan solo por color—; y `.t1a.json` para que lo lea la app, ya
-   especificado y probado, **falta cablearlo a SQLite y a las pantallas**.
-2. **Hallazgos abiertos**: ver `progress.md`. El del `source` de un carbohidrato
+1. **El agente de IA** (plan del 2026-09-09). Turno único con **salida
+   estructurada**, no tool calling: RouteLLM devuelve las llamadas a herramienta
+   como texto plano, y una escritura que degrada a prosa es una entrada que nunca
+   se guardó. El borrador es **del mismo tipo que el payload del Modal Maestro**,
+   así que no puede ser más pobre que él. Micrófono y foto en el chat; se dicta,
+   se transcribe, y **el texto se ve y se corrige antes de que exista borrador**.
+   Registro completo de una vez, nunca una pregunta por modal.
+2. **Los tres formatos de exportación.** PDF y Excel para que los lea una
+   persona —**iconografía**, síntesis que describe y **nunca** evalúa una dosis
+   (`contracts/safety-acceptance.md`)—; y `.t1a.json`, **falta cablearlo**.
+3. **Gráfico de velocidad en Resumen → Insulina** (decisión de ella, 2026-09-09).
+   Se **agrega, no reemplaza**: si los otros dos calculan bien, quitarlos saca una
+   variable. mg/dL por hora en pasos de 30 min hasta 4 h — dice cuándo empieza a
+   bajar, cuándo pega más fuerte y cuándo se acaba, **sin línea base**, que es lo
+   que lo vuelve inmune a D2. Antes hay que cerrar D1–D4 de `progress.md`.
+4. **Hallazgos abiertos**: ver `progress.md`. El `source` de un carbohidrato
    importado necesita decisión de producto.
-3. **Chat de IA**: no hay endpoint ni tool calling; falta confirmar RouteLLM.
 
 ## Fuera de foco pero pendiente
 
 - **Fase 22** — swipe animado, JS puro. **Fase 20** — widget, necesita build.
-- Pendiente de ella: qué tan agresiva es la exclusión de episodios confundidos en
-  Patrones. El criterio estricto se cambia en una línea.
+- Pendiente de ella: qué tan agresiva es la exclusión de episodios confundidos.

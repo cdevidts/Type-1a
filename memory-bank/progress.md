@@ -1,29 +1,26 @@
 # Progress
 
-_Última actualización: 2026-09-04._
+_Última actualización: 2026-09-09._
 
 ## Estado de validación
 
 | | |
 |---|---|
-| `pnpm verify` | Verde. El wrapper local de Windows conserva su fallo de rutas; CI Linux es la verificación integral |
+| `pnpm verify` | Verde (`verify:contracts`, lint, typecheck, test, `verify:bundle`). El wrapper de Windows conserva su fallo de rutas; CI Linux es la verificación integral |
 | Tests | **946** — domain 604, mobile 267, ai 34, schemas 21, cgm 10, api 10 |
 | Bundle de Metro | **1.370** medidos hoy; el build `7122edf9` salió con 1.369 |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
-⚠️ El +1 es `backup`: entra por el índice de `domain` aunque no tenga pantalla. `pnpm verify` corre: `verify:contracts`, `lint`, `typecheck`, `test`,
-`verify:bundle` (Metro real).
+⚠️ El +1 es `backup`, que entra por el índice de `domain` aunque no tenga pantalla.
 
 ## Entregado y en el dispositivo
 
-- 2026-08-26: notificaciones por tipo, el episodio con su ventana, catálogo de
-  insulinas, Patrones e iconos de Lucide. **2026-08-31** (`a706510`): Modal
-  Maestro, calendario, carrito, fibra y las transacciones SQLite.
-- 2026-09-01/02 (`6f1c2cd`→`4a660b8`, builds `9bdc3d95` y `03fb5c6d`): porción
-  confirmada, nota del botón rápido, calorías, fotos desde el editor, recetas,
-  campos de IA, cobertura de días, macros por porción, meta de fibra y hora local.
-- 2026-09-02 (`e85c760`, build `e93ce4a2`): recetas de verdad — "solo receta",
-  detalle, fusión a mano, reuso en el carrito. Huella verificada en el APK.
+- 2026-08-26 → 08-31 (`a706510`): notificaciones por tipo, episodio con ventana,
+  catálogo de insulinas, Patrones, Lucide, Modal Maestro, calendario, carrito,
+  fibra y las transacciones SQLite.
+- 2026-09-01/02 (`6f1c2cd`→`e85c760`, builds `9bdc3d95`, `03fb5c6d`, `e93ce4a2`):
+  porción confirmada, calorías, fotos desde el editor, recetas de verdad, campos
+  de IA, cobertura de días, macros por porción, meta de fibra y hora local.
 - 2026-09-04 (build `7122edf9`): el tope del IOB, la curva de efecto por tramo,
   el agua entera en Nutrición y las 5 correcciones de la auditoría. Huella
   verificada en el APK (`3D:42:7A:…:62:33`, la misma de producción).
@@ -34,6 +31,12 @@ _Última actualización: 2026-09-04._
 
 ## Deuda conocida
 
+### 🔴 D1–D4: la curva de efecto mide mal, y D2 alcanza al IOB (2026-09-09)
+Cuatro defectos verificados leyendo el código: "sin comida" mal contado, base de
+glucómetro contra puntos de sensor, ocho medianas sueltas dibujadas como una
+trayectoria, y formas opuestas promediadas (`reference/insulin-duration-method.md`).
+⚠️ **D2 sesga el número que "adoptar" mete al IOB: no adoptar hasta cerrarlo.**
+
 ### 🔴 El respaldo `.t1a.json` existe pero no está cableado (2026-09-04)
 `backup.ts` está cerrado y probado (22 tests): formato, huella, lectura y plan de
 importación idempotente. **Falta el resto**: leer las quince tablas para armarlo,
@@ -43,13 +46,14 @@ resuelto. La deuda más urgente que hay.
 
 ### 🟡 Supabase conectado y sin uso previsto (2026-09-04)
 `kvhlttcvjamgybwlamcu` (us-east-1, Postgres 17), sin tablas. **ADR 0007 descartó
-sincronizar datos de salud**; queda para las cuentas de suscripción, que no
-guardan datos clínicos. Si no se usa pronto, conviene pausarlo.
+sincronizar datos de salud**; queda para las cuentas de suscripción. Conviene
+pausarlo si no se usa pronto.
 
 ### 🔴 Bomba: imports `.js` en `@type1a/ai`
-`abacus.ts:23` e `index.ts:1-2` usan extensión `.js` en imports relativos — **la
-trampa de Metro que rompió dos builds**. No explota solo porque `apps/mobile` no
-depende de `@type1a/ai`; el día que dependa —el chat— rompe el bundle.
+`abacus.ts:23` e `index.ts:1-2` usan `.js` en imports relativos — **la trampa de
+Metro que rompió dos builds**. No explota porque `apps/mobile` no depende de
+`@type1a/ai`, y con el agente detrás del backend seguirá sin depender; se arregla
+igual antes de tocar ese paquete.
 
 ### 🔴 Dos hallazgos vivos de la revisión repuntada (2026-08-26)
 Los dos en `macro-glucose.ts`: la basal no entra como covariable (sin rama para
@@ -71,10 +75,9 @@ declarados a propósito:
    de producto: relabelar pierde el origen, dejarlo miente. Va a Verónica.
 
 ### 🟡 Menores
-
 - **Ni la UI ni `db.ts` tienen test de ejecución**: React no se monta y `db.ts`
   importa nativos de Expo; el cableado se comprueba leyendo el diff. Pesa más
-  ahora: importar un respaldo escribe quince tablas sin red de pruebas.
+  ahora: importar un respaldo escribe quince tablas sin red.
 - Una escritura **suelta** (`runAsync` fuera de transacción) puede caer dentro
   de la de otro y volver atrás con ella. Daño bajo: ajustes, no historial.
 - `README.md` sigue en pie (63 líneas). Se **reescribe a ~30**, no se elimina.
@@ -106,8 +109,6 @@ Cada uno costó un build o un número falso; detalle en `git log`.
 | `XLSX.write(…, { type: 'array' })` devuelve un **`ArrayBuffer`** y un `as Uint8Array` lo disfrazó: el Excel nunca se escribía, y los tests no lo vieron porque devolvían el resultado a `XLSX.read`, que acepta ambos | un `as` sobre el retorno de una librería es una afirmación sin verificar, y un round-trip por esa misma librería no valida el contrato con quien consume el dato |
 | Un modal por combinación (basal, cetonas, entrada) trajo tres copias del mismo formulario | la variante es **qué sección arranca abierta**, no qué componente se monta |
 | `kind === 'meal'` dejaba a una comida empaquetada fuera de su propio editor con IA | las herramientas aparecen por **contenido**, no por tipo del ítem |
-| El catálogo vivía dentro de `MealModal`, así que "Nueva entrada" no podía reusar un alimento guardado | una facultad que solo tiene un camino es una asimetría, no una simplificación: se extrae y la montan los dos |
-| Una comida sin grupo se veía dos veces: su tarjeta y la de su fila espejo de carbohidratos | el filtro de duplicados se empareja con el hecho, no con el `entry_group_id`; y un espejo huérfano se muestra, porque es la única copia que queda |
 | Un formulario de edición por tipo codificaba "una insulina solo edita unidades" | hay **un** payload de edición; lo que decide el tipo es dónde aterriza (`masterTargetOf`), no qué se puede guardar |
 | `updateInsulinEvent` asignaba `insulinName` incondicionalmente y cada guardado del grupo lo borraba | el nombre es configuración, y quién lo resuelve es una función de dominio con test, no el llamador de turno |
 | Editar un carbohidrato suelto lo convertía en comida —con episodio y tres alarmas— solo por guardarlo | los gramos son comida al **crear**; al **editar**, se vuelve comida cuando se agrega algo que solo una comida tiene |
@@ -116,13 +117,12 @@ Cada uno costó un build o un número falso; detalle en `git log`.
 | La advertencia de la calculadora histórica cubría solo el modo edición; registrar en el pasado llegaba a la misma superficie sin ella | una guarda que protege dos caminos se escribe una vez, pura y con test |
 | "Se transcribieron 62 g" mientras el campo de confirmados seguía en 20, y la fórmula leía los 20 | una pantalla que afirma un valor distinto del que usa la fórmula es peor que una que no afirma nada |
 | Los macros del carrito se guardaban `'user'`: la procedencia se comparaba solo contra `analysis` | la resuelve quien sabe qué precargó la estimación —foto, texto **o catálogo**—, no el orquestador |
-| Borrar los gramos de un carbo suelto y darle descripción los resucitaba y terminaba contándolos dos veces | al crear la comida, la fila suelta se **consume** siempre: se adopta como espejo o se borra |
+| Una comida sin grupo se veía dos veces —su tarjeta y su fila espejo—, y borrar los gramos de un carbo suelto para darle descripción los resucitaba contándolos dos veces | el duplicado se empareja con el **hecho**, no con el `entry_group_id`; un espejo huérfano sí se muestra porque es la única copia; y al crear la comida la fila suelta se **consume** siempre |
 | Un spread llevó `macrosSource` y después `estimatedCarbsG` hacia interfaces que no los declaraban, con verify en verde las dos veces | el chequeo de propiedades en exceso **no aplica a un spread**: el campo se declara o se pierde |
 | La tarea de fondo recibía **la misma conexión nativa** que la pantalla (Android cachea por ruta+opciones) y le corría un `BEGIN` encima; el `BEGIN` de Expo va dentro del `try`, así que el `ROLLBACK` de una cerraba la transacción de la otra, que seguía escribiendo suelta | una conexión por dueño (`useNewConnection`) y **una sola** cola FIFO por conexión (`dbWriteQueue.ts`); dos colas contra una conexión anidan igual |
 | Un alimento sin `estimatedGrams` —lo que el prompt pide devolver cuando no puede estimar la porción— se descartaba del catálogo **sin un solo aviso**, y la pantalla decía "guardado" | lo que no se puede guardar se muestra **con su razón**; un filtro silencioso es un dato perdido que nadie va a buscar |
 | El catálogo caía siempre a 100 g porque la IA no podía proponer porción, y el `INSERT` del alta ni siquiera escribía las columnas de porción | la porción la propone la IA y la **confirma** la usuaria: multiplica los cuatro macros, así que un número que nadie miró no entra por esa puerta |
 | La huella del respaldo se verificaba contra los datos **ya normalizados por Zod**, así que un archivo viejo al que le falta una sección —justo lo que los `.default()` existen para admitir— nunca habría podido cuadrar | una huella de integridad protege **los bytes que alguien escribió**, no el objeto que salió de validarlos |
-| El cuadro de texto del botón rápido alimentaba a la IA y se tiraba, así que la comida quedaba sin nota mientras el maestro sí la guardaba | una capacidad que solo tiene un camino es una asimetría: el texto que describe la comida se escribe venga de donde venga |
 | Una foto de arroz con pollo dejaba dos alimentos sueltos y **los dos con la foto del plato entero** | el contenedor que faltaba es la receta: guarda la foto del plato y cada componente queda libre de tener la suya |
 | La cobertura de días solo se mostraba bajo el umbral clínico de 14, así que a 30 y 90 días desaparecía y el promedio se leía como si cubriera el rango entero | "cuánto está cubierto" y "alcanza para la métrica" son dos afirmaciones distintas: la primera va siempre |
 | El catálogo se guarda por 100 g y la tarjeta lo mostraba así: una cucharada de aceite aparecía con 100 g de grasa | cómo se **guarda** un número no es cómo se **lee** |
@@ -130,7 +130,7 @@ Cada uno costó un build o un número falso; detalle en `git log`.
 | Una meta de fibra copiada del molde de las otras habría dicho "te pasaste" | una referencia es un piso o un techo, y el texto tiene que saber cuál |
 | Mandar la hora **local** al modelo no agregó un campo, pero sí volvió citable un dato sobre su vida: con UTC no podía juzgar a qué hora cenaba, con hora de pared sí | el filtro crece cuando crece lo que el modelo **puede decir**, no solo cuando crece el payload |
 | El aviso de éxito corría siempre y pisaba al de "no se pudo registrar la insulina": se cerraba la app creyendo que la dosis había quedado | un `catch` que solo escribe un mensaje no arregla nada si el camino feliz lo reemplaza después; el fallo se lleva a la decisión final, no a un `setState` intermedio |
-| El botón rápido guardaba la comida y su dosis **sin `entryGroupId`**, y el timeline agrupa solo por esa columna | una facultad que el maestro tiene y el acceso rápido no es una asimetría, no una simplificación — tercera vez que muerde |
+| Tres veces la misma: el catálogo vivía dentro de `MealModal` y "Nueva entrada" no podía reusar un alimento; el texto del botón rápido alimentaba a la IA y se tiraba sin guardar la nota; y ese mismo botón escribía comida y dosis **sin `entryGroupId`**, que es lo único por lo que el timeline agrupa | una facultad que el maestro tiene y el acceso rápido no es una **asimetría**, no una simplificación: se extrae a un módulo compartido y la montan los dos |
 | "Solo receta" y "las dos cosas" escribían exactamente lo mismo: la elección existía en la pantalla y en ningún dato | una opción que no cambia ninguna fila es una mentira con botón; si se ofrece, hay una columna que la recuerda |
 | La confirmación decía "se fusiona con ese" y guardaba con su propia clave | el texto de una pantalla se verifica contra lo que **escribe** |
 | `rapidInsulinName` solo se leía: ninguna pantalla lo escribía, así que decía "sin configurar" con la insulina ya elegida y las dosis quedaban sin marca | un campo que nadie escribe es un campo muerto; el que se muestra se deriva del que sí se guarda |
