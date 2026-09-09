@@ -15,15 +15,15 @@ firmado es la **base legal**, no el cumplimiento.
 cuenta es solo para cobrar** y **ADR 0003 no cambia**. ⚠️ **WhatsApp reabriría
 esta decisión**: Meta vería todo y nuestro backend recibiría el webhook.
 
-La portabilidad la resuelve **`.t1a.json`**, ya cableado entero (2026-09-09):
-exportar e importar desde Ajustes, con el menú de importación que ahora hospeda
-MySugr y Type 1A. Tres promesas probadas — completo, sin pérdida y **sin duplicar
-al importar dos veces**. Auditar el propio respaldo encontró dos fugas que ya
-están cerradas y con test: **`legacyBackendSensor`** habría hecho que una
+La portabilidad la resuelve **`.t1a.json`**, ya cableado (2026-09-09): exportar e
+importar desde Ajustes, con el menú que ahora hospeda MySugr y Type 1A. Tres
+promesas probadas — completo, sin pérdida y **sin duplicar**. Auditarlo encontró
+dos fugas, cerradas y con test: **`legacyBackendSensor`** habría hecho que una
 instalación nueva mostrara el sensor de otra persona, y **`therapyConfiguredAt`**
-habría desbloqueado las calculadoras sobre los parámetros de fábrica si entraba
-sin su perfil. `SETTINGS_NEVER_BACKED_UP` filtra al **exportar**, así que el
-archivo nunca llega a contenerlas.
+habría desbloqueado las calculadoras sobre los parámetros de fábrica. `SETTINGS_NEVER_BACKED_UP` filtra al **exportar**. En la misma corrida
+salieron las fotos de la caché: `saveAsync()` sin destino escribe ahí y Android
+la vacía sola, así que una foto podía desaparecer **sin reinstalar nada**;
+`photos.ts` las guarda en `Paths.document` y migra las viejas al abrir.
 
 ## Insulina activa (IOB), que era el riesgo mayor (2026-09-02)
 

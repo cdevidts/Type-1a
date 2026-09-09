@@ -20,6 +20,7 @@ import { knownFoodNamesFrom } from '../knownFoods';
 import { logSaveError } from '../log';
 import { MealAiFields } from './MealAiFields';
 import { colors, radius, spacing } from '../theme';
+import { persistPhoto } from '../photos';
 import { MacroFields } from './MacroFields';
 import { MealCart } from './MealCart';
 import { ModalShell } from './ModalShell';
@@ -231,7 +232,7 @@ export function MealEditModal({
       });
       // La foto solo se adopta si el análisis salió bien: si falla, la comida
       // se queda con la imagen que ya tenía en vez de con una sin análisis.
-      setPendingImageUri(compressed.uri);
+      setPendingImageUri(await persistPhoto(compressed.uri));
       setProposal(next);
       setMessage('Propuesta lista desde la foto. Revísala abajo: no se guarda nada hasta que toques Guardar.');
     } catch (error) {

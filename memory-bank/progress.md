@@ -7,11 +7,11 @@ _Última actualización: 2026-09-09 (respaldo cableado)._
 | | |
 |---|---|
 | `pnpm verify` | Verde (`verify:contracts`, lint, typecheck, test, `verify:bundle`). El wrapper de Windows conserva su fallo de rutas; CI Linux es la verificación integral |
-| Tests | **962** — domain 620, mobile 267, ai 34, schemas 21, cgm 10, api 10 |
-| Bundle de Metro | **1.372** medidos hoy; el build `7122edf9` salió con 1.369 |
+| Tests | **968** — domain 620, mobile 273, ai 34, schemas 21, cgm 10, api 10 |
+| Bundle de Metro | **1.373** medidos hoy; el build `7122edf9` salió con 1.369 |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
-⚠️ Los +3 son `backup`, `backupIO` y `backupOutcome`.
+⚠️ Los +4 son `backup`, `backupIO`, `backupOutcome` y `photos`.
 
 ## Entregado y en el dispositivo
 
@@ -25,7 +25,8 @@ _Última actualización: 2026-09-09 (respaldo cableado)._
   el agua entera en Nutrición y las 5 correcciones de la auditoría. Huella
   verificada (`3D:42:7A:…:62:33`).
 - 2026-09-09 (sin build todavía): el respaldo `.t1a.json` cableado entero —
-  exportar e importar desde Ajustes, con `entry_group_id`, fotos y procedencia.
+  exportar e importar desde Ajustes, con `entry_group_id`, fotos y procedencia—
+  y las fotos fuera de la caché, con migración de las que ya estaban.
 
 **Backend**: `9f5251e` desplegado (v3 y `knownFoodNames` ✓). El 502 de las fotos
 **no era el proxy**: `route-llm` manda las grandes a Gemini, que rechaza
@@ -37,14 +38,6 @@ _Última actualización: 2026-09-09 (respaldo cableado)._
 Cuatro defectos verificados leyendo el código, con detalle en
 `reference/insulin-duration-method.md`. ⚠️ **D2 sesga el número que "adoptar" mete
 al IOB: no adoptar ninguna duración hasta cerrarlo.**
-
-### 🟠 Las fotos viven en la CACHÉ, y Android la vacía (2026-09-09)
-Los cinco sitios que guardan una foto llaman a `saveAsync()` sin destino, así que
-el archivo queda en caché y solo se guarda su ruta. Android puede borrarlo
-**aunque ella no reinstale**. El respaldo ya lo tolera —declara cuántas fotos
-faltaban— pero no lo arregla: falta copiarlas a `Paths.document` al guardarlas,
-en un helper compartido (hoy son cinco copias del mismo bloque), más una
-migración de las que ya están.
 
 ### 🟡 Supabase sin uso previsto (2026-09-04)
 `kvhlttcvjamgybwlamcu`, sin tablas. ADR 0007 descartó sincronizar salud; queda

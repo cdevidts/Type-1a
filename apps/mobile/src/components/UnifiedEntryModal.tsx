@@ -38,6 +38,7 @@ import {
   type MasterSeed,
 } from '../masterModal';
 import type { EntryFocus, MasterEditPayload } from '../types';
+import { persistPhoto } from '../photos';
 import { EntrySection } from './EntrySection';
 import { MacroFields } from './MacroFields';
 import { MealCart } from './MealCart';
@@ -575,7 +576,7 @@ export function UnifiedEntryModal({
       // La foto se adopta **con** su análisis, nunca sin él: una imagen cuyo
       // análisis falló deja el registro con una foto que no describe sus
       // macros.
-      setImageUri(compressed.uri);
+      setImageUri(await persistPhoto(compressed.uri));
       setImageRemoved(false);
       setAnalysis(nextAnalysis);
       // Prellenar los macros con lo que estimó la IA, visibles y editables

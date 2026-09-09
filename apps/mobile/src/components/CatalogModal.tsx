@@ -31,6 +31,7 @@ import { editCatalogFoodWithInstruction, MobileApiError } from '../api';
 import { parseNonNegativeNumber } from '../format';
 import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
+import { persistPhoto } from '../photos';
 import { FoodCard } from './FoodCard';
 import { ModalShell } from './ModalShell';
 import { RecipeDetail, type RecipeDetailActions } from './RecipeDetail';
@@ -211,7 +212,7 @@ function FoodEditor({
       context.resize({ width: 1280, height: null });
       const rendered = await context.renderAsync();
       const compressed = await rendered.saveAsync({ compress: 0.72, format: ImageManipulator.SaveFormat.JPEG });
-      setPickedPhoto(compressed.uri);
+      setPickedPhoto(await persistPhoto(compressed.uri));
       setRemovePhoto(false);
       setMessage('Foto lista. No se guarda hasta que toques Guardar.');
     } catch (error) {

@@ -37,6 +37,7 @@ import { serializeWrite } from './dbWriteQueue';
 import { withClaimedEntryGroup, type EntryGroupClaimStore, type EntryGroupClaimTarget } from './entryGroupClaim';
 import { hasMealContent, MEAL_FIELDS, promotesLooseCarbToMeal } from './mealFields';
 import { standaloneVitalsItems } from './timelineVitals';
+import { migratePhotosToDocuments, type PhotoOwner } from './photos';
 import { decodeRow, decodeTherapyProfileRow, safeJsonParse, tallyParsed, type DecodeTally, type TherapyProfileRead } from './rowDecode';
 import { partitionCarbRows, type CarbRowForTimeline } from './mealCarbMirror';
 import type { PendingInsulinAssociation, PromotableTable, ReminderAlertStyle, StoredMealEpisode, TimelineEntryGroupRaw, TimelineItem } from './types';
@@ -3657,6 +3658,57 @@ export async function getCatalogFoods(
     limit,
   );
   return rows.map(rowToCatalogFood);
+}
+
+/**
+ * Saca las fotos de la caché de Android una vez por instalación.
+ *
+ * `expo-image-manipulator` sin destino escribe en caché, y Android la vacía sin
+ * avisar: hasta este arreglo, la foto de una comida podía desaparecer sin que
+ * nadie reinstalara nada. Corre al abrir la app y se marca como hecha, pero es
+ * **idempotente**: volver a correrla no rompe nada, solo no encuentra trabajo.
+ *
+ * Ninguna fila se borra. Una foto cuyo archivo ya no existe queda como estaba.
+ */
+export async function migrateCachedPhotos(db: SQLiteDatabase): Promise<{ moved: number; missing: number }> {
+  const owners: PhotoOwner[] = [];
+
+  const meals = await db.getAllAsync<{ id: string; payload: string }>('SELECT id, payload FROM meal_events');
+  for (const row of meals) {
+    const parsed = safeJsonParse(row.payload);
+    const uri = (parsed as { imageUri?: unknown } | undefined)?.imageUri;
+    if (typeof uri === 'string' && uri.length > 0) owners.push({ uri, kind: 'meal', id: row.id });
+  }
+  const foods = await db.getAllAsync<{ key: string; image_uri: string | null }>(
+    'SELECT key, image_uri FROM food_catalog WHERE image_uri IS NOT NULL',
+  );
+  for (const row of foods) if (row.image_uri !== null) owners.push({ uri: row.image_uri, kind: 'catalog', id: row.key });
+  const recipes = await db.getAllAsync<{ id: string; image_uri: string | null }>(
+    'SELECT id, image_uri FROM recipes WHERE image_uri IS NOT NULL',
+  );
+  for (const row of recipes) if (row.image_uri !== null) owners.push({ uri: row.image_uri, kind: 'recipe', id: row.id });
+
+  const steps = await migratePhotosToDocuments(owners);
+  const moved = steps.filter((step) => step.moved);
+  if (moved.length > 0) {
+    await serializedTransaction(db, async () => {
+      for (const step of moved) {
+        if (step.owner.kind === 'catalog') {
+          await db.runAsync('UPDATE food_catalog SET image_uri = ? WHERE key = ?', step.uri, step.owner.id);
+        } else if (step.owner.kind === 'recipe') {
+          await db.runAsync('UPDATE recipes SET image_uri = ? WHERE id = ?', step.uri, step.owner.id);
+        } else {
+          const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM meal_events WHERE id = ?', step.owner.id);
+          if (row === null) continue;
+          const parsed = safeJsonParse(row.payload);
+          if (parsed === undefined || parsed === null || typeof parsed !== 'object') continue;
+          const next = { ...(parsed as Record<string, unknown>), imageUri: step.uri };
+          await db.runAsync('UPDATE meal_events SET payload = ? WHERE id = ?', JSON.stringify(next), step.owner.id);
+        }
+      }
+    });
+  }
+  return { moved: moved.length, missing: steps.length - moved.length };
 }
 
 export async function getSetting(db: SQLiteDatabase, key: string): Promise<string | null> {

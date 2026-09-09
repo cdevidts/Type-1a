@@ -26,6 +26,7 @@ import { mealNoteFrom } from '../mealNote';
 import { InsulinBreakdown } from './InsulinBreakdown';
 import { MealAiFields } from './MealAiFields';
 import { colors, radius, spacing } from '../theme';
+import { persistPhoto } from '../photos';
 import { MealCart } from './MealCart';
 import { MacroFields } from './MacroFields';
 import { ModalShell } from './ModalShell';
@@ -312,7 +313,7 @@ export function MealModal({
         compress: 0.72,
         format: ImageManipulator.SaveFormat.JPEG,
       });
-      setImageUri(compressed.uri);
+      setImageUri(await persistPhoto(compressed.uri));
       if (compressed.base64 === undefined) {
         throw new Error('No base64 image');
       }

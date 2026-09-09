@@ -31,6 +31,7 @@ import {
 import { parseNonNegativeNumber } from '../format';
 import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
+import { persistPhoto } from '../photos';
 import { FoodCard, MacroChipRow } from './FoodCard';
 
 const numberText = (value: number): string => String(Number(value.toFixed(1)));
@@ -164,7 +165,7 @@ export function RecipeDetail({
       context.resize({ width: 1280, height: null });
       const rendered = await context.renderAsync();
       const compressed = await rendered.saveAsync({ compress: 0.72, format: ImageManipulator.SaveFormat.JPEG });
-      await actions.onPhoto(recipe.id, compressed.uri);
+      await actions.onPhoto(recipe.id, await persistPhoto(compressed.uri));
     }, 'Foto guardada.');
   }
 
