@@ -255,7 +255,7 @@ export const NoteEventSchema = z.object({
 });
 export type NoteEvent = z.infer<typeof NoteEventSchema>;
 
-export const VitalsEventSchema = z
+const VitalsEventShape = z
   .object({
     id: z.string().min(1),
     timestamp: IsoTimestampSchema,
@@ -265,15 +265,18 @@ export const VitalsEventSchema = z
     ketonesMmolL: z.number().nonnegative().max(20).finite().optional(),
     source: z.enum(['manual', 'imported']),
     createdAt: IsoTimestampSchema,
-  })
-  .refine(
-    (vitals) =>
-      vitals.weightKg !== undefined
-      || vitals.systolicBP !== undefined
-      || vitals.diastolicBP !== undefined
-      || vitals.ketonesMmolL !== undefined,
-    { message: 'A vitals entry needs at least one measurement.' },
-  );
+  });
+
+/** Una anotación de vitales sin ninguna medición no es un dato: es una fila vacía. */
+const vitalsHasAMeasurement = (vitals: z.infer<typeof VitalsEventShape>): boolean =>
+  vitals.weightKg !== undefined
+  || vitals.systolicBP !== undefined
+  || vitals.diastolicBP !== undefined
+  || vitals.ketonesMmolL !== undefined;
+
+export const VitalsEventSchema = VitalsEventShape.refine(vitalsHasAMeasurement, {
+  message: 'A vitals entry needs at least one measurement.',
+});
 export type VitalsEvent = z.infer<typeof VitalsEventSchema>;
 
 /**
@@ -699,6 +702,58 @@ export const BackupMealEpisodeSchema = z.object({
 export type BackupMealEpisode = z.infer<typeof BackupMealEpisodeSchema>;
 
 /**
+ * **`entry_group_id` viaja con cada evento, y es lo que más costaba perder.**
+ *
+ * Siete tablas llevan esa columna, y es lo único que hace que un desayuno
+ * registrado de una vez —comida, carbohidratos, dosis y glucosa— se vea y se
+ * edite como **una** cosa. Sin ella, restaurar convierte ese desayuno en cuatro
+ * filas sueltas, y la Regla 3b prohíbe volver a emparejarlas por hora: fue
+ * exactamente el acoplamiento que causó el bug de insulina↔comida.
+ *
+ * Se agrega acá y no en los esquemas de dominio a propósito: es una columna de
+ * almacenamiento, no algo que un cálculo deba poder leer.
+ */
+const withEntryGroup = {
+  entryGroupId: z.string().min(1).optional(),
+};
+
+export const BackupCGMReadingSchema = CGMReadingSchema.extend(withEntryGroup);
+export const BackupInsulinEventSchema = InsulinEventSchema.extend(withEntryGroup);
+export const BackupCarbEventSchema = CarbEventSchema.extend(withEntryGroup);
+export const BackupMealEventSchema = MealEventSchema.extend(withEntryGroup);
+export const BackupNoteEventSchema = NoteEventSchema.extend(withEntryGroup);
+export const BackupWaterEventSchema = WaterEventSchema.extend(withEntryGroup);
+export const BackupVitalsEventSchema = VitalsEventShape.extend(withEntryGroup)
+  .refine(vitalsHasAMeasurement, { message: 'A vitals entry needs at least one measurement.' });
+
+/**
+ * Una foto, con sus bytes adentro.
+ *
+ * `imageUri` guarda una **ruta absoluta del teléfono**, así que un respaldo que
+ * solo copiara ese texto dejaría cada foto rota en un teléfono nuevo. Van los
+ * bytes, y al importar se reescriben las rutas de comidas, alimentos y recetas
+ * para que apunten a los archivos recién escritos.
+ *
+ * **La regla es que el archivo carga lo que ninguna otra cosa carga.** Las fotos
+ * del catálogo y de las recetas van a migrar al servidor —son de alimentos, no
+ * de nadie—, y el día que eso pase dejan de recolectarse solas, porque esas
+ * filas ya no serán locales. Las de **comidas del timeline** se quedan acá para
+ * siempre: son la foto de lo que ella comió un martes, o sea dato de salud, y
+ * ADR 0007 prohíbe que salgan del teléfono. Si no viajaran en el archivo, no
+ * viajarían en ninguna parte.
+ *
+ * `uri` es la ruta **original**: es la clave con la que se encuentra a quién
+ * pertenece cada foto, no un destino.
+ */
+export const BackupPhotoSchema = z.object({
+  uri: z.string().min(1),
+  /** JPEG en base64, sin el prefijo `data:`. */
+  data: z.string().min(1),
+  mimeType: z.string().max(60).default('image/jpeg'),
+});
+export type BackupPhoto = z.infer<typeof BackupPhotoSchema>;
+
+/**
  * Los datos. Cada sección trae `.default(...)`, así que un archivo al que le
  * falta una sección entera se importa igual — con esa sección vacía — en vez
  * de fallar entero. Es la diferencia entre un formato que sobrevive a sus
@@ -707,20 +762,25 @@ export type BackupMealEpisode = z.infer<typeof BackupMealEpisodeSchema>;
 export const BackupDataSchema = z.object({
   therapyProfile: TherapyProfileSchema.nullable().default(null),
   nutritionProfile: NutritionProfileSchema.nullable().default(null),
-  /** Ajustes de la app, tal cual están en `app_settings`. */
+  /**
+   * Ajustes de la app, tal cual están en `app_settings`: nombre de la insulina,
+   * alarmas de comida, recordatorios, unidad de glucosa. En un teléfono vacío
+   * **se restauran**; sobre un teléfono con datos, no se pisan.
+   */
   settings: z.record(z.string(), z.string()).default({}),
-  glucose: z.array(CGMReadingSchema).default([]),
-  insulin: z.array(InsulinEventSchema).default([]),
-  carbs: z.array(CarbEventSchema).default([]),
-  meals: z.array(MealEventSchema).default([]),
+  glucose: z.array(BackupCGMReadingSchema).default([]),
+  insulin: z.array(BackupInsulinEventSchema).default([]),
+  carbs: z.array(BackupCarbEventSchema).default([]),
+  meals: z.array(BackupMealEventSchema).default([]),
   activity: z.array(ActivityEventSchema).default([]),
-  water: z.array(WaterEventSchema).default([]),
-  notes: z.array(NoteEventSchema).default([]),
-  vitals: z.array(VitalsEventSchema).default([]),
+  water: z.array(BackupWaterEventSchema).default([]),
+  notes: z.array(BackupNoteEventSchema).default([]),
+  vitals: z.array(BackupVitalsEventSchema).default([]),
   hba1c: z.array(HbA1cLabResultSchema).default([]),
   recipes: z.array(BackupRecipeSchema).default([]),
   foodCatalog: z.array(BackupCatalogFoodSchema).default([]),
   mealEpisodes: z.array(BackupMealEpisodeSchema).default([]),
+  photos: z.array(BackupPhotoSchema).default([]),
 });
 export type BackupData = z.infer<typeof BackupDataSchema>;
 

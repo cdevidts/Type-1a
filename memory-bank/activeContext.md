@@ -1,6 +1,6 @@
 # Active Context
 
-_Última actualización: 2026-09-09 (plan del agente; el gráfico de velocidad, a fase)._
+_Última actualización: 2026-09-09 (el respaldo, cableado y con sus dos fugas cerradas)._
 
 ## Ni sincronización ni datos de salud en un servidor (2026-09-04)
 
@@ -8,20 +8,22 @@ El plan de sincronizar las quince tablas a Supabase se escribió, se aprobó y s
 descartó al día siguiente. La **Ley 21.719** entra en plena vigencia el 1 de
 diciembre de 2026: guardar glucosa, insulina y comidas de terceros convierte esto
 en responsable de datos sensibles —consentimiento expreso, brecha en 72 h,
-derechos ARCOP, multas de hasta 20.000 UTM— desde la primera usuaria y para
-siempre. Un consentimiento firmado es la **base legal**, no el cumplimiento.
+derechos ARCOP, multas de 20.000 UTM— desde la primera usuaria. Un consentimiento
+firmado es la **base legal**, no el cumplimiento.
 
-`docs/adr/0007` fija tres reglas: **ningún dato de salud sale del teléfono**
-(reafirma ADR 0001 en vez de revocarlo), **la cuenta es solo para cobrar** y la
-app sigue usable sin ella, y **ADR 0003 no cambia** — el catálogo compartido ya
-es anónimo por construcción. ⚠️ **WhatsApp reabriría esta decisión**: Meta vería
-todo y nuestro backend recibiría el webhook. No es una interfaz más.
+`docs/adr/0007` fija tres reglas: **ningún dato de salud sale del teléfono**, **la
+cuenta es solo para cobrar** y **ADR 0003 no cambia**. ⚠️ **WhatsApp reabriría
+esta decisión**: Meta vería todo y nuestro backend recibiría el webhook.
 
-La portabilidad la resuelve **`.t1a.json`** (`packages/domain/src/backup.ts`),
-con tres promesas probadas — completo, sin pérdida y **sin duplicar al importar
-dos veces**. Lo que ya existe en el teléfono nunca se pisa, ni el perfil de
-terapia. La huella se verifica contra el bloque **crudo**, no contra lo que Zod
-normalizó. **Falta cablearlo** a SQLite y a las pantallas.
+La portabilidad la resuelve **`.t1a.json`**, ya cableado entero (2026-09-09):
+exportar e importar desde Ajustes, con el menú de importación que ahora hospeda
+MySugr y Type 1A. Tres promesas probadas — completo, sin pérdida y **sin duplicar
+al importar dos veces**. Auditar el propio respaldo encontró dos fugas que ya
+están cerradas y con test: **`legacyBackendSensor`** habría hecho que una
+instalación nueva mostrara el sensor de otra persona, y **`therapyConfiguredAt`**
+habría desbloqueado las calculadoras sobre los parámetros de fábrica si entraba
+sin su perfil. `SETTINGS_NEVER_BACKED_UP` filtra al **exportar**, así que el
+archivo nunca llega a contenerlas.
 
 ## Insulina activa (IOB), que era el riesgo mayor (2026-09-02)
 
@@ -67,8 +69,7 @@ los episodios — aunque tiene sus propios defectos: **D1–D4 en `progress.md`*
 
 **Agua.** Meta diaria (IOM, override de ella), barra en Nutrición, sección en el
 maestro, campo en Comida, acceso rápido, ítem de timeline, y la IA la propone desde
-foto o texto. **Solo agua**: un jugo es comida, con su dosis — el prompt enumera
-las bebidas que no cuentan.
+foto o texto. **Solo agua**: un jugo es comida, con su dosis.
 
 ## Lo que cambió el foco
 
@@ -82,9 +83,8 @@ que nació un registro no limita lo que se le suma después.
 
 - **La edición retroactiva no tiene límite de tipo.** `promoteEventToEntryGroup`
   conserva id, hora, `created_at`, `source` y procedencia, en **una** transacción.
-  Comida y carbohidratos son un solo hecho; uno huérfano sí se muestra.
 - **`ingestedAt` y la hora de una lectura externa no se mueven nunca.** Un blanco
-  no es un cero. El nombre de la insulina es configuración, no un campo por registro.
+  no es un cero. El nombre de la insulina es configuración, no un campo suelto.
 
 ## Las transacciones SQLite, cerradas (2026-08-28)
 
@@ -127,15 +127,15 @@ timeline agrupa solo por eso— y si fallaba, el aviso de éxito la pisaba.
 ## Backlog de producto priorizado
 
 1. **El agente de IA** (plan del 2026-09-09). Turno único con **salida
-   estructurada**, no tool calling: RouteLLM devuelve las llamadas a herramienta
-   como texto plano, y una escritura que degrada a prosa es una entrada que nunca
-   se guardó. El borrador es **del mismo tipo que el payload del Modal Maestro**,
-   así que no puede ser más pobre que él. Micrófono y foto en el chat; se dicta,
-   se transcribe, y **el texto se ve y se corrige antes de que exista borrador**.
-   Registro completo de una vez, nunca una pregunta por modal.
-2. **Los tres formatos de exportación.** PDF y Excel para que los lea una
-   persona —**iconografía**, síntesis que describe y **nunca** evalúa una dosis
-   (`contracts/safety-acceptance.md`)—; y `.t1a.json`, **falta cablearlo**.
+   estructurada**, no tool calling: RouteLLM devuelve las herramientas como texto
+   plano, y una escritura que degrada a prosa es una entrada que nunca se guardó.
+   El borrador es **del mismo tipo que el payload del Modal Maestro**, así que no
+   puede ser más pobre. Micrófono y foto en el chat; se dicta, se transcribe, y
+   **el texto se ve y se corrige antes de que exista borrador**. Probado contra la
+   API: `gpt-audio-1.5` funciona, `m4a` se rechaza (solo wav/mp3), y audio +
+   `json_schema` no se combinan — o sea audio→texto→borrador, en dos pasos.
+2. **PDF y Excel más ricos** para que los lea una persona: iconografía y una
+   síntesis que describe y **nunca** evalúa una dosis.
 3. **Gráfico de velocidad en Resumen → Insulina** (decisión de ella, 2026-09-09).
    Se **agrega, no reemplaza**: si los otros dos calculan bien, quitarlos saca una
    variable. mg/dL por hora en pasos de 30 min hasta 4 h — dice cuándo empieza a
@@ -147,4 +147,4 @@ timeline agrupa solo por eso— y si fallaba, el aviso de éxito la pisaba.
 ## Fuera de foco pero pendiente
 
 - **Fase 22** — swipe animado, JS puro. **Fase 20** — widget, necesita build.
-- Pendiente de ella: qué tan agresiva es la exclusión de episodios confundidos.
+- Pendiente de ella: exclusión de episodios confundidos en Patrones.

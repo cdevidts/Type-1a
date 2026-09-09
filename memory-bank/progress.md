@@ -1,17 +1,17 @@
 # Progress
 
-_Última actualización: 2026-09-09._
+_Última actualización: 2026-09-09 (respaldo cableado)._
 
 ## Estado de validación
 
 | | |
 |---|---|
 | `pnpm verify` | Verde (`verify:contracts`, lint, typecheck, test, `verify:bundle`). El wrapper de Windows conserva su fallo de rutas; CI Linux es la verificación integral |
-| Tests | **946** — domain 604, mobile 267, ai 34, schemas 21, cgm 10, api 10 |
-| Bundle de Metro | **1.370** medidos hoy; el build `7122edf9` salió con 1.369 |
+| Tests | **962** — domain 620, mobile 267, ai 34, schemas 21, cgm 10, api 10 |
+| Bundle de Metro | **1.372** medidos hoy; el build `7122edf9` salió con 1.369 |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
-⚠️ El +1 es `backup`, que entra por el índice de `domain` aunque no tenga pantalla.
+⚠️ Los +3 son `backup`, `backupIO` y `backupOutcome`.
 
 ## Entregado y en el dispositivo
 
@@ -23,7 +23,9 @@ _Última actualización: 2026-09-09._
   de IA, cobertura de días, macros por porción, meta de fibra y hora local.
 - 2026-09-04 (build `7122edf9`): el tope del IOB, la curva de efecto por tramo,
   el agua entera en Nutrición y las 5 correcciones de la auditoría. Huella
-  verificada en el APK (`3D:42:7A:…:62:33`, la misma de producción).
+  verificada (`3D:42:7A:…:62:33`).
+- 2026-09-09 (sin build todavía): el respaldo `.t1a.json` cableado entero —
+  exportar e importar desde Ajustes, con `entry_group_id`, fotos y procedencia.
 
 **Backend**: `9f5251e` desplegado (v3 y `knownFoodNames` ✓). El 502 de las fotos
 **no era el proxy**: `route-llm` manda las grandes a Gemini, que rechaza
@@ -32,22 +34,21 @@ _Última actualización: 2026-09-09._
 ## Deuda conocida
 
 ### 🔴 D1–D4: la curva de efecto mide mal, y D2 alcanza al IOB (2026-09-09)
-Cuatro defectos verificados leyendo el código: "sin comida" mal contado, base de
-glucómetro contra puntos de sensor, ocho medianas sueltas dibujadas como una
-trayectoria, y formas opuestas promediadas (`reference/insulin-duration-method.md`).
-⚠️ **D2 sesga el número que "adoptar" mete al IOB: no adoptar hasta cerrarlo.**
+Cuatro defectos verificados leyendo el código, con detalle en
+`reference/insulin-duration-method.md`. ⚠️ **D2 sesga el número que "adoptar" mete
+al IOB: no adoptar ninguna duración hasta cerrarlo.**
 
-### 🔴 El respaldo `.t1a.json` existe pero no está cableado (2026-09-04)
-`backup.ts` está cerrado y probado (22 tests): formato, huella, lectura y plan de
-importación idempotente. **Falta el resto**: leer las quince tablas para armarlo,
-escribirlo de vuelta en una transacción, y las dos pantallas. Hasta entonces ADR
-0007 deja a la usuaria sin forma de respaldar — que es justo lo que ese ADR asume
-resuelto. La deuda más urgente que hay.
+### 🟠 Las fotos viven en la CACHÉ, y Android la vacía (2026-09-09)
+Los cinco sitios que guardan una foto llaman a `saveAsync()` sin destino, así que
+el archivo queda en caché y solo se guarda su ruta. Android puede borrarlo
+**aunque ella no reinstale**. El respaldo ya lo tolera —declara cuántas fotos
+faltaban— pero no lo arregla: falta copiarlas a `Paths.document` al guardarlas,
+en un helper compartido (hoy son cinco copias del mismo bloque), más una
+migración de las que ya están.
 
-### 🟡 Supabase conectado y sin uso previsto (2026-09-04)
-`kvhlttcvjamgybwlamcu` (us-east-1, Postgres 17), sin tablas. **ADR 0007 descartó
-sincronizar datos de salud**; queda para las cuentas de suscripción. Conviene
-pausarlo si no se usa pronto.
+### 🟡 Supabase sin uso previsto (2026-09-04)
+`kvhlttcvjamgybwlamcu`, sin tablas. ADR 0007 descartó sincronizar salud; queda
+para cuentas de suscripción. Pausarlo si no se usa.
 
 ### 🔴 Bomba: imports `.js` en `@type1a/ai`
 `abacus.ts:23` e `index.ts:1-2` usan `.js` en imports relativos — **la trampa de
@@ -67,8 +68,7 @@ altos y cuatro de los seis restantes se cerraron en el mismo commit; quedan tres
 declarados a propósito:
 
 1. **Dos comidas SIN grupo a la misma hora exacta comparten espejo**: emparejan
-   por `timestamp + source` y `combineDayAndTime` deja segundos en cero.
-   Cerrarlo pide una clave `meal_id` en `carb_events`: migración con backfill.
+   por `timestamp + source`. Cerrarlo pide `meal_id` en `carb_events`.
 2. **La foto de un alimento suelto es del plato.** Con receta ya no; sin ella la
    etiqueta lo dice, y recortar exige coordenadas que la IA no da.
 3. **Editar un `carb_events` importado conserva `source: 'imported'`.** Decisión

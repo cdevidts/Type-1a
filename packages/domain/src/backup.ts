@@ -26,6 +26,7 @@ import {
   BackupFileSchema,
   type BackupData,
   type BackupFile,
+  type BackupPhoto,
 } from '@type1a/schemas';
 
 // ---------------------------------------------------------------------------
@@ -83,6 +84,51 @@ export function backupChecksum(data: unknown): string {
     return (hash >>> 0).toString(16).padStart(8, '0');
   };
   return `${run(0x811c9dc5)}${run(0x01000193)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Ajustes que NUNCA viajan
+// ---------------------------------------------------------------------------
+
+/**
+ * Claves de `app_settings` que describen **esta instalación**, no a la usuaria,
+ * y que por lo tanto no pueden viajar en un respaldo.
+ *
+ * No es prolijidad: cada una tiene una fuga concreta detrás.
+ *
+ * - `legacyBackendSensor` marca que esta instalación puede usar la cuenta
+ *   global del backend. Restaurarla en un teléfono nuevo le haría **mostrar el
+ *   sensor de otra persona**, que es justo la fuga que `sensorConnection.ts`
+ *   existe para cerrar.
+ * - `quickEntryNotificationEnabled` dice que hay una notificación persistente
+ *   viva. En otra instalación no la hay: restaurarla afirma algo falso.
+ *
+ * Las credenciales del sensor no están acá porque **no viven en SQLite**: van
+ * a `expo-secure-store` y el respaldo no las alcanza por construcción.
+ */
+export const SETTINGS_NEVER_BACKED_UP: readonly string[] = [
+  'legacyBackendSensor',
+  'quickEntryNotificationEnabled',
+];
+
+/**
+ * La bandera que **desbloquea las calculadoras de dosis**.
+ *
+ * Solo puede entrar acompañada del perfil de terapia. Sola, dejaría a la app
+ * calculando dosis sobre los parámetros placeholder que trae de fábrica —
+ * exactamente lo que `AGENTS.md` prohíbe cuando dice que los parámetros de
+ * terapia son valores que ingresa la usuaria.
+ */
+export const THERAPY_CONFIGURED_SETTING = 'therapyConfiguredAt';
+
+/** Quita del mapa de ajustes lo que no puede salir del teléfono. */
+export function settingsSafeToBackUp(settings: Readonly<Record<string, string>>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(settings)) {
+    if (SETTINGS_NEVER_BACKED_UP.includes(key)) continue;
+    out[key] = value;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +271,16 @@ export interface ExistingBackupIds {
   episodeIds: ReadonlySet<string>;
   hasTherapyProfile: boolean;
   hasNutritionProfile: boolean;
+  /**
+   * `true` si el teléfono ya tiene historial propio.
+   *
+   * Separa los dos casos que **no** se comportan igual: restaurar en una
+   * instalación recién bajada (donde los ajustes del archivo son los únicos que
+   * hay, y no restaurarlos borra el nombre de la insulina, las alarmas y la
+   * unidad de glucosa) y traer un archivo sobre un teléfono en uso (donde pisar
+   * los ajustes de hoy con los de un respaldo viejo sería destruir).
+   */
+  hasAnyData: boolean;
 }
 
 export interface BackupSectionPlan {
@@ -245,8 +301,6 @@ export interface BackupImportPlan {
   /** `true` si no queda nada por escribir: el archivo ya estaba importado. */
   nothingToDo: boolean;
 }
-
-const emptySection = (): BackupSectionPlan => ({ incoming: 0, toInsert: 0, alreadyPresent: 0 });
 
 /**
  * Filtra por identidad, dentro del archivo y contra lo que ya existe.
@@ -310,6 +364,21 @@ export function planBackupImport(file: BackupFile, existing: ExistingBackupIds):
   // archivo viejo es exactamente el error que `AGENTS.md` prohíbe.
   const therapyProfile = existing.hasTherapyProfile ? null : d.therapyProfile;
   const nutritionProfile = existing.hasNutritionProfile ? null : d.nutritionProfile;
+
+  // Los ajustes solo entran en un teléfono vacío. Ver `hasAnyData`.
+  const settings = existing.hasAnyData ? {} : settingsSafeToBackUp(d.settings);
+  // Y la bandera que desbloquea las calculadoras no entra sola jamás: si el
+  // perfil de terapia no se escribe, la app quedaría calculando dosis sobre
+  // los parámetros de fábrica.
+  if (therapyProfile === null) delete settings[THERAPY_CONFIGURED_SETTING];
+
+  // Solo viajan las fotos de algo que se va a escribir: una foto cuyo dueño ya
+  // estaba en el teléfono es un archivo grande copiado para nada.
+  const neededUris = new Set<string>();
+  for (const meal of meals.kept) if (meal.imageUri !== undefined) neededUris.add(meal.imageUri);
+  for (const food of foodCatalog.kept) if (food.imageUri !== undefined) neededUris.add(food.imageUri);
+  for (const recipe of recipes.kept) if (recipe.imageUri !== undefined) neededUris.add(recipe.imageUri);
+  const photos = dedupePhotos(d.photos).filter((photo) => neededUris.has(photo.uri));
   const profileSection = (incoming: unknown, kept: unknown): BackupSectionPlan => ({
     incoming: incoming === null ? 0 : 1,
     toInsert: kept === null ? 0 : 1,
@@ -319,9 +388,12 @@ export function planBackupImport(file: BackupFile, existing: ExistingBackupIds):
   const sections: Record<keyof BackupData, BackupSectionPlan> = {
     therapyProfile: profileSection(d.therapyProfile, therapyProfile),
     nutritionProfile: profileSection(d.nutritionProfile, nutritionProfile),
-    // Los ajustes no se cuentan como registros: son preferencias, no historia,
-    // y nunca pisan las del teléfono que recibe.
-    settings: emptySection(),
+    // Los ajustes no se cuentan como registros: son preferencias, no historia.
+    settings: {
+      incoming: Object.keys(d.settings).length,
+      toInsert: Object.keys(settings).length,
+      alreadyPresent: existing.hasAnyData ? Object.keys(d.settings).length : 0,
+    },
     glucose: glucose.plan,
     insulin: insulin.plan,
     carbs: carbs.plan,
@@ -334,6 +406,11 @@ export function planBackupImport(file: BackupFile, existing: ExistingBackupIds):
     recipes: recipes.plan,
     foodCatalog: foodCatalog.plan,
     mealEpisodes: mealEpisodes.plan,
+    photos: {
+      incoming: dedupePhotos(d.photos).length,
+      toInsert: photos.length,
+      alreadyPresent: dedupePhotos(d.photos).length - photos.length,
+    },
   };
 
   const totalToInsert = Object.values(sections).reduce((sum, s) => sum + s.toInsert, 0);
@@ -342,7 +419,7 @@ export function planBackupImport(file: BackupFile, existing: ExistingBackupIds):
     data: {
       therapyProfile,
       nutritionProfile,
-      settings: {},
+      settings,
       glucose: glucose.kept,
       insulin: insulin.kept,
       carbs: carbs.kept,
@@ -355,11 +432,27 @@ export function planBackupImport(file: BackupFile, existing: ExistingBackupIds):
       recipes: recipes.kept,
       foodCatalog: foodCatalog.kept,
       mealEpisodes: mealEpisodes.kept,
+      photos,
     },
     sections,
     totalToInsert,
     nothingToDo: totalToInsert === 0,
   };
+}
+
+/**
+ * Una foto por `uri`. Un exportador ajeno mal hecho puede repetirlas, y cada
+ * repetida son cientos de kilobytes escritos dos veces.
+ */
+function dedupePhotos(photos: readonly BackupPhoto[]): BackupPhoto[] {
+  const seen = new Set<string>();
+  const out: BackupPhoto[] = [];
+  for (const photo of photos) {
+    if (seen.has(photo.uri)) continue;
+    seen.add(photo.uri);
+    out.push(photo);
+  }
+  return out;
 }
 
 /** Cuántos registros lleva un respaldo. Para mostrarlo antes de exportar. */

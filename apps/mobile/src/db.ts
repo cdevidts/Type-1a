@@ -71,7 +71,10 @@ const DEFAULT_PROFILE: TherapyProfile = {
  * superior— y `importMySugrCsv` llama a `upsertCGMReadings` **antes** de abrir
  * la suya, no dentro.
  */
-function serializedTransaction(db: SQLiteDatabase, work: () => Promise<void>): Promise<void> {
+// Exportada para `backupIO.ts`: importar un respaldo escribe quince tablas y
+// tiene que pasar por la MISMA cola FIFO que el resto, o vuelve el bug de las
+// transacciones anidadas que costó una fase entera.
+export function serializedTransaction(db: SQLiteDatabase, work: () => Promise<void>): Promise<void> {
   return serializeWrite(() => db.withTransactionAsync(work));
 }
 

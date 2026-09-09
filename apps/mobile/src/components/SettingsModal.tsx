@@ -13,6 +13,7 @@ import {
 import type { CGMProviderStatus, TherapyProfile } from '@type1a/schemas';
 
 import { API_BASE_URL } from '../api';
+import type { BackupExportOutcome, BackupImportOutcome } from '../backupOutcome';
 import type { CapillaryReminderSettings, CorrectionReminderSettings, MySugrImportOutcome } from '../db';
 import { capillaryReminderTimes, formatMinutesAsClock, parseMinuteOffsets, parsePositiveNumber } from '../format';
 import { logSaveError } from '../log';
@@ -25,6 +26,9 @@ import {
   saveSensorCredentials,
   testSensorCredentials,
 } from '../sensorConnection';
+import ChevronDown from 'lucide-react-native/icons/chevron-down';
+import ChevronUp from 'lucide-react-native/icons/chevron-up';
+
 import { colors, radius, spacing } from '../theme';
 import { InsulinPicker, InsulinPickerSafetyNote, insulinProfileFields, type InsulinSelection } from './InsulinPicker';
 import { DAY_SEGMENTS, type DaySegmentKey } from '@type1a/domain';
@@ -176,6 +180,8 @@ export function SettingsModal({
   capillaryReminder,
   onSaveCapillaryReminder,
   onExportReport,
+  onExportBackup,
+  onImportBackup,
   onSensorConnectionChange,
 }: {
   visible: boolean;
@@ -187,6 +193,10 @@ export function SettingsModal({
   showGlucoseOnLockScreen: boolean;
   onPrivacyChange: (show: boolean) => Promise<void>;
   onImportMySugrCsv: (csvText: string) => Promise<MySugrImportOutcome>;
+  /** Arma el `.t1a.json` y lo comparte. Devuelve qué se pudo guardar. */
+  onExportBackup: () => Promise<BackupExportOutcome>;
+  /** Lee un `.t1a.json` ya elegido y lo aplica. Devuelve qué entró. */
+  onImportBackup: (text: string) => Promise<BackupImportOutcome>;
   onSaveProfile: (profile: TherapyProfile) => Promise<void>;
   /**
    * Guarda el perfil **sin** marcarlo como configurado.
@@ -227,6 +237,9 @@ export function SettingsModal({
   const [sensorBusy, setSensorBusy] = useState(false);
   const [sensorMessage, setSensorMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // El menú arranca cerrado: importar es raro, y una lista siempre abierta le
+  // roba el sitio a "Exportar respaldo", que es lo que de verdad hay que hacer.
+  const [importMenuOpen, setImportMenuOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   // Until the profile has actually been configured, these fields start
@@ -533,6 +546,38 @@ export function SettingsModal({
     }
   }
 
+  async function importBackupFile(): Promise<void> {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const picked = await File.pickFileAsync({ mimeTypes: ['application/json', 'text/plain', '*/*'] });
+      if (picked.canceled) return;
+      const outcome = await onImportBackup(await picked.result.text());
+      setMessage(outcome.message);
+    } catch (error) {
+      setMessage(error instanceof Error
+        ? `No se pudo importar: ${error.message}. Tus datos actuales están intactos.`
+        : 'No se pudo importar el archivo. Tus datos actuales están intactos.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportBackupFile(): Promise<void> {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const outcome = await onExportBackup();
+      setMessage(outcome.message);
+    } catch (error) {
+      setMessage(error instanceof Error
+        ? `No se pudo exportar: ${error.message}. No se modificó nada.`
+        : 'No se pudo exportar. No se modificó nada.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function notifications(): Promise<void> {
     setBusy(true);
     try {
@@ -740,10 +785,56 @@ export function SettingsModal({
           {sensorMessage === null ? null : <Text style={styles.message}>{sensorMessage}</Text>}
 
           <Text style={styles.sectionTitle}>Importar historial</Text>
-          <Text style={styles.copy}>Carga un CSV exportado desde MySugr (glucosa, insulina, carbohidratos, comidas, actividad, vitales, HbA1c). Se guarda como historial local; importar el mismo archivo dos veces no duplica datos.</Text>
-          <Pressable style={[styles.connectButton, busy && styles.disabled]} disabled={busy} onPress={() => { void importCsv(); }}>
-            <Text style={styles.connectText}>Elegir archivo CSV de MySugr</Text>
+          <Text style={styles.copy}>Importar el mismo archivo dos veces no duplica nada, así que puedes repetirlo sin miedo.</Text>
+          <Pressable
+            style={styles.importToggle}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: importMenuOpen }}
+            accessibilityLabel={importMenuOpen ? 'Cerrar las opciones de importación' : 'Abrir las opciones de importación'}
+            onPress={() => { setImportMenuOpen((open) => !open); }}
+          >
+            <Text style={styles.importToggleText}>Elegir de dónde importar</Text>
+            {importMenuOpen
+              ? <ChevronUp size={18} color={colors.teal} />
+              : <ChevronDown size={18} color={colors.teal} />}
           </Pressable>
+          {importMenuOpen ? (
+            <View style={styles.importMenu}>
+              <Pressable
+                style={[styles.importOption, busy && styles.disabled]}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel="Importar desde un respaldo de Type 1A"
+                onPress={() => { void importBackupFile(); }}
+              >
+                <Text style={styles.importOptionTitle}>Respaldo de Type 1A (.t1a.json)</Text>
+                <Text style={styles.importOptionFoot}>Todo tu historial, tal como salió de otro teléfono: registros, catálogo, recetas, notas, ajustes y fotos.</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.importOption, busy && styles.disabled]}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel="Importar un archivo CSV de MySugr"
+                onPress={() => { void importCsv(); }}
+              >
+                <Text style={styles.importOptionTitle}>CSV de MySugr</Text>
+                <Text style={styles.importOptionFoot}>Glucosa, insulina, carbohidratos, comidas, actividad, vitales y HbA1c. Queda marcado como importado.</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          <Text style={styles.sectionTitle}>Respaldar todo</Text>
+          <Text style={styles.copy}>Guarda un archivo con absolutamente todo lo tuyo, para que puedas reinstalar la app o cambiar de teléfono sin perder nada. Cada glucosa conserva si vino del sensor o de tu glucómetro, y lo registrado junto sigue junto.</Text>
+          <Pressable
+            style={[styles.connectButton, busy && styles.disabled]}
+            disabled={busy}
+            accessibilityRole="button"
+            accessibilityLabel="Exportar un respaldo completo de Type 1A"
+            onPress={() => { void exportBackupFile(); }}
+          >
+            <Text style={styles.connectText}>{busy ? 'Preparando…' : 'Exportar respaldo completo'}</Text>
+          </Pressable>
+          <Text style={styles.copyFoot}>El archivo queda en tus manos: guárdalo donde tú quieras. No se sube a ninguna parte.</Text>
 
           </>
         ) : null}
@@ -1122,6 +1213,20 @@ const styles = StyleSheet.create({
   diagnostic: { color: colors.muted, fontSize: 12, marginTop: 5 },
   message: { color: colors.warning, backgroundColor: colors.warningSoft, borderRadius: radius.sm, padding: spacing.md, fontSize: 13, lineHeight: 19, marginTop: spacing.xl },
   disabled: { opacity: 0.55 },
+  importToggle: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderColor: colors.teal, borderWidth: 1, borderRadius: radius.sm,
+    paddingHorizontal: spacing.md, minHeight: 48, marginTop: spacing.sm,
+  },
+  importToggleText: { color: colors.teal, fontSize: 14, fontWeight: '800' },
+  importMenu: { marginTop: spacing.sm, gap: spacing.sm },
+  importOption: {
+    borderColor: colors.line, borderWidth: 1, borderRadius: radius.sm,
+    padding: spacing.md, minHeight: 44,
+  },
+  importOptionTitle: { color: colors.ink, fontSize: 14, fontWeight: '700' },
+  importOptionFoot: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: 2 },
+  copyFoot: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: spacing.sm },
   row: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
   therapyField: { flex: 1 },
   therapyFieldLabel: { color: colors.muted, fontSize: 12, fontWeight: '700', marginBottom: 4 },

@@ -8,8 +8,7 @@
 apps/api/       Fastify. Normaliza CGM, orquesta IA, guarda el catálogo compartido.
 apps/mobile/    Expo/React Native. UI, SQLite local, notificaciones.
 packages/domain/   Determinístico y crítico de seguridad. Sin IA, sin red.
-packages/cgm/      CGMProvider + implementaciones.
-packages/ai/       Cliente Abacus RouteLLM. Nunca se bundlea en mobile.
+packages/cgm/      CGMProvider + implementaciones.  packages/ai/  Abacus RouteLLM.
 packages/schemas/  Zod compartido — el contrato entre las tres capas.
 ```
 
@@ -58,7 +57,8 @@ Puro, determinístico, con test. **Ningún `.tsx` calcula una métrica de salud.
 | `recipe.ts` | una receta y sus componentes. **Los totales se derivan, nunca se guardan**: corregir un alimento corrige todas las recetas que lo usan. Redondea igual que el carrito a propósito |
 | `catalog-similarity.ts` | qué alimento del catálogo ya cubre uno recién identificado. **Solo propone**: emparejar mal mezcla macros de dos alimentos y eso sugiere carbohidratos sin delatarse |
 | `iob.ts` | insulina activa: exponencial de LoopKit/OpenAPS. Se descuenta **solo de la corrección**, nunca de la comida; sin insulina configurada devuelve `undefined`, no cero. Ver `docs/adr/0005` |
-| `backup.ts` | el archivo `.t1a.json`: JSON canónico, huella de integridad, lectura tolerante y **plan de importación idempotente** — importar dos veces no duplica, y lo que ya está en el teléfono nunca se pisa. Ver `docs/adr/0007` |
+| `backupIO.ts` (mobile) | lee las 15 tablas y las escribe de vuelta en **una** transacción. Consulta crudo en vez de reusar los `get*Events`: esos no devuelven `entry_group_id` y sin esa columna un desayuno restaurado se abre en filas sueltas |
+| `backup.ts` | el `.t1a.json`: JSON canónico, huella, lectura tolerante y **plan idempotente** — importar dos veces no duplica, lo que ya está nunca se pisa, y `SETTINGS_NEVER_BACKED_UP` deja fuera lo que describe a la instalación. Ver `docs/adr/0007` |
 | `insulin-effect-curve.ts` | cuánto se movió la glucosa a 1..8 h de cada dosis, por tramo de **inicio de la inyección**. Descriptivo: no propone ni adopta. No sufre la censura de la dosis siguiente que sí afecta a `insulin-duration` |
 | `insulin-duration.ts` | cuánto dura y cuándo pega su insulina, por tramo del día, sobre **toda** dosis rápida: ventana recortada en la siguiente, carbohidratos como covariable. Comparar y adoptar son cifras distintas. Ver `reference/insulin-duration-method.md` |
 | `coverage.ts` | cuánto del rango elegido tiene datos. Separa "faltan días" (descriptivo) de "no alcanza para la HbA1c estimada" (clínico, 14 días de consenso) |

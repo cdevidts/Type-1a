@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import * as Crypto from 'expo-crypto';
+import { File, Paths } from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import * as Linking from 'expo-linking';
 import * as Notifications from 'expo-notifications';
 import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
@@ -22,21 +24,25 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import {
-  rapidInsulinActionModel,  basalInsulinLookbackMinutes,
-  buildReportRows,
   buildCatalogProposals,
-  type CatalogProposalSet,
-  type Recipe,
+  buildReportRows,
   catalogEntryFromPortion,
+  countBackupRecords,
   insulinNameForType,
   isPlausibleInsulinDuration,
   latestLiveReading,
   MAX_INSULIN_DURATION_HOURS,
   MIN_INSULIN_DURATION_HOURS,
+  parseBackup,
+  planBackupImport,
+  rapidInsulinActionModel,  basalInsulinLookbackMinutes,
   rapidInsulinLookbackMinutes,
-  type CatalogFood,
   recipeToCartLines,
+  serializeBackup,
   type CartLine,
+  type CatalogFood,
+  type CatalogProposalSet,
+  type Recipe,
 } from '@type1a/domain';
 import type {
   CGMProviderStatus,
@@ -51,6 +57,8 @@ import type {
 // Side-effect import: registers the background-task handler at module load,
 // which is required even on the headless launch Android uses to run it with
 // no UI on screen — see backgroundSync.ts.
+import { applyBackupImport, backupSnapshotIds, collectBackup } from './src/backupIO';
+import type { BackupExportOutcome, BackupImportOutcome } from './src/backupOutcome';
 import { registerBackgroundSync } from './src/backgroundSync';
 import { CorrectionModal } from './src/components/CorrectionModal';
 import { UnifiedEntryModal, type MasterMode, type UnifiedEntryDraft } from './src/components/UnifiedEntryModal';
@@ -1087,6 +1095,69 @@ function Type1AApp() {
     };
   }, [db, profile]);
 
+  /**
+   * Arma el `.t1a.json` y lo entrega a la hoja de compartir.
+   *
+   * El archivo se escribe en caché y se comparte: **no se sube a ninguna
+   * parte**, que es lo que ADR 0007 promete. Dónde termina lo decide ella.
+   */
+  async function exportBackup(): Promise<BackupExportOutcome> {
+    const collected = await collectBackup(db, {
+      exportedAt: new Date().toISOString(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+    const records = countBackupRecords(collected.file.data);
+    const file = new File(Paths.cache, `type1a-respaldo-${new Date().toISOString().slice(0, 10)}.t1a.json`);
+    file.create({ overwrite: true });
+    file.write(serializeBackup(collected.file));
+
+    const canShare = await Sharing.isAvailableAsync();
+    if (canShare) {
+      await Sharing.shareAsync(file.uri, { mimeType: 'application/json', dialogTitle: 'Respaldo de Type 1A' });
+    }
+
+    // Lo que NO se pudo guardar se dice, siempre. Un respaldo que se cree
+    // completo sin serlo es peor que uno que declara sus huecos.
+    const faltantes: string[] = [];
+    if (collected.skippedRows > 0) faltantes.push(`${collected.skippedRows} registro(s) ilegibles quedaron fuera`);
+    if (collected.missingPhotos > 0) faltantes.push(`${collected.missingPhotos} foto(s) ya no estaban en el teléfono`);
+    const cola = faltantes.length === 0 ? '' : ` Ojo: ${faltantes.join(' y ')}.`;
+
+    return {
+      message: canShare
+        ? `Respaldo listo: ${records} registros y ${collected.file.data.photos.length} fotos. Guárdalo donde tú quieras.${cola}`
+        : `Respaldo generado (${records} registros), pero este teléfono no puede compartir archivos.${cola}`,
+      records,
+      photos: collected.file.data.photos.length,
+    };
+  }
+
+  /** Lee un `.t1a.json` y aplica solo lo que falta. Nunca pisa lo que ya está. */
+  async function importBackup(text: string): Promise<BackupImportOutcome> {
+    const parsed = parseBackup(text);
+    if (!parsed.ok) {
+      const razon = parsed.error.kind === 'checksum_mismatch'
+        ? 'el archivo está incompleto o se dañó al copiarlo'
+        : parsed.error.kind === 'unsupported_version'
+          ? 'el archivo viene de una versión más nueva de la app'
+          : parsed.error.kind === 'not_a_backup'
+            ? 'ese archivo no es un respaldo de Type 1A'
+            : 'el archivo no se pudo leer';
+      return { applied: false, message: `No se importó nada: ${razon}. Tus datos actuales están intactos.` };
+    }
+
+    const plan = planBackupImport(parsed.file, await backupSnapshotIds(db));
+    if (plan.nothingToDo) {
+      return { applied: false, message: 'Ese respaldo ya estaba importado: no había nada nuevo que agregar.' };
+    }
+    await applyBackupImport(db, plan);
+    await refresh();
+    return {
+      applied: true,
+      message: `Listo: ${plan.totalToInsert} registro(s) nuevos. Lo que ya tenías quedó tal cual.`,
+    };
+  }
+
   async function exportReport(range: { from: Date; to: Date }): Promise<ReportExport> {
     const tally = createDecodeTally();
     const [readings, insulin, carbs, meals, activities, notes, vitals, hba1c, water] = await Promise.all([
@@ -1700,6 +1771,8 @@ function Type1AApp() {
         capillaryReminder={capillaryReminder}
         onSaveCapillaryReminder={updateCapillaryReminder}
         onExportReport={exportReport}
+        onExportBackup={exportBackup}
+        onImportBackup={importBackup}
         onSensorConnectionChange={async () => {
           // Limpiar el estado en memoria NO alcanza: las lecturas de la cuenta
           // anterior están en SQLite, y `refresh()` arranca con
