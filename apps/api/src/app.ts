@@ -594,6 +594,21 @@ export async function buildApp(config: AppConfig, dependencies: AppDependencies 
         error: { code: error.name, message: error.message, retryable: error.retryable },
       });
     }
+    // Fastify raises this when a request body exceeds a route's bodyLimit,
+    // before the route handler runs. Translate it into a clear 413 instead of
+    // the generic 500 below. Message is generic on purpose: this handler is
+    // global and every route with a small bodyLimit (auth, catalog, photo…)
+    // can trip it.
+    const asError = error as { code?: unknown; statusCode?: unknown };
+    if (asError.code === 'FST_ERR_CTP_BODY_TOO_LARGE' || asError.statusCode === 413) {
+      return reply.status(413).send({
+        error: {
+          code: 'payload_too_large',
+          message: 'El cuerpo de la petición es demasiado grande.',
+          retryable: false,
+        },
+      });
+    }
     app.log.error({ err: error }, 'Unhandled request error');
     return reply.status(500).send({
       error: { code: 'internal_error', message: 'Ocurrió un error interno.', retryable: true },
