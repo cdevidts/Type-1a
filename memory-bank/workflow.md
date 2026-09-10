@@ -74,3 +74,38 @@ movió y alguien quedó apuntando al lugar viejo.
    implementa: se reporta con 2-3 alternativas y sus tradeoffs.
 
 Los tres niveles se reportan **separados**, aunque alguno quede vacío.
+
+## Cómo se le escribe a Verónica (regla dura, 2026-09-10)
+
+**Verónica no programa.** Pidió esto explícitamente, harta y con razón: los
+cierres eran largos, llenos de nombres de archivo, y terminaban preguntando
+cosas que solo se entendían habiendo leído los diez párrafos de arriba.
+
+### El cierre de una corrida
+
+- **Máximo ~15 líneas** antes de las preguntas. Si no cabe, es que se está
+  contando el *cómo* en vez del *qué*.
+- **Cero nombres de archivo, funciones, comandos, SHAs o siglas.** Nada de
+  `useDictation.ts`, `pnpm verify`, `R8`, `logcat`, `entry_group_id`. Si un
+  concepto técnico es imprescindible para decidir, se explica con palabras
+  normales y **una sola vez**: "el registro interno donde el teléfono anota lo
+  que pasa".
+- Se cuenta **qué cambia para ella cuando use la app**, no qué se editó.
+- Lo técnico va al **cuerpo del commit y al memory bank**, que es donde sirve.
+  El chat no es el registro del proyecto.
+
+### Las preguntas
+
+Van **al final, separadas, numeradas**, y cada una **se entiende sola** sin
+haber leído nada de lo anterior. Cada pregunta lleva:
+
+1. **Qué es**, en una frase, como si no supiera nada del tema.
+2. **Qué pasa si dice que sí** y **qué pasa si dice que no**, en concreto.
+3. **Qué recomiendo yo**, y por qué, en una línea.
+
+Prohibido: "¿lanzo el build?" a secas, "queda pendiente lo de X", o referirse a
+algo por un nombre que apareció antes en la corrida. Si una pregunta necesita
+contexto, ese contexto va **dentro** de la pregunta.
+
+**Preguntar solo lo que ella realmente decide.** Lo que tiene una respuesta
+correcta evidente no es una pregunta: se hace y se avisa en una línea.
