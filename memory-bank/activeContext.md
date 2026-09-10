@@ -11,18 +11,15 @@ modelo dice "listo, registré tu comida" y no se escribió nada. `response_forma
 json_schema` ya está en producción acá y sobrevivió al incidente de
 `exclusiveMinimum`, o sea contra los dos modelos a los que RouteLLM enruta.
 
-Probado contra la API con la clave real: `gpt-audio-1.5` funciona, `gpt-audio-mini`
-dice "no hay audio" pese a estar listado, **`m4a` se rechaza** (solo wav/mp3), y
-**audio + `json_schema` no se combinan**. De ahí que el audio vaya en dos pasos —
-que resultó mejor: la transcripción **se ve y se corrige** antes de que exista un
-borrador.
+Probado contra la API real: `gpt-audio-1.5` funciona, `gpt-audio-mini` dice "no
+hay audio" pese a estar listado, **`m4a` se rechaza** (solo wav/mp3) y **audio +
+`json_schema` no se combinan**. De ahí los dos pasos, que resultó mejor: la
+transcripción **se ve y se corrige** antes de que exista un borrador.
 
-**El registro es código**: `agent-tools.ts` declara qué alcanza el agente y qué
-no, con el motivo escrito en cada exclusión, y `verify:contracts` falla si una
-función de `db.ts` no está en ninguna lista. En su primera corrida el candado ya
-encontró una sin clasificar, y un test cazó ocho motivos de relleno ("Ídem.")
-que yo mismo había escrito. `reference/ai-chat-capabilities.md` se queda con el
-porqué; iba en 123 de 150 líneas intentando ser el catálogo.
+**El registro es código**: `agent-tools.ts` declara qué alcanza y qué no, con el
+motivo escrito en cada exclusión, y `verify:contracts` falla si una función de
+`db.ts` no está en ninguna lista. En su primera corrida cazó una sin clasificar,
+y un test cazó ocho motivos de relleno ("Ídem.") que yo mismo escribí.
 
 **El borrador del agente es del mismo tipo que el payload del Modal Maestro**, así
 que no puede ser más pobre que él. Y `saveTherapyProfile` no es alcanzable: nunca.
@@ -132,9 +129,12 @@ prohíbe juzgar a qué hora come.
 
 ## Backlog de producto priorizado
 
-1. **El agente, Fase 1**: el router determinístico de intenciones simples
-   ("250 ml de agua", "6 de rápida"), que registra **sin gastar un crédito**.
-   Después: `/v1/ai/chat` de un turno, el `EntryDraft`, y el micrófono.
+1. **El agente, Fase 2**: `/v1/ai/chat` de un turno, el `EntryDraft` con su
+   tarjeta de confirmación, y el micrófono. La **Fase 1 ya está**:
+   `local-intent.ts` lee "250 ml de agua" o "6 de rápida" **sin gastar un
+   crédito**, y ante la duda no interpreta — "me puse 6" no dice si fue rápida o
+   basal, y una glucosa imposible para su unidad no se registra. **Nada de esto
+   tiene pantalla todavía.**
 2. **Gráfico de velocidad en Resumen → Insulina** (decisión de ella): se
    **agrega, no reemplaza**. mg/dL por hora en pasos de 30 min hasta 4 h; al ser
    derivada no usa línea base, y por eso es inmune a D2. **Antes hay que cerrar

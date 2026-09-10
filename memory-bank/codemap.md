@@ -56,6 +56,7 @@ Puro, determinístico, con test. **Ningún `.tsx` calcula una métrica de salud.
 | `iob.ts` | insulina activa: exponencial de LoopKit/OpenAPS. Se descuenta **solo de la corrección**, nunca de la comida; sin insulina configurada devuelve `undefined`, no cero. Ver `docs/adr/0005` |
 | `photos.ts` (mobile) | `persistPhoto` saca la foto de la caché; `migratePhotosToDocuments` mueve las viejas. Android vacía la caché sola |
 | `backupIO.ts` (mobile) | lee las 15 tablas y las escribe de vuelta en **una** transacción. Consulta crudo y no los `get*Events`: esos no devuelven `entry_group_id`, y sin esa columna un desayuno restaurado se abre en filas sueltas |
+| `local-intent.ts` | lo que se entiende **sin llamar al modelo**: agua, insulina con su tipo dicho, carbos, glucosa. Ante la duda no interpreta, y si sobra algo la frase entera va al modelo |
 | `agent-tools.ts` | qué alcanza el agente de IA y qué **no, con su motivo**. `verify:contracts` falla si una función de `db.ts` no está en ninguna de las dos listas. Ver `docs/adr/0008` y `contracts/agent-tools.md` |
 | `backup.ts` | el `.t1a.json`: JSON canónico, huella, lectura tolerante y **plan idempotente** — importar dos veces no duplica, lo que ya está nunca se pisa, y `SETTINGS_NEVER_BACKED_UP` deja fuera lo que describe a la instalación. Ver `docs/adr/0007` |
 | `insulin-effect-curve.ts` | cuánto se movió la glucosa a 1..8 h de cada dosis, por tramo de **inicio de la inyección**. Descriptivo. ⚠️ Tiene D1–D4 abiertos: ver `reference/insulin-duration-method.md` |
