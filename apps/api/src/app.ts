@@ -22,15 +22,27 @@ import {
   MealEpisodeMetricsSchema,
   SharedCatalogUploadSchema,
 } from '@type1a/schemas';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { createHash } from 'node:crypto';
 import { Pool } from 'pg';
 
 import { z } from 'zod';
 
+import {
+  EmailAlreadyRegisteredError,
+  InvalidCredentialsError,
+  PostgresAccountsStore,
+  type AuthenticatedUser,
+} from './accounts-store.js';
+import {
+  ALLOWED_PHOTO_MIME_TYPES,
+  MAX_PHOTO_BYTES,
+  PostgresCatalogPhotoStore,
+} from './catalog-photo-store.js';
 import type { AppConfig } from './config.js';
 import { PostgresFoodCatalogStore, type FoodCatalogStore } from './food-catalog-store.js';
 import { JunctionLinkError, JunctionLinkService } from './junction-link.js';
+import { PostgresPersonalCatalogStore, type PersonalCatalogStore } from './personal-catalog-store.js';
 
 const ReadingsQuerySchema = z.object({
   from: z.iso.datetime({ offset: true }),
@@ -67,6 +79,34 @@ const JunctionLinkBodySchema = z.object({
   region: z.string().regex(/^[a-z]{2}$/u).default('cl'),
 });
 
+// ── Cuentas ─────────────────────────────────────────────────────────────
+const RegisterBodySchema = z.object({
+  email: z.email(),
+  // Mínimo 10 caracteres, tope generoso para no truncar frases largas.
+  password: z.string().min(10, 'La contraseña debe tener al menos 10 caracteres.').max(200),
+});
+// En login no se revalida el largo mínimo: una contraseña corta simplemente no
+// coincidirá, con el MISMO error que un correo inexistente.
+const LoginBodySchema = z.object({
+  email: z.email(),
+  password: z.string().min(1).max(200),
+});
+
+// ── Fotos y catálogo personal ───────────────────────────────────────────
+const FoodKeyParamsSchema = z.object({
+  foodKey: z.string().trim().min(1).max(160),
+});
+const CatalogKeyParamsSchema = z.object({
+  key: z.string().trim().min(1).max(160),
+});
+// La app manda la foto como base64 dentro de un JSON, junto a su tipo MIME —
+// es lo más simple de emitir desde el cliente móvil. El tope de bytes se
+// verifica sobre los bytes YA decodificados, no sobre el largo del base64.
+const PhotoUploadBodySchema = z.object({
+  imageBase64: z.string().min(1).max(2_000_000),
+  mimeType: z.enum(ALLOWED_PHOTO_MIME_TYPES),
+});
+
 class UnconfiguredCGMProvider implements CGMProvider {
   public constructor(
     public readonly name: string,
@@ -91,6 +131,9 @@ export interface AppDependencies {
   glucoseInsightService?: GlucoseInsightService;
   junctionLinkService?: JunctionLinkService;
   foodCatalogStore?: FoodCatalogStore;
+  accountsStore?: PostgresAccountsStore;
+  personalCatalogStore?: PersonalCatalogStore;
+  catalogPhotoStore?: PostgresCatalogPhotoStore;
 }
 
 function createProvider(config: AppConfig): CGMProvider {
@@ -156,15 +199,36 @@ function createAiServices(config: AppConfig): {
  * "un proveedor que falla degrada a manual" de `AGENTS.md`, aplicado a esta
  * función en vez de a un CGM.
  */
-async function createFoodCatalogStore(config: AppConfig, log: FastifyInstance['log']): Promise<FoodCatalogStore | undefined> {
+interface DbStores {
+  foodCatalog: FoodCatalogStore;
+  accounts: PostgresAccountsStore;
+  personalCatalog: PersonalCatalogStore;
+  photos: PostgresCatalogPhotoStore;
+}
+
+/**
+ * Construye TODO lo que necesita `DATABASE_URL` sobre un SOLO Pool de `pg`:
+ * catálogo compartido, cuentas/sesiones, catálogo personal y fotos. Sin
+ * `DATABASE_URL` no se construye nada y las rutas correspondientes degradan a
+ * 503 — el resto del backend (CGM, IA) no depende de esto y sigue igual.
+ *
+ * El orden de `ensureSchema` importa: `users` primero, porque tanto la FK
+ * `owner_user_id` de `food_catalog` como la de `catalog_photos` la referencian.
+ */
+async function createDbStores(config: AppConfig, log: FastifyInstance['log']): Promise<DbStores | undefined> {
   if (config.DATABASE_URL === undefined) return undefined;
   try {
     const pool = new Pool({ connectionString: config.DATABASE_URL });
-    const store = new PostgresFoodCatalogStore(pool);
-    await store.ensureSchema();
-    return store;
+    const accounts = new PostgresAccountsStore(pool);
+    const foodCatalog = new PostgresFoodCatalogStore(pool);
+    const personalCatalog = new PostgresPersonalCatalogStore(pool);
+    const photos = new PostgresCatalogPhotoStore(pool);
+    await accounts.ensureSchema();
+    await foodCatalog.ensureSchema();
+    await photos.ensureSchema();
+    return { foodCatalog, accounts, personalCatalog, photos };
   } catch (error) {
-    log.error({ err: error }, 'No se pudo preparar el catálogo compartido; /v1/food-catalog degrada a 503.');
+    log.error({ err: error }, 'No se pudo preparar la base de datos; las rutas con estado degradan a 503.');
     return undefined;
   }
 }
@@ -188,7 +252,11 @@ export async function buildApp(config: AppConfig, dependencies: AppDependencies 
   const ai = createAiServices(config);
   const mealVision = dependencies.mealVisionService ?? ai.meal;
   const glucoseInsight = dependencies.glucoseInsightService ?? ai.insight;
-  const foodCatalog = dependencies.foodCatalogStore ?? await createFoodCatalogStore(config, app.log);
+  const dbStores = await createDbStores(config, app.log);
+  const foodCatalog = dependencies.foodCatalogStore ?? dbStores?.foodCatalog;
+  const accounts = dependencies.accountsStore ?? dbStores?.accounts;
+  const personalCatalog = dependencies.personalCatalogStore ?? dbStores?.personalCatalog;
+  const catalogPhotos = dependencies.catalogPhotoStore ?? dbStores?.photos;
   const junctionLink = dependencies.junctionLinkService ?? (
     config.JUNCTION_API_KEY !== undefined && config.JUNCTION_USER_ID !== undefined
       ? new JunctionLinkService({
@@ -198,6 +266,43 @@ export async function buildApp(config: AppConfig, dependencies: AppDependencies 
         })
       : undefined
   );
+
+  /**
+   * Lee el token Bearer del header `Authorization`. Nunca se registra: el
+   * logger de Fastify tiene `req.headers.authorization` en su lista de
+   * `redact`, así que aunque una petición se logee, el token sale ofuscado.
+   */
+  function bearerToken(request: FastifyRequest): string | null {
+    const header = request.headers.authorization;
+    if (typeof header !== 'string') return null;
+    const match = /^Bearer\s+(.+)$/iu.exec(header.trim());
+    return match?.[1] ?? null;
+  }
+
+  /**
+   * Resuelve la usuaria autenticada, o `null` si no hay token válido. Si la
+   * base de datos no está configurada, `accounts` es undefined → también null
+   * (la ruta lo traduce a 503 antes de llegar acá cuando corresponde).
+   */
+  async function currentUser(request: FastifyRequest): Promise<AuthenticatedUser | null> {
+    if (accounts === undefined) return null;
+    const token = bearerToken(request);
+    if (token === null) return null;
+    return accounts.authenticate(token);
+  }
+
+  /**
+   * Exige autenticación: devuelve la usuaria, o responde 401 y devuelve null.
+   * Token ausente/ inválido/ expirado/ revocado → 401, nunca 500.
+   */
+  async function requireUser(request: FastifyRequest, reply: FastifyReply): Promise<AuthenticatedUser | null> {
+    const user = await currentUser(request);
+    if (user === null) {
+      await reply.status(401).send({ error: { code: 'unauthorized', message: 'Falta un token de sesión válido.', retryable: false } });
+      return null;
+    }
+    return user;
+  }
 
   app.get('/health', async () => ({ status: 'ok', version: '0.1.0' }));
 
@@ -297,6 +402,190 @@ export async function buildApp(config: AppConfig, dependencies: AppDependencies 
       return outcome;
     },
   );
+
+  // ── Cuentas y sesiones ──────────────────────────────────────────────────
+  // Cuerpo pequeño (solo correo + contraseña) y límite de intentos por IP:
+  // 10 cada 15 minutos, contra fuerza bruta y enumeración de cuentas. Nunca se
+  // registra el cuerpo: Fastify no logea bodies por defecto y el token/header
+  // Authorization está en la lista `redact`.
+  const authRateLimit = { config: { rateLimit: { max: 10, timeWindow: '15 minutes' } }, bodyLimit: 4_000 };
+
+  app.post('/v1/auth/register', authRateLimit, async (request, reply) => {
+    if (accounts === undefined) {
+      return reply.status(503).send({ error: { code: 'accounts_not_configured', message: 'Las cuentas no están configuradas.', retryable: false } });
+    }
+    const body = RegisterBodySchema.safeParse(request.body);
+    if (!body.success) {
+      return reply.status(400).send({ error: { code: 'invalid_credentials_input', message: 'Correo inválido o contraseña de menos de 10 caracteres.', retryable: false } });
+    }
+    try {
+      const session = await accounts.register(body.data.email, body.data.password);
+      return reply.status(201).send({ token: session.token, expiresAt: session.expiresAt });
+    } catch (error) {
+      if (error instanceof EmailAlreadyRegisteredError) {
+        return reply.status(409).send({ error: { code: 'email_already_registered', message: 'Ya existe una cuenta con ese correo.', retryable: false } });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/auth/login', authRateLimit, async (request, reply) => {
+    if (accounts === undefined) {
+      return reply.status(503).send({ error: { code: 'accounts_not_configured', message: 'Las cuentas no están configuradas.', retryable: false } });
+    }
+    const body = LoginBodySchema.safeParse(request.body);
+    if (!body.success) {
+      // Mismo cuerpo que un login fallido: no se distingue "mal formado" de
+      // "credenciales incorrectas" hacia afuera más allá del código de forma.
+      return reply.status(400).send({ error: { code: 'invalid_credentials_input', message: 'Correo o contraseña inválidos.', retryable: false } });
+    }
+    try {
+      const session = await accounts.login(body.data.email, body.data.password);
+      return reply.status(200).send({ token: session.token, expiresAt: session.expiresAt });
+    } catch (error) {
+      if (error instanceof InvalidCredentialsError) {
+        // IDÉNTICO tanto si el correo no existe como si la contraseña está mal.
+        return reply.status(401).send({ error: { code: 'invalid_credentials', message: 'Correo o contraseña incorrectos.', retryable: false } });
+      }
+      throw error;
+    }
+  });
+
+  app.post('/v1/auth/logout', async (request, reply) => {
+    if (accounts === undefined) {
+      return reply.status(503).send({ error: { code: 'accounts_not_configured', message: 'Las cuentas no están configuradas.', retryable: false } });
+    }
+    const token = bearerToken(request);
+    if (token === null) {
+      return reply.status(401).send({ error: { code: 'unauthorized', message: 'Falta un token de sesión válido.', retryable: false } });
+    }
+    await accounts.logout(token);
+    return reply.status(200).send({ ok: true });
+  });
+
+  app.get('/v1/auth/me', async (request, reply) => {
+    if (accounts === undefined) {
+      return reply.status(503).send({ error: { code: 'accounts_not_configured', message: 'Las cuentas no están configuradas.', retryable: false } });
+    }
+    const user = await requireUser(request, reply);
+    if (user === null) return reply;
+    // Solo correo y estado de suscripción — nada más.
+    return { email: user.email, subscriptionStatus: user.subscriptionStatus };
+  });
+
+  // ── Catálogo personal ───────────────────────────────────────────────────
+  app.get('/v1/catalog/mine', async (request, reply) => {
+    if (personalCatalog === undefined) {
+      return reply.status(503).send({ error: { code: 'catalog_not_configured', message: 'El catálogo no está configurado.', retryable: false } });
+    }
+    const user = await requireUser(request, reply);
+    if (user === null) return reply;
+    return { foods: await personalCatalog.listMine(user.id) };
+  });
+
+  app.put(
+    '/v1/catalog/mine',
+    { bodyLimit: 40_000, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      if (personalCatalog === undefined) {
+        return reply.status(503).send({ error: { code: 'catalog_not_configured', message: 'El catálogo no está configurado.', retryable: false } });
+      }
+      const user = await requireUser(request, reply);
+      if (user === null) return reply;
+      const body = SharedCatalogUploadSchema.safeParse(request.body);
+      if (!body.success) {
+        return reply.status(400).send({ error: { code: 'invalid_catalog_entries', message: 'Las entradas del catálogo no son válidas.', retryable: false } });
+      }
+      const outcome = await personalCatalog.upsertMine(user.id, body.data.entries, new Date().toISOString());
+      return outcome;
+    },
+  );
+
+  app.delete('/v1/catalog/mine/:key', async (request, reply) => {
+    if (personalCatalog === undefined) {
+      return reply.status(503).send({ error: { code: 'catalog_not_configured', message: 'El catálogo no está configurado.', retryable: false } });
+    }
+    const user = await requireUser(request, reply);
+    if (user === null) return reply;
+    const params = CatalogKeyParamsSchema.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({ error: { code: 'invalid_key', message: 'Clave de alimento inválida.', retryable: false } });
+    }
+    const deleted = await personalCatalog.deleteMine(user.id, params.data.key);
+    return reply.status(deleted ? 200 : 404).send(deleted ? { ok: true } : { error: { code: 'not_found', message: 'No existe ese alimento en tu catálogo.', retryable: false } });
+  });
+
+  // ── Fotos del catálogo ──────────────────────────────────────────────────
+  app.get('/v1/catalog/photo/:foodKey', async (request, reply) => {
+    if (catalogPhotos === undefined) {
+      return reply.status(503).send({ error: { code: 'catalog_not_configured', message: 'El catálogo no está configurado.', retryable: false } });
+    }
+    const params = FoodKeyParamsSchema.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({ error: { code: 'invalid_key', message: 'Clave de alimento inválida.', retryable: false } });
+    }
+    // Con token → foto personal; sin token → foto de la comunidad.
+    const user = await currentUser(request);
+    const photo = await catalogPhotos.get(user?.id ?? null, params.data.foodKey);
+    if (photo === null) {
+      return reply.status(404).send({ error: { code: 'not_found', message: 'No hay foto para ese alimento.', retryable: false } });
+    }
+    return reply
+      .header('Content-Type', photo.mimeType)
+      .header('Cache-Control', 'private, max-age=86400')
+      .send(photo.bytes);
+  });
+
+  app.put(
+    '/v1/catalog/photo/:foodKey',
+    // 700 KB de tope de cuerpo: deja pasar el base64 (≈1.34×) de una foto de
+    // hasta 400 KB para poder responder 413 nosotros con un mensaje claro, en
+    // vez de que Fastify corte con un 413 genérico antes de validar.
+    { bodyLimit: 700_000, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      if (catalogPhotos === undefined) {
+        return reply.status(503).send({ error: { code: 'catalog_not_configured', message: 'El catálogo no está configurado.', retryable: false } });
+      }
+      const user = await requireUser(request, reply);
+      if (user === null) return reply;
+      const params = FoodKeyParamsSchema.safeParse(request.params);
+      if (!params.success) {
+        return reply.status(400).send({ error: { code: 'invalid_key', message: 'Clave de alimento inválida.', retryable: false } });
+      }
+      const body = PhotoUploadBodySchema.safeParse(request.body);
+      if (!body.success) {
+        return reply.status(400).send({ error: { code: 'invalid_photo', message: 'Falta la imagen en base64 o el tipo MIME no es válido (jpeg, png o webp).', retryable: false } });
+      }
+      let bytes: Buffer;
+      try {
+        bytes = Buffer.from(body.data.imageBase64, 'base64');
+      } catch {
+        return reply.status(400).send({ error: { code: 'invalid_photo', message: 'La imagen no es base64 válido.', retryable: false } });
+      }
+      if (bytes.length === 0) {
+        return reply.status(400).send({ error: { code: 'invalid_photo', message: 'La imagen está vacía.', retryable: false } });
+      }
+      if (bytes.length > MAX_PHOTO_BYTES) {
+        return reply.status(413).send({ error: { code: 'photo_too_large', message: 'La foto supera el máximo de 400 KB. Comprímela antes de subirla.', retryable: false } });
+      }
+      await catalogPhotos.upsert(user.id, params.data.foodKey, bytes, body.data.mimeType);
+      return reply.status(200).send({ ok: true });
+    },
+  );
+
+  app.delete('/v1/catalog/photo/:foodKey', async (request, reply) => {
+    if (catalogPhotos === undefined) {
+      return reply.status(503).send({ error: { code: 'catalog_not_configured', message: 'El catálogo no está configurado.', retryable: false } });
+    }
+    const user = await requireUser(request, reply);
+    if (user === null) return reply;
+    const params = FoodKeyParamsSchema.safeParse(request.params);
+    if (!params.success) {
+      return reply.status(400).send({ error: { code: 'invalid_key', message: 'Clave de alimento inválida.', retryable: false } });
+    }
+    await catalogPhotos.delete(user.id, params.data.foodKey);
+    return reply.status(200).send({ ok: true });
+  });
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof AIServiceError || error instanceof CGMProviderError || error instanceof JunctionLinkError) {
