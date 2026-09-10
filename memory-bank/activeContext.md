@@ -4,22 +4,21 @@ _Última actualización: 2026-09-10 (Fase 0 del agente: el andamio y el candado)
 
 ## El agente: Fase 0, el andamio (2026-09-10)
 
-`docs/adr/0008`. **Salida estructurada, no tool calling**, y no por gusto:
-RouteLLM devuelve las llamadas a herramienta como **texto plano** (defecto
-reproducido por terceros), y una escritura que degrada a prosa significa que el
-modelo dice "listo, registré tu comida" y no se escribió nada. `response_format:
-json_schema` ya está en producción acá y sobrevivió al incidente de
-`exclusiveMinimum`, o sea contra los dos modelos a los que RouteLLM enruta.
+`docs/adr/0008`. **Salida estructurada, no tool calling**: RouteLLM devuelve las
+llamadas a herramienta como **texto plano** (defecto reproducido por terceros), y
+una escritura que degrada a prosa significa que el modelo dice "listo, registré
+tu comida" y no se escribió nada. `response_format: json_schema` ya está en
+producción acá y sobrevivió al incidente de `exclusiveMinimum`.
 
 Probado contra la API real: `gpt-audio-1.5` funciona, `gpt-audio-mini` dice "no
 hay audio" pese a estar listado, **`m4a` se rechaza** (solo wav/mp3) y **audio +
 `json_schema` no se combinan**. De ahí los dos pasos, que resultó mejor: la
 transcripción **se ve y se corrige** antes de que exista un borrador.
 
-**El registro es código**: `agent-tools.ts` declara qué alcanza y qué no, con el
-motivo escrito en cada exclusión, y `verify:contracts` falla si una función de
-`db.ts` no está en ninguna lista. En su primera corrida cazó una sin clasificar,
-y un test cazó ocho motivos de relleno ("Ídem.") que yo mismo escribí.
+**El registro es código**: `agent-tools.ts` declara qué alcanza y qué no, con su
+motivo, y `verify:contracts` falla si una función de `db.ts` no está en ninguna
+lista. En su primera corrida cazó una sin clasificar, y un test cazó ocho motivos
+de relleno ("Ídem.") que yo mismo escribí.
 
 **El borrador es del mismo tipo que el payload del Modal Maestro**, así que no
 puede ser más pobre. `saveTherapyProfile` no es alcanzable: nunca.
