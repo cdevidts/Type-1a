@@ -124,17 +124,13 @@ prohíbe juzgar a qué hora come.
 
 ## Backlog de producto priorizado
 
-1. **El agente, Fase 3**: la pantalla del chat y la tarjeta de confirmación —
-   lo primero que se va a poder tocar. La **Fase 2 ya está**: `/v1/ai/chat` de un
-   turno, con el contexto que **no lleva los parámetros de terapia** (con ratio y
-   factor el modelo calcula una dosis de memoria y el filtro no lo notaría), y el
-   guardia que rechaza pedir insulina **sin gastar la llamada**. El borrador que
-   propone el modelo **no tiene campo de insulina**: lleva `needsBolus`, y el
-   número lo calcula el dominio. ⚠️ **El endpoint no está desplegado.** La
-   **Fase 1**: `local-intent.ts` lee "250 ml de agua" o "6 de rápida" **sin
-   gastar un crédito**, y ante la duda no interpreta — "me puse 6" no dice si fue
-   rápida o basal, y una glucosa imposible para su unidad no se registra. Lo
-   entendido a medias **pre-llena** el formulario. **Sin pantalla todavía.**
+1. **El agente, Fase 4**: el micrófono (`expo-audio` + permiso, exige build). Ya
+   están la **pantalla** (`AgentChatModal`, con foto y tarjeta confirmable), el
+   **turno** (`/v1/ai/chat`, contexto **sin parámetros de terapia** y guardia que
+   rechaza pedir insulina sin gastar la llamada), y el **parser local** que
+   pre-llena antes de que salga una petición. Nada se escribe hasta que ella
+   toca Guardar, y "Corregir" abre el Modal Maestro sembrado, no uno nuevo.
+   ⚠️ **El endpoint no está desplegado**: hoy solo anda lo que se entiende local.
 2. **Gráfico de velocidad en Resumen → Insulina** (decisión de ella): se
    **agrega, no reemplaza**. mg/dL por hora en pasos de 30 min hasta 4 h; al ser
    derivada no usa línea base, y por eso es inmune a D2. **Antes hay que cerrar

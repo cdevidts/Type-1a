@@ -3,14 +3,16 @@ import { z } from 'zod';
 
 import { localizeEpisodeMetrics, separatePlainWater } from '@type1a/domain';
 import {
-  CGMProviderStatusSchema,
-  CGMReadingSchema,
-  GlucoseInsightSchema,
-  MealAnalysisResultSchema,
+  type AgentTurn,
+  AgentTurnSchema,
   type CGMProviderStatus,
+  CGMProviderStatusSchema,
   type CGMReading,
+  CGMReadingSchema,
   type GlucoseInsight,
+  GlucoseInsightSchema,
   type MealAnalysisResult,
+  MealAnalysisResultSchema,
   type MealEpisodeMetrics,
   type MealSnapshot,
 } from '@type1a/schemas';
@@ -258,4 +260,30 @@ export async function connectFreestyleLibre(email: string): Promise<string> {
     body: JSON.stringify({ email, region: 'cl' }),
   });
   return LinkEnvelopeSchema.parse(payload).state;
+}
+
+
+/**
+ * Un turno del asistente (ADR 0008).
+ *
+ * El contexto lo arma el teléfono con `buildAgentContext`, que por diseño no
+ * incluye los parámetros de terapia: el modelo no puede calcular una dosis
+ * porque no tiene con qué, no porque el prompt se lo pida.
+ */
+export async function askAgent(input: {
+  message: string;
+  context: unknown;
+  history?: readonly { role: 'user' | 'assistant'; content: string }[];
+}): Promise<AgentTurn> {
+  const payload = await requestJson('/v1/ai/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      message: input.message,
+      context: input.context,
+      ...(input.history === undefined ? {} : { history: input.history }),
+    }),
+  });
+  // Se revalida acá aunque el backend ya lo hizo: lo que llega por la red es
+  // input externo, y `AGENTS.md` no hace excepciones por venir de casa.
+  return AgentTurnSchema.parse(payload);
 }

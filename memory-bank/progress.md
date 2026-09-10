@@ -8,7 +8,7 @@ _Última actualización: 2026-09-10 (Fase 0 del agente)._
 |---|---|
 | `pnpm verify` | Verde (`verify:contracts`, lint, typecheck, test, `verify:bundle`). El wrapper de Windows conserva su fallo de rutas; CI Linux es la verificación integral |
 | Tests | **1.025** — domain 671, mobile 273, ai 34, schemas 21, cgm 10, api 16 |
-| Bundle de Metro | **1.376** hoy; el build `444a3ff3` salió con 1.373 |
+| Bundle de Metro | **1.379** hoy; el build `444a3ff3` salió con 1.373 |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
 ⚠️ `verify:contracts` ahora exige además que **toda** función exportada de `db.ts` esté clasificada para el agente.
@@ -127,8 +127,10 @@ Cada uno costó un build o un número falso; detalle en `git log`.
 
 ## Backend (2026-09-10)
 
-⚠️ **`/v1/ai/chat` está escrito y NO desplegado.** El agente no responde hasta el
-próximo redeploy. Va en la misma corrida que cualquier otra cosa pendiente.
+⚠️ **`/v1/ai/chat` está escrito y NO desplegado.** La pantalla del chat ya existe
+en la app, pero hasta el redeploy solo funciona lo que se entiende **sin modelo**
+(`local-intent`): agua, insulina con su tipo, carbos y glucosa. Preguntar por los
+datos da error hasta entonces.
 
 Desplegado el head `37c03e1` y, encima, cuentas de suscripción y catálogo con
 dueño (DeepAgent). **Verificado contra la URL en vivo, no reportado**: v4

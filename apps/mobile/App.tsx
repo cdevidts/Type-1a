@@ -10,6 +10,7 @@ import Calculator from 'lucide-react-native/icons/calculator';
 import FlaskConical from 'lucide-react-native/icons/flask-conical';
 import GlassWater from 'lucide-react-native/icons/glass-water';
 import Settings from 'lucide-react-native/icons/settings';
+import Sparkles from 'lucide-react-native/icons/sparkles';
 import Syringe from 'lucide-react-native/icons/syringe';
 import UtensilsCrossed from 'lucide-react-native/icons/utensils-crossed';
 import {
@@ -24,10 +25,16 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import {
+  buildAgentContext,
   buildCatalogProposals,
   buildReportRows,
+  type CartLine,
   catalogEntryFromPortion,
+  type CatalogFood,
+  type CatalogProposalSet,
+  convertGlucose,
   countBackupRecords,
+  type EntryPrefill,
   insulinNameForType,
   isPlausibleInsulinDuration,
   latestLiveReading,
@@ -37,14 +44,13 @@ import {
   planBackupImport,
   rapidInsulinActionModel,  basalInsulinLookbackMinutes,
   rapidInsulinLookbackMinutes,
+  type Recipe,
   recipeToCartLines,
   serializeBackup,
-  type CartLine,
-  type CatalogFood,
-  type CatalogProposalSet,
-  type Recipe,
+  summarizeGlucose,
 } from '@type1a/domain';
 import type {
+  AgentTurn,
   CGMProviderStatus,
   CGMReading,
   InsulinEvent,
@@ -59,6 +65,8 @@ import type {
 // no UI on screen — see backgroundSync.ts.
 import { applyBackupImport, backupSnapshotIds, collectBackup } from './src/backupIO';
 import type { BackupExportOutcome, BackupImportOutcome } from './src/backupOutcome';
+import { askAgent } from './src/api';
+import { AgentChatModal } from './src/components/AgentChatModal';
 import { registerBackgroundSync } from './src/backgroundSync';
 import { CorrectionModal } from './src/components/CorrectionModal';
 import { UnifiedEntryModal, type MasterMode, type UnifiedEntryDraft } from './src/components/UnifiedEntryModal';
@@ -233,6 +241,7 @@ function Type1AApp() {
   const [pendingAssociations, setPendingAssociations] = useState<PendingInsulinAssociation[]>([]);
   const [quickRoute, setQuickRoute] = useState<QuickRoute | null>(null);
   const [mealOpen, setMealOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   /**
    * El Modal Maestro: `null` = cerrado.
    *
@@ -1112,6 +1121,57 @@ function Type1AApp() {
    * El archivo se escribe en caché y se comparte: **no se sube a ninguna
    * parte**, que es lo que ADR 0007 promete. Dónde termina lo decide ella.
    */
+  /** Un turno del asistente. El contexto se arma acá, en el teléfono. */
+  async function askAgentTurn(message: string, imageBase64?: string): Promise<AgentTurn> {
+    const to = new Date();
+    const from = new Date(to.getTime() - 14 * 24 * 60 * 60_000);
+    const tally = createDecodeTally();
+    const readings = await getCGMReadings(db, from, to, tally);
+    const [meals, rapid, basal, activity, water] = await Promise.all([
+      getMealEvents(db, from, to, tally),
+      getInsulinEvents(db, from, to, tally),
+      getInsulinEvents(db, from, to, tally),
+      getActivityEvents(db, from, to),
+      getWaterEvents(db, from, to),
+    ]);
+    const context = buildAgentContext({
+      now: to.toISOString(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      range: { fromIso: from.toISOString(), toIso: to.toISOString(), label: '14 días' },
+      summary: summarizeGlucose(readings),
+      tally: { unreadable: tally.unreadable },
+      counts: {
+        meals: meals.length,
+        rapidDoses: rapid.filter((dose) => dose.type === 'rapid').length,
+        basalDoses: basal.filter((dose) => dose.type === 'basal').length,
+        activity: activity.length,
+        waterMl: water.reduce((sum, event) => sum + event.ml, 0),
+      },
+      // SOLO el booleano. `agent-context.ts` explica por qué los valores no
+      // pueden viajar: con el ratio y el factor, la dosis es una división.
+      therapyConfigured,
+      latest: latest === null ? null : {
+        valueMgDl: convertGlucose(latest.glucose, latest.unit, 'mg/dL'),
+        minutesAgo: Math.max(0, Math.round((to.getTime() - Date.parse(latest.sourceTimestamp)) / 60_000)),
+        origin: latest.origin === 'real' ? 'real' : latest.origin === 'imported' ? 'imported' : 'manual',
+      },
+    });
+    void imageBase64;
+    return askAgent({ message, context });
+  }
+
+  /** Escribe lo que ella confirmó en la tarjeta. Nada se guarda antes. */
+  async function confirmAgentDraft(prefill: EntryPrefill): Promise<void> {
+    await saveEntry({
+      timestamp: new Date().toISOString(),
+      ...(prefill.glucose === undefined ? {} : { manualGlucose: prefill.glucose.value }),
+      ...(prefill.carbsG === undefined ? {} : { carbsG: prefill.carbsG }),
+      ...(prefill.rapidUnits === undefined ? {} : { rapidUnits: prefill.rapidUnits }),
+      ...(prefill.basalUnits === undefined ? {} : { basalUnits: prefill.basalUnits }),
+      ...(prefill.waterMl === undefined || prefill.waterMl === null ? {} : { waterMl: prefill.waterMl }),
+    } as UnifiedEntryDraft);
+  }
+
   async function exportBackup(): Promise<BackupExportOutcome> {
     const collected = await collectBackup(db, {
       exportedAt: new Date().toISOString(),
@@ -1590,6 +1650,14 @@ function Type1AApp() {
             onPress={() => { setMealOpen(true); }}
           />
           <QuickButton
+            label="Asistente"
+            hint="Cuéntale o pregúntale"
+            Icon={Sparkles}
+            color={colors.blue}
+            soft="#E3EEF7"
+            onPress={() => { setChatOpen(true); }}
+          />
+          <QuickButton
             label="Corrección"
             hint="Calcular con tus parámetros"
             Icon={Calculator}
@@ -1737,6 +1805,20 @@ function Type1AApp() {
         correctionFactor={profile.correctionFactor}
         doseIncrement={profile.doseIncrement}
       />
+      <AgentChatModal
+        visible={chatOpen}
+        onClose={() => { setChatOpen(false); }}
+        glucoseUnit={profile.glucoseUnit}
+        onAsk={askAgentTurn}
+        onConfirmDraft={confirmAgentDraft}
+        onOpenMaster={(prefill) => {
+          setChatOpen(false);
+          // El maestro es el mismo componente de siempre: el asistente no monta
+          // un formulario paralelo, le pasa lo entendido al que ya existe.
+          setMasterMode({ kind: 'create', prefill, onSave: saveEntry });
+        }}
+      />
+
       <SettingsModal
         onClearSegmentDuration={async (segment) => {
           const current = { ...(profile.segmentDurationHours ?? {}) };

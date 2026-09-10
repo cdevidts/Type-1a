@@ -5,18 +5,19 @@ import { AppState, Image, Pressable, StyleSheet, Switch, Text, TextInput, View }
 
 import {
   activeInsulinUnits,
-  rapidInsulinActionModel,  assessFreshness,
   calculateCorrection,
   calculateMealBolus,
-  convertGlucose,
-  insulinNameForType,
-  isSensorReading,
-  resolveMacrosSource,
   type CartLine,
   type CatalogFood,
+  convertGlucose,
+  type EntryPrefill,
+  insulinNameForType,
+  isSensorReading,
+  rapidInsulinActionModel,  assessFreshness,
   type Recipe,
-  waterEstimateIsTrustworthy,
+  resolveMacrosSource,
   WATER_PRESETS_ML,
+  waterEstimateIsTrustworthy,
 } from '@type1a/domain';
 import type { CGMReading, InsulinEvent, MealAnalysisResult, MealEvent, TherapyProfile } from '@type1a/schemas';
 
@@ -173,6 +174,15 @@ export type MasterMode =
        * mediodía ni se guarda "ahora" en silencio.
        */
       presetDay?: Date | null;
+      /**
+       * Lo que el asistente ya entendió, para que el formulario no abra en
+       * blanco (pedido de Verónica, 2026-09-10).
+       *
+       * Solo siembra campos: **no guarda nada y no cambia ninguna regla**. La
+       * glucosa del asistente entra como capilar, porque la escribió ella y no
+       * el sensor, y un campo ausente sigue quedando vacío en vez de en cero.
+       */
+      prefill?: EntryPrefill;
       onSave: (draft: UnifiedEntryDraft) => Promise<void>;
     }
   | {
@@ -437,17 +447,29 @@ export function UnifiedEntryModal({
         // no es la que había el martes, y precargarla la convertiría en un
         // dato de ese día que nadie midió.
         const canUseAsSensor = preset === null && snapshot !== null && (snapshot.isSensor || snapshot.isSynthetic);
-        setGlucose(canUseAsSensor && snapshot !== null ? String(snapshot.glucose) : '');
-        setPrefilled(canUseAsSensor ? snapshot : null);
-        setOriginalPrefill(canUseAsSensor ? snapshot : null);
-        setGlucoseSource(canUseAsSensor ? 'sensor' : 'capillary');
+        // Lo que el asistente entendió gana sobre el precargado del sensor: es
+        // una medición que ella acaba de decir, no una lectura de hace un rato.
+        const seed = mode?.kind === 'create' ? mode.prefill : undefined;
+        const seededGlucose = seed?.glucose;
+        setGlucose(
+          seededGlucose !== undefined
+            ? String(seededGlucose.value)
+            : (canUseAsSensor && snapshot !== null ? String(snapshot.glucose) : ''),
+        );
+        const useSensorPrefill = canUseAsSensor && seededGlucose === undefined;
+        setPrefilled(useSensorPrefill ? snapshot : null);
+        setOriginalPrefill(useSensorPrefill ? snapshot : null);
+        // La del asistente es capilar: la escribió ella, no el sensor.
+        setGlucoseSource(useSensorPrefill ? 'sensor' : 'capillary');
         setDescription('');
         setInstruction('');
-        setCarbs('');
-        setRapid('');
-        setBasal('');
+        setCarbs(seed?.carbsG === undefined ? '' : String(seed.carbsG));
+        setRapid(seed?.rapidUnits === undefined ? '' : String(seed.rapidUnits));
+        setBasal(seed?.basalUnits === undefined ? '' : String(seed.basalUnits));
         setNote('');
-        setWaterMl('');
+        // `null` significa "dijo agua, no dijo cuánta": el campo queda vacío y
+        // ella elige, en vez de que la app invente un volumen.
+        setWaterMl(seed?.waterMl === undefined || seed.waterMl === null ? '' : String(seed.waterMl));
         setWaterFromAi(null);
         setProtein('');
         setFat('');
