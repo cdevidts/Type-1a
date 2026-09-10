@@ -28,10 +28,6 @@ _Última actualización: 2026-09-09 (respaldo cableado)._
   exportar e importar desde Ajustes, con `entry_group_id`, fotos y procedencia—
   y las fotos fuera de la caché, con migración de las que ya estaban.
 
-**Backend**: `9f5251e` desplegado (v3 y `knownFoodNames` ✓). El 502 de las fotos
-**no era el proxy**: `route-llm` manda las grandes a Gemini, que rechaza
-`exclusiveMinimum`. Arreglado en el saneado; espera un redeploy más.
-
 ## Deuda conocida
 
 ### 🔴 D1–D4: la curva de efecto mide mal, y D2 alcanza al IOB (2026-09-09)
@@ -135,9 +131,20 @@ Cada uno costó un build o un número falso; detalle en `git log`.
 | La consulta de dosis recientes traía 6 h fijas; la regular humana dura 8, así que el activo salía **de menos** — y el activo de menos sube la dosis propuesta | una ventana que alimenta un cálculo se deriva del modelo, nunca de una constante escrita al lado |
 | La pestaña de Insulina salió VACÍA: pedía correcciones aisladas sin otra rápida en 8 h, ventana que con múltiples dosis diarias no existe despierto. Segunda vez que se comete el mismo error, después de Patrones | truncar y ajustar, nunca obviar — y la prueba de que un filtro no es demasiado estricto es un test con **un día normal** adentro, no con el caso ideal |
 
-## Redeploy del backend
-Desplegado hasta `fd3ad1a`: **las fotos ya funcionan**. Verificado el 2026-09-03
-contra el servidor real: responde `meal-analysis-text.v3`, así que **los prompts
-v4 con `waterMl` siguen pendientes** — hoy devuelve "Agua" como un alimento de
-`foods` con 0 macros. El cliente lo rescata solo (`separatePlainWater`), así que
-el agua ya funciona; el redeploy lo hace más limpio, no lo desbloquea.
+## Backend (2026-09-10)
+
+Desplegado el head `37c03e1` y, encima, cuentas de suscripción y catálogo con
+dueño (DeepAgent). **Verificado contra la URL en vivo, no reportado**: v4
+responde, el agua ya **no** entra a `foods` como alimento de 0 g, el catálogo
+comunitario sigue en 200, las rutas nuevas dan 401 sin token, y **ninguna ruta de
+datos de salud apareció** (`/v1/sync`, `/v1/glucose`, `/v1/meals`… 404).
+`waterMl: null` sin volumen dicho es lo diseñado: el prompt prohíbe inventarlo.
+
+### 🔴 El código del backend NO está en git
+DeepAgent dejó `feat/accounts-catalog-photos` (`b9d43c9`, `027475c`) **sin push**:
+vive solo en esa instancia. Si se reinicia, se pierde, y hoy `apps/api` de este
+repo **no es lo que corre en producción**. Hay que traerlo antes de tocar nada
+del backend.
+
+Sin verificar por mí (exigiría crear una cuenta en su base real): que el 401 de
+login sea idéntico ante contraseña mala y correo inexistente.
