@@ -807,3 +807,90 @@ export const BackupFileSchema = z.object({
   data: BackupDataSchema,
 });
 export type BackupFile = z.infer<typeof BackupFileSchema>;
+
+
+// ---------------------------------------------------------------------------
+// El turno del agente — ADR 0008
+// ---------------------------------------------------------------------------
+
+/**
+ * Lo que el modelo devuelve por turno.
+ *
+ * ## Por qué es un objeto plano y no una unión discriminada de Zod
+ *
+ * El modo `strict` de `json_schema` exige que **toda** propiedad esté en
+ * `required` y prohíbe `additionalProperties`, así que la opcionalidad se
+ * expresa con `null`, no omitiendo la clave. Es el mismo patrón que
+ * `FoodEstimateSchema` ya usa con `estimatedGrams`, y funciona contra los dos
+ * modelos a los que RouteLLM enruta según el tamaño del payload.
+ *
+ * La coherencia entre `kind` y los campos se valida **de este lado**, con un
+ * `.refine`, porque es una garantía nuestra y no una promesa del modelo.
+ */
+export const AGENT_TURN_PROMPT_VERSION = 'agent-turn.v1';
+
+/**
+ * El borrador de entrada que el modelo puede proponer.
+ *
+ * **No existe campo de insulina, y es la frontera entera.** Un modelo no puede
+ * proponer unidades porque el tipo no tiene dónde ponerlas — el mismo principio
+ * de `MealSnapshotSchema`, que por eso mismo no puede ver ni tocar una dosis.
+ *
+ * Las unidades entran por dos caminos, ninguno de los cuales pasa por acá: las
+ * que ella dictó literalmente ("6 de rápida", que lee `local-intent.ts` sin
+ * modelo) y las que calcula `calculateMealBolus` con los parámetros que ella
+ * cargó. Si el borrador necesita una dosis, lo dice con `needsBolus`, que es una
+ * bandera y no un número.
+ */
+export const AgentEntryDraftSchema = z.object({
+  /** Qué comió, en sus palabras. `null` si el turno no habla de comida. */
+  mealNote: z.string().trim().max(300).nullable(),
+  foods: z.array(FoodEstimateSchema).max(30).nullable(),
+  /** Agua sola, en ml. `null` = no la mencionó, o no dijo cuánta. */
+  waterMl: z.number().positive().max(5000).nullable(),
+  activityMinutes: z.number().positive().max(1440).nullable(),
+  note: z.string().trim().max(500).nullable(),
+  /**
+   * `true` si por lo que describió correspondería calcular una dosis.
+   *
+   * Es una bandera, nunca un número: quien calcula es el dominio, con los
+   * parámetros de ella, y solo si la terapia está configurada.
+   */
+  needsBolus: z.boolean(),
+});
+export type AgentEntryDraft = z.infer<typeof AgentEntryDraftSchema>;
+
+const AgentTurnShape = z.object({
+  kind: z.enum(['answer', 'entry_draft', 'clarify', 'refusal']),
+  /** Lo que se le muestra a ella. Corto a propósito: el tope está en el prompt. */
+  say: z.string().trim().min(1).max(1200),
+  draft: AgentEntryDraftSchema.nullable(),
+  /** Con `kind: 'clarify'`, la única pregunta que falta. */
+  question: z.string().trim().max(200).nullable(),
+  /**
+   * Las cifras que citó, tal como se las dimos.
+   *
+   * Sirve para que la pantalla las muestre al lado de la frase y ella pueda
+   * comprobarlas. Un número que el modelo dice sin que esté acá es un número
+   * que se inventó.
+   */
+  cites: z.array(z.string().trim().max(80)).max(6),
+});
+
+/** `true` si el turno es coherente con su propio `kind`. */
+function turnIsCoherent(turn: z.infer<typeof AgentTurnShape>): boolean {
+  if (turn.kind === 'entry_draft') return turn.draft !== null;
+  if (turn.kind === 'clarify') return turn.question !== null && turn.question.length > 0;
+  // Un rechazo o una respuesta no escriben nada, así que no llevan borrador.
+  return turn.draft === null;
+}
+
+export const AgentTurnSchema = AgentTurnShape.refine(turnIsCoherent, {
+  message: 'El turno no coincide con su propio kind.',
+});
+export type AgentTurn = z.infer<typeof AgentTurnSchema>;
+
+/** El esquema que viaja al modelo. Sin el `.refine`, que es cosa nuestra. */
+export const agentTurnJsonSchema = z.toJSONSchema(AgentTurnShape, {
+  target: 'draft-2020-12',
+});

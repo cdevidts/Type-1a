@@ -2,26 +2,22 @@
 
 _Última actualización: 2026-09-10 (Fase 0 del agente: el andamio y el candado)._
 
-## El agente: Fase 0, el andamio (2026-09-10)
+## El agente: el andamio y el turno (2026-09-10)
 
 `docs/adr/0008`. **Salida estructurada, no tool calling**: RouteLLM devuelve las
-llamadas a herramienta como **texto plano** (defecto reproducido por terceros), y
-una escritura que degrada a prosa significa que el modelo dice "listo, registré
-tu comida" y no se escribió nada. `response_format: json_schema` ya está en
-producción acá y sobrevivió al incidente de `exclusiveMinimum`.
+llamadas a herramienta como **texto plano**, y una escritura que degrada a prosa
+significa que el modelo dice "listo, registré tu comida" y no se escribió nada.
+`json_schema` ya está en producción acá y sobrevivió al incidente de
+`exclusiveMinimum`. Probado con la clave real: `gpt-audio-1.5` sirve,
+`gpt-audio-mini` dice "no hay audio" pese a estar listado, **`m4a` se rechaza** y
+**audio + `json_schema` no se combinan** — de ahí los dos pasos, que salieron
+mejor: la transcripción **se ve y se corrige** antes de que exista un borrador.
 
-Probado contra la API real: `gpt-audio-1.5` funciona, `gpt-audio-mini` dice "no
-hay audio" pese a estar listado, **`m4a` se rechaza** (solo wav/mp3) y **audio +
-`json_schema` no se combinan**. De ahí los dos pasos, que resultó mejor: la
-transcripción **se ve y se corrige** antes de que exista un borrador.
-
-**El registro es código**: `agent-tools.ts` declara qué alcanza y qué no, con su
+**El registro es código**: `agent-tools.ts` declara qué alcanza y qué no con su
 motivo, y `verify:contracts` falla si una función de `db.ts` no está en ninguna
 lista. En su primera corrida cazó una sin clasificar, y un test cazó ocho motivos
-de relleno ("Ídem.") que yo mismo escribí.
-
-**El borrador es del mismo tipo que el payload del Modal Maestro**, así que no
-puede ser más pobre. `saveTherapyProfile` no es alcanzable: nunca.
+de relleno que yo mismo escribí. **El borrador es del mismo tipo que el payload
+del Modal Maestro**, y `saveTherapyProfile` no es alcanzable: nunca.
 
 ## Ni sincronización ni datos de salud en un servidor (2026-09-04)
 
@@ -86,16 +82,16 @@ que nació un registro no limita lo que se le suma después.
 
 ## Ya entregado al teléfono (`a706510`) — el detalle, en los cuerpos de commit
 
-- **La edición retroactiva no tiene límite de tipo.** `promoteEventToEntryGroup`
-  conserva id, hora, `created_at`, `source` y procedencia, en **una** transacción.
+- **La edición retroactiva no tiene límite de tipo**: `promoteEventToEntryGroup`
+  conserva id, hora, `created_at`, `source` y procedencia, en una transacción.
 - **`ingestedAt` y la hora de una lectura externa no se mueven nunca.** Un blanco
-  no es un cero. El nombre de la insulina es configuración, no un campo suelto.
+  no es un cero; el nombre de la insulina es configuración, no un campo suelto.
 
 ## Las transacciones SQLite, cerradas (2026-08-28)
 
 El fondo recibía la **misma conexión nativa** que la pantalla y le corría un
-`BEGIN` encima; el `ROLLBACK` de una cerraba la transacción de la otra. Hoy abre
-con `useNewConnection` y **toda** transacción pasa por una cola FIFO.
+`BEGIN` encima; el `ROLLBACK` de una cerraba la de la otra. Hoy abre con
+`useNewConnection` y **toda** transacción pasa por una cola FIFO.
 
 ## Catálogo, porción, fibra y la hora del resumen (2026-09-01)
 
@@ -111,37 +107,41 @@ horario de verano existe). Lo que crece con eso es lo que el modelo **puede
 decir**: una hora local significa algo sobre su vida, así que el mismo cambio le
 prohíbe juzgar a qué hora come.
 
-✅ En el teléfono (builds `03fb5c6d` y `e93ce4a2`).
+✅ En el teléfono (`03fb5c6d`, `e93ce4a2`).
 
 ## Reglas de proceso que sobreviven
 
 1. Antes de agregar un campo a un formulario de comida, se mira si va en
-   `MacroFields` o en otro compartido: suelto en un modal es cómo llegamos a tener
+   `MacroFields` u otro compartido: suelto en un modal es cómo llegamos a tener
    el mismo bloque seis veces.
 2. **Una decisión de datos no se verifica a ojo.** Lo que decide qué se guarda,
    qué se ve o qué es un hecho vive en un módulo puro con test: `masterModal`,
    `mealCarbMirror`, `entryTime`, `mealFields`, `meal-cart`, `entryGroupClaim`,
-   `dbWriteQueue`, `mealNote`, `episode-local-time`, `nutrition-targets`, `backup`.
+   `dbWriteQueue`, `mealNote`, `episode-local-time`, `nutrition-targets`,
+   `backup`, `agent-tools`, `agent-context`, `local-intent`.
 3. Un dato que el formulario **no ve** es un dato que el guardado borra: por eso
-   `TimelineEntryGroupRaw` relee insulina, calorías, peso y presión aunque la
-   fila del timeline no los muestre.
+   `TimelineEntryGroupRaw` relee insulina, calorías, peso y presión.
 
 ## Backlog de producto priorizado
 
-1. **El agente, Fase 2**: `/v1/ai/chat` de un turno, el `EntryDraft` con su
-   tarjeta de confirmación, y el micrófono. La **Fase 1 ya está**:
-   `local-intent.ts` lee "250 ml de agua" o "6 de rápida" **sin gastar un
-   crédito**, y ante la duda no interpreta — "me puse 6" no dice si fue rápida o
-   basal, y una glucosa imposible para su unidad no se registra. Y lo entendido a
-   medias **pre-llena** el formulario (`toPrefill`), decisión de ella: si igual
-   va a aparecer, que llegue lleno. **Nada de esto tiene pantalla todavía.**
+1. **El agente, Fase 3**: la pantalla del chat y la tarjeta de confirmación —
+   lo primero que se va a poder tocar. La **Fase 2 ya está**: `/v1/ai/chat` de un
+   turno, con el contexto que **no lleva los parámetros de terapia** (con ratio y
+   factor el modelo calcula una dosis de memoria y el filtro no lo notaría), y el
+   guardia que rechaza pedir insulina **sin gastar la llamada**. El borrador que
+   propone el modelo **no tiene campo de insulina**: lleva `needsBolus`, y el
+   número lo calcula el dominio. ⚠️ **El endpoint no está desplegado.** La
+   **Fase 1**: `local-intent.ts` lee "250 ml de agua" o "6 de rápida" **sin
+   gastar un crédito**, y ante la duda no interpreta — "me puse 6" no dice si fue
+   rápida o basal, y una glucosa imposible para su unidad no se registra. Lo
+   entendido a medias **pre-llena** el formulario. **Sin pantalla todavía.**
 2. **Gráfico de velocidad en Resumen → Insulina** (decisión de ella): se
    **agrega, no reemplaza**. mg/dL por hora en pasos de 30 min hasta 4 h; al ser
    derivada no usa línea base, y por eso es inmune a D2. **Antes hay que cerrar
    D1–D4** (`reference/insulin-duration-method.md`), o quedan tres gráficos y
    dos mintiendo.
-3. **PDF y Excel más ricos** para que los lea una persona: iconografía y una
-   síntesis que describe y **nunca** evalúa una dosis.
+3. **PDF y Excel más ricos**: iconografía y una síntesis que describe y **nunca**
+   evalúa una dosis.
 4. **Hallazgos abiertos**: ver `progress.md`.
 
 ## Fuera de foco pero pendiente

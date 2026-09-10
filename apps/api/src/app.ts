@@ -2,9 +2,11 @@ import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import {
   AIServiceError,
+  AbacusAgentChatService,
   AbacusGlucoseInsightService,
   AbacusMealVisionService,
   AbacusRouteLLMClient,
+  type AgentChatService,
   type GlucoseInsightService,
   type MealVisionService,
 } from '@type1a/ai';
@@ -15,7 +17,7 @@ import {
   MockCGMProvider,
   type CGMProvider,
 } from '@type1a/cgm';
-import { assessFreshness } from '@type1a/domain';
+import { assessFreshness, requestsInsulinAdvice } from '@type1a/domain';
 import {
   KnownFoodNamesSchema,
   MealEditInputSchema,
@@ -89,6 +91,7 @@ export interface AppDependencies {
   cgmProvider?: CGMProvider;
   mealVisionService?: MealVisionService;
   glucoseInsightService?: GlucoseInsightService;
+  agentChatService?: AgentChatService;
   junctionLinkService?: JunctionLinkService;
   foodCatalogStore?: FoodCatalogStore;
 }
@@ -132,6 +135,7 @@ function createProvider(config: AppConfig): CGMProvider {
 function createAiServices(config: AppConfig): {
   meal?: MealVisionService;
   insight?: GlucoseInsightService;
+  agent?: AgentChatService;
 } {
   if (config.ABACUS_ROUTE_LLM_API_KEY === undefined) return {};
   const client = new AbacusRouteLLMClient({
@@ -142,6 +146,7 @@ function createAiServices(config: AppConfig): {
   return {
     meal: new AbacusMealVisionService(client),
     insight: new AbacusGlucoseInsightService(client),
+    agent: new AbacusAgentChatService(client),
   };
 }
 
@@ -169,6 +174,23 @@ async function createFoodCatalogStore(config: AppConfig, log: FastifyInstance['l
   }
 }
 
+/**
+ * Lo que el teléfono manda para un turno del agente.
+ *
+ * `context` se acepta como `unknown` a propósito: el backend no lo interpreta,
+ * solo lo reenvía al modelo. Validar acá una forma que evoluciona en el móvil
+ * obligaría a un redeploy por cada campo nuevo, y quien garantiza qué sale del
+ * teléfono es `buildAgentContext`, que sí tiene test.
+ */
+const AgentChatRequestSchema = z.object({
+  message: z.string().trim().min(1).max(2000),
+  context: z.unknown(),
+  history: z
+    .array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().max(2000) }))
+    .max(10)
+    .optional(),
+});
+
 export async function buildApp(config: AppConfig, dependencies: AppDependencies = {}): Promise<FastifyInstance> {
   const app = Fastify({
     logger: config.NODE_ENV !== 'test'
@@ -188,6 +210,7 @@ export async function buildApp(config: AppConfig, dependencies: AppDependencies 
   const ai = createAiServices(config);
   const mealVision = dependencies.mealVisionService ?? ai.meal;
   const glucoseInsight = dependencies.glucoseInsightService ?? ai.insight;
+  const agentChat = dependencies.agentChatService ?? ai.agent;
   const foodCatalog = dependencies.foodCatalogStore ?? await createFoodCatalogStore(config, app.log);
   const junctionLink = dependencies.junctionLinkService ?? (
     config.JUNCTION_API_KEY !== undefined && config.JUNCTION_USER_ID !== undefined
@@ -256,6 +279,43 @@ export async function buildApp(config: AppConfig, dependencies: AppDependencies 
     const metrics = MealEpisodeMetricsSchema.safeParse(request.body);
     if (!metrics.success) return reply.status(400).send({ error: { code: 'invalid_metrics', message: 'Las métricas del episodio no son válidas.', retryable: false } });
     return glucoseInsight.summarize(metrics.data);
+  });
+
+  /**
+   * Un turno del agente. **Una llamada al modelo, nunca un bucle** (ADR 0008).
+   *
+   * El contexto lo arma el teléfono con `buildAgentContext`, que por diseño no
+   * incluye los parámetros de terapia: sin el ratio y el factor, el modelo no
+   * puede calcular una dosis aunque quisiera.
+   */
+  app.post('/v1/ai/chat', async (request, reply) => {
+    if (agentChat === undefined) {
+      return reply.status(503).send({ error: { code: 'ai_not_configured', message: 'El asistente no está configurado.', retryable: false } });
+    }
+    const body = AgentChatRequestSchema.safeParse(request.body);
+    if (!body.success) {
+      return reply.status(400).send({ error: { code: 'invalid_request', message: 'La consulta no es válida.', retryable: false } });
+    }
+
+    // El guardia corre ANTES de gastar la llamada: "¿cuánta insulina me pongo?"
+    // no necesita un modelo para responderse, y pagarla sería tirar el crédito.
+    if (requestsInsulinAdvice(body.data.message)) {
+      return {
+        kind: 'refusal',
+        say: 'No puedo decirte cuánta insulina ponerte. La calculadora de la app lo hace con los parámetros que tú cargaste, y ahí ves de dónde sale cada unidad.',
+        draft: null,
+        question: null,
+        cites: [],
+      };
+    }
+
+    // `exactOptionalPropertyTypes`: para OMITIR hay que omitir la clave, no
+    // pasar `undefined`.
+    return agentChat.respond({
+      context: body.data.context,
+      message: body.data.message,
+      ...(body.data.history === undefined ? {} : { history: body.data.history }),
+    });
   });
 
   app.post('/v1/provider/junction/link', async (request, reply) => {

@@ -7,8 +7,8 @@ _Última actualización: 2026-09-10 (Fase 0 del agente)._
 | | |
 |---|---|
 | `pnpm verify` | Verde (`verify:contracts`, lint, typecheck, test, `verify:bundle`). El wrapper de Windows conserva su fallo de rutas; CI Linux es la verificación integral |
-| Tests | **1.008** — domain 660, mobile 273, ai 34, schemas 21, cgm 10, api 10 |
-| Bundle de Metro | **1.375** hoy; el build `444a3ff3` salió con 1.373 |
+| Tests | **1.025** — domain 671, mobile 273, ai 34, schemas 21, cgm 10, api 16 |
+| Bundle de Metro | **1.376** hoy; el build `444a3ff3` salió con 1.373 |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
 ⚠️ `verify:contracts` ahora exige además que **toda** función exportada de `db.ts` esté clasificada para el agente.
@@ -126,6 +126,9 @@ Cada uno costó un build o un número falso; detalle en `git log`.
 | La pestaña de Insulina salió VACÍA: pedía correcciones aisladas sin otra rápida en 8 h, ventana que con múltiples dosis diarias no existe despierto. Segunda vez que se comete el mismo error, después de Patrones | truncar y ajustar, nunca obviar — y la prueba de que un filtro no es demasiado estricto es un test con **un día normal** adentro, no con el caso ideal |
 
 ## Backend (2026-09-10)
+
+⚠️ **`/v1/ai/chat` está escrito y NO desplegado.** El agente no responde hasta el
+próximo redeploy. Va en la misma corrida que cualquier otra cosa pendiente.
 
 Desplegado el head `37c03e1` y, encima, cuentas de suscripción y catálogo con
 dueño (DeepAgent). **Verificado contra la URL en vivo, no reportado**: v4

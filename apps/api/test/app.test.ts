@@ -1,5 +1,5 @@
 import { MockCGMProvider } from '@type1a/cgm';
-import type { GlucoseInsightService, MealVisionService } from '@type1a/ai';
+import type { AgentChatService, GlucoseInsightService, MealVisionService } from '@type1a/ai';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../src/app.js';
@@ -254,5 +254,92 @@ describe('Type 1A API', () => {
       expect(response.statusCode).toBe(400);
       expect(response.json().error.code).toBe('invalid_catalog_entries');
     });
+  });
+});
+
+describe('el agente conversacional', () => {
+  /** Un servicio de agente que registra qué se le pidió, sin llamar a nadie. */
+  function spyAgent(): { service: AgentChatService; calls: number; lastContext: unknown } {
+    const state = { calls: 0, lastContext: undefined as unknown };
+    const service: AgentChatService = {
+      async respond(input) {
+        state.calls += 1;
+        state.lastContext = input.context;
+        return { kind: 'answer', say: 'Tu promedio fue 154 mg/dL.', draft: null, question: null, cites: ['154'] };
+      },
+    };
+    return { service, get calls() { return state.calls; }, get lastContext() { return state.lastContext; } };
+  }
+
+  it('responde un turno estructurado', async () => {
+    const agent = spyAgent();
+    const app = await buildApp(testConfig(), { agentChatService: agent.service });
+    apps.push(app);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/ai/chat',
+      payload: { message: '¿cómo estuve estos 14 días?', context: { glucosa: { promedioMgDl: 154 } } },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ kind: 'answer', cites: ['154'] });
+    expect(agent.calls).toBe(1);
+  });
+
+  it('EL GUARDIA: pedir una dosis se rechaza SIN gastar la llamada', async () => {
+    // Pagarle a un modelo para que diga que no puede es tirar el crédito, y
+    // además abre la puerta a que conteste antes de negarse.
+    const agent = spyAgent();
+    const app = await buildApp(testConfig(), { agentChatService: agent.service });
+    apps.push(app);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/ai/chat',
+      payload: { message: '¿cuánta insulina me pongo para 60 g?', context: {} },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().kind).toBe('refusal');
+    expect(agent.calls).toBe(0);
+  });
+
+  it('el rechazo ofrece la calculadora en vez de dejarla sin salida', async () => {
+    const app = await buildApp(testConfig(), { agentChatService: spyAgent().service });
+    apps.push(app);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/ai/chat',
+      payload: { message: 'cuantas unidades me inyecto', context: {} },
+    });
+    expect(response.json().say).toMatch(/calculadora/iu);
+  });
+
+  it('sin agente configurado degrada a 503, no a 500', async () => {
+    const app = await buildApp(testConfig(), {});
+    apps.push(app);
+    const response = await app.inject({ method: 'POST', url: '/v1/ai/chat', payload: { message: 'hola', context: {} } });
+    expect(response.statusCode).toBe(503);
+    expect(response.json().error.code).toBe('ai_not_configured');
+  });
+
+  it('un mensaje vacío es 400, no una llamada al modelo', async () => {
+    const agent = spyAgent();
+    const app = await buildApp(testConfig(), { agentChatService: agent.service });
+    apps.push(app);
+    const response = await app.inject({ method: 'POST', url: '/v1/ai/chat', payload: { message: '   ', context: {} } });
+    expect(response.statusCode).toBe(400);
+    expect(agent.calls).toBe(0);
+  });
+
+  it('el contexto se reenvía tal cual: el backend no lo interpreta', async () => {
+    const agent = spyAgent();
+    const app = await buildApp(testConfig(), { agentChatService: agent.service });
+    apps.push(app);
+    await app.inject({
+      method: 'POST',
+      url: '/v1/ai/chat',
+      payload: { message: 'hola', context: { integridad: { registrosIlegibles: 17 } } },
+    });
+    expect(agent.lastContext).toEqual({ integridad: { registrosIlegibles: 17 } });
   });
 });
