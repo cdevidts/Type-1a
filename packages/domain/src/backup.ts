@@ -109,6 +109,11 @@ export function backupChecksum(data: unknown): string {
 export const SETTINGS_NEVER_BACKED_UP: readonly string[] = [
   'legacyBackendSensor',
   'quickEntryNotificationEnabled',
+  // Permiso para que el audio del dictado salga del teléfono (ADR 0009). Es
+  // de ESTE aparato: uno nuevo puede sí tener reconocimiento local, y aun si
+  // no lo tiene, un consentimiento heredado de un archivo no es un
+  // consentimiento. Se vuelve a preguntar.
+  'cloudDictationAllowedAt',
 ];
 
 /**

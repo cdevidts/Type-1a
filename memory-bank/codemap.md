@@ -56,6 +56,7 @@ Puro, determinístico, con test. **Ningún `.tsx` calcula una métrica de salud.
 | `iob.ts` | insulina activa: exponencial de LoopKit/OpenAPS. Se descuenta **solo de la corrección**, nunca de la comida; sin insulina configurada devuelve `undefined`, no cero. Ver `docs/adr/0005` |
 | `photos.ts`, `backupIO.ts` (mobile) | `persistPhoto` saca la foto de la caché, que Android vacía sola. `backupIO` lee las 15 tablas y las reescribe en **una** transacción, crudo y no con los `get*Events`: esos no devuelven `entry_group_id`, sin el cual un desayuno restaurado se abre en filas sueltas |
 | `local-intent.ts` | lo que se entiende **sin llamar al modelo**: agua, insulina con su tipo dicho, carbos, glucosa. Ante la duda no interpreta; lo entendido pre-llena igual (`toPrefill`) |
+| `dictation.ts` | el dictado por voz: lo dictado se fusiona con lo escrito y **espera** ahí; las pistas de vocabulario (insulinas, comidas) valen **solo** si se transcribe en el teléfono. `useDictation.ts` lo cablea al módulo nativo |
 | `agent-context.ts` | qué se le manda al modelo. **Los parámetros de terapia NO viajan**: con ratio y factor, la dosis es una división que el filtro de salida no notaría. `forbiddenKeysIn` lo afirma en un test |
 | `agent-tools.ts` | qué alcanza el agente y qué **no, con su motivo**. `verify:contracts` falla si una función de `db.ts` no está en ninguna lista. `docs/adr/0008` |
 | `backup.ts` | el `.t1a.json`: JSON canónico, huella y **plan idempotente** — importar dos veces no duplica, lo que ya está nunca se pisa, y `SETTINGS_NEVER_BACKED_UP` deja fuera lo de la instalación. Ver `docs/adr/0007` |
@@ -71,8 +72,7 @@ LibreLinkUp** (`librelinkup.ts`) — ver `docs/adr/0004`. `junction.ts` está
 implementado pero fuera de la ruta de datos; `libreview-csv.ts` importa
 historial; `mock.ts` es sintético. `trend.ts` normaliza la flecha de tendencia.
 
-⚠️ `packages/cgm` lo bundlea Metro, así que sus imports relativos **no llevan
-extensión `.js`**.
+⚠️ `packages/cgm` lo bundlea Metro: sus imports relativos **no llevan `.js`**.
 
 ## `packages/ai`
 
@@ -92,13 +92,13 @@ backend sin estado (ADR 0003). `junction-link.ts` quedó sin uso activo.
 `App.tsx` (~1.500 líneas) es el orquestador: estado, guardado y ruteo de
 modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
 
-- **Navegación**: no hay librería. Una pantalla es un `Modal` vía `ModalShell`;
-  sub-páginas son pestañas (`SummaryModal.tsx`). `BottomNav.tsx` +
-  `useSwipeNavigation.ts` + `swipeOrder.ts`.
+- **Navegación**: sin librería. Una pantalla es un `Modal` vía `ModalShell`;
+  sub-páginas, pestañas (`SummaryModal.tsx`). `BottomNav.tsx` (5 destinos, el 4
+  abre `AgentChatModal.tsx`), `useSwipeNavigation.ts`, `swipeOrder.ts`.
 - **Modal Maestro**: `UnifiedEntryModal.tsx` crea **y** edita (`mode` dice cuál).
   Sus reglas puras están en `masterModal.ts`: dónde escribe cada tipo (`masterTargetOf`),
-  qué carga (`masterSeedFrom`), qué se abre (`masterSectionsFor`, **por contenido**).
-  `TimelineDetailModal.tsx` solo lee.
+  qué carga (`masterSeedFrom`), qué abre (`masterSectionsFor`, **por
+  contenido**). `TimelineDetailModal.tsx` solo lee.
 - **Formularios de comida**: el maestro, `MealModal` (rápido) y `MealEditModal` (con
   IA). **Lo que comparten se comparte** —`MacroFields.tsx`, `MealCart.tsx`,
   `MealAiFields.tsx`—: un campo nuevo va ahí, no en un modal.

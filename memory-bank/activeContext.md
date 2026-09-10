@@ -1,6 +1,6 @@
 # Active Context
 
-_Última actualización: 2026-09-10 (Fase 0 del agente: el andamio y el candado)._
+_Última actualización: 2026-09-10 (el agente: turno, botón y dictado)._
 
 ## El agente: el andamio y el turno (2026-09-10)
 
@@ -15,9 +15,22 @@ mejor: la transcripción **se ve y se corrige** antes de que exista un borrador.
 
 **El registro es código**: `agent-tools.ts` declara qué alcanza y qué no con su
 motivo, y `verify:contracts` falla si una función de `db.ts` no está en ninguna
-lista. En su primera corrida cazó una sin clasificar, y un test cazó ocho motivos
-de relleno que yo mismo escribí. **El borrador es del mismo tipo que el payload
-del Modal Maestro**, y `saveTherapyProfile` no es alcanzable: nunca.
+lista: cazó una sin clasificar, y un test cazó ocho motivos de relleno míos.
+**El borrador es del mismo tipo que el payload del Modal Maestro**, y `saveTherapyProfile` no es alcanzable: nunca.
+
+**El dictado no manda audio a ninguna parte** (`docs/adr/0009`). El plan del
+0008 —subir el archivo— murió contra un hecho que no miré: Android no graba en
+wav ni mp3, los únicos formatos que el modelo acepta. Lo hace el reconocedor
+del sistema, con dos reglas: se transcribe **en el teléfono** cuando el aparato
+puede (y la pantalla dice cuándo no), y las pistas de vocabulario —nombres de
+sus insulinas y sus comidas— **no salen** si la transcripción no es local. **El
+micrófono es un teclado, no un botón de enviar.**
+
+**El botón ya existía y yo agregué otro.** La posición 4 de la barra era del
+chat desde siempre; la dejé diciendo "todavía no está" y metí un acceso rápido
+redundante. Lo cazó ella. Hoy la posición 4 abre la pantalla y `chat` entró al
+swipe — pero su modal **no** lleva `swipeHandlers`: adentro hay un cuadro de
+texto, y eso es un formulario.
 
 ## Ni sincronización ni datos de salud en un servidor (2026-09-04)
 
@@ -124,23 +137,12 @@ prohíbe juzgar a qué hora come.
 
 ## Backlog de producto priorizado
 
-1. **El agente, Fase 4**: el micrófono (`expo-audio` + permiso, exige build). Ya
-   están la **pantalla** (`AgentChatModal`, con foto y tarjeta confirmable), el
-   **turno** (`/v1/ai/chat`, contexto **sin parámetros de terapia** y guardia que
-   rechaza pedir insulina sin gastar la llamada), y el **parser local** que
-   pre-llena antes de que salga una petición. Nada se escribe hasta que ella
-   toca Guardar, y "Corregir" abre el Modal Maestro sembrado, no uno nuevo.
-   ⚠️ **El endpoint no está desplegado**: hoy solo anda lo que se entiende local.
-2. **Gráfico de velocidad en Resumen → Insulina** (decisión de ella): se
-   **agrega, no reemplaza**. mg/dL por hora en pasos de 30 min hasta 4 h; al ser
-   derivada no usa línea base, y por eso es inmune a D2. **Antes hay que cerrar
+1. **Gráfico de velocidad en Resumen → Insulina** (decisión de ella): se
+   **agrega, no reemplaza**. mg/dL por hora en pasos de 30 min hasta 4 h; por
+   ser derivada no usa línea base y es inmune a D2. **Antes hay que cerrar
    D1–D4** (`reference/insulin-duration-method.md`), o quedan tres gráficos y
    dos mintiendo.
-3. **PDF y Excel más ricos**: iconografía y una síntesis que describe y **nunca**
-   evalúa una dosis.
-4. **Hallazgos abiertos**: ver `progress.md`.
-
-## Fuera de foco pero pendiente
-
-- **Fase 22** — swipe animado, JS puro. **Fase 20** — widget, necesita build.
-- Pendiente de ella: exclusión de episodios confundidos en Patrones.
+2. **PDF y Excel más ricos**: describen y **nunca** evalúan una dosis.
+   **Hallazgos abiertos**: ver `progress.md`.
+3. **Fase 22** — swipe animado. **Fase 20** — widget, necesita build. Pendiente
+   de ella: exclusión de episodios confundidos en Patrones.

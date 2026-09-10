@@ -13,6 +13,7 @@ export * from './glucose-thresholds';
 export * from './insulin-catalog';
 export * from './insulin-duration';
 export * from './insulin-effect-curve';
+export * from './dictation';
 export * from './local-intent';
 export * from './iob';
 export * from './ketones';
