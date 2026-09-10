@@ -89,3 +89,38 @@ Si algún día se quiere calidad de transcripción por sobre localidad, la
 pregunta no es técnica sino la del ADR 0007: si la voz de la usuaria hablando
 de su salud puede salir del teléfono. Hoy la respuesta es no, y por eso el
 dictado se resolvió sin mandar audio a ninguna parte.
+
+## Addendum (2026-09-10, mismo día): se encendió la minificación
+
+Este ADR cerró dejando abierto que `expo-speech-recognition` escribe la
+transcripción **y las pistas de vocabulario** —las insulinas de la usuaria y su
+catálogo— en el log del sistema con `Log.d`, sin condición. Se había decidido
+no tocarlo por el riesgo de encender la minificación sin poder probarla.
+
+Verónica pidió investigar si eso era ilegal o estaba prohibido por la tienda
+antes de aceptarlo, y dijo que si lo era prefería "empezar con el pie derecho,
+aunque quizás haya fallas". Lo era:
+
+- **Android lo clasifica como vulnerabilidad**, categoría MASVS-STORAGE, con
+  impacto de pérdida de confidencialidad — no como una recomendación de estilo.
+  Y la mitigación que su documentación recomienda es exactamente R8 con
+  `-assumenosideeffects`.
+- **La evaluación de exposición que se había escrito era demasiado benigna.**
+  Decía que el log es privado de la app desde Android 4.1 y que hacía falta un
+  cable o un informe de error. Android advierte lo contrario: en muchos
+  aparatos vienen aplicaciones **preinstaladas de fábrica** con `READ_LOGS`.
+- **Play Store** nombra los datos de salud entre los "personal and sensitive
+  user data" y obliga a manejarlos de forma segura.
+
+Así que `enableProguardInReleaseBuilds` quedó en `true` con las reglas que
+borran `Log.v/d/i` en release.
+
+**El riesgo que motivó la duda sigue siendo real**, y se atiende de dos formas:
+
+1. `verify:contracts` verifica que las dos mitades vayan juntas —
+   `logStrippingIsWired()`. Reglas sin minificación no se ejecutan y *parecen*
+   un arreglo; minificación sin reglas devuelve la transcripción al log. Las
+   dos formas de romperlo están probadas.
+2. `docs/PROBAR_UN_BUILD.md` es la lista que ella corre al instalar, ordenada
+   de lo más frágil a lo menos, porque una compresión no rompe al abrir la app
+   sino una pantalla suelta días después.

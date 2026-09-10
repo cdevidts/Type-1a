@@ -91,14 +91,23 @@ con citas, y **borrador de comida**, que DeepAgent no probó—; tres formas
 indirectas de pedir insulina rechazadas, dos por el modelo mismo. `/v1/auth/*`
 vivas, `/v1/catalog/mine` 401, **ninguna ruta de datos de salud** (404).
 
-### 🟠 El dictado escribe la transcripción en el log de Android (2026-09-10)
-`ExpoSpeechService.kt` llama `Log.d` sin condición con el texto reconocido **y**
-con las pistas —sus insulinas y su catálogo—; `AGENTS.md` prohíbe loguear eso. El
-único arreglo desde acá es R8 con `-assumenosideeffects`, que exige encender la
-minificación: cambio de build no probable en esta corrida y que rompe de formas
-que un humo rápido no ve. Se dejó **sin configurar a propósito**, no con reglas
-inertes que parezcan un arreglo. Exposición acotada (logcat es privado de la app
-desde Android 4.1: hace falta un informe de error o `adb`). **Decisión de ella.**
+### ✅ Cerrado: el dictado ya no escribe en el log de Android (2026-09-10)
+`expo-speech-recognition` llama `Log.d` sin condición con la transcripción y con
+las pistas —insulinas de ella y su catálogo—. Se había dejado abierto por miedo a
+encender la minificación sin poder probarla; ella pidió averiguar si era ilegal o
+prohibido por la tienda, y lo era: **Android lo clasifica como vulnerabilidad**
+(MASVS-STORAGE) y recomienda exactamente R8 con `-assumenosideeffects`. La
+evaluación previa era **demasiado benigna**: Android advierte que en muchos
+aparatos vienen apps de fábrica con `READ_LOGS`, así que no hace falta un cable.
+
+`enableProguardInReleaseBuilds: true` + las reglas, con dos resguardos:
+- `logStrippingIsWired()` exige que las dos mitades vayan juntas. Reglas sin
+  minificación **no se ejecutan y parecen un arreglo** (mi error de la corrida
+  anterior); minificación sin reglas devuelve la transcripción al log.
+- `docs/PROBAR_UN_BUILD.md`, ordenada de lo más frágil a lo menos: comprimir no
+  rompe al abrir la app, rompe una pantalla suelta días después.
+
+⚠️ **Primer build con minificación encendida; nunca se probó en un aparato.**
 
 ### 🔴 El código del backend NO está en git
 DeepAgent mergeó a mano en su instancia (`55a8db2`) y **no lo empujó**. Confirmado

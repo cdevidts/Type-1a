@@ -267,6 +267,46 @@ function agentToolCoverage() {
   return problems;
 }
 
+/**
+ * El borrado de logs en release no puede quedar a medias.
+ *
+ * Las reglas de ProGuard **no hacen nada** si la minificación está apagada, y
+ * ese fue un error real de esta corrida: se escribieron las reglas y se dieron
+ * por buenas sin encender lo que las ejecuta. Al revés es igual de malo:
+ * encender la minificación y borrar las reglas devuelve la transcripción del
+ * dictado —con los nombres de sus insulinas— al log del sistema.
+ *
+ * Las dos mitades se verifican juntas porque solo juntas significan algo.
+ */
+function logStrippingIsWired() {
+  const problems = [];
+  const appJsonPath = join(ROOT, 'apps/mobile/app.json');
+  if (!existsSync(appJsonPath)) return problems;
+
+  const plugins = JSON.parse(readFileSync(appJsonPath, 'utf8')).expo?.plugins ?? [];
+  const entry = plugins.find((p) => Array.isArray(p) && p[0] === 'expo-build-properties');
+  const android = entry?.[1]?.android ?? {};
+  const minifies = android.enableProguardInReleaseBuilds === true;
+  const rules = String(android.extraProguardRules ?? '');
+  const stripsLogs = /-assumenosideeffects\s+class\s+android\.util\.Log/u.test(rules);
+
+  if (minifies && !stripsLogs) {
+    problems.push(
+      'La minificación está encendida pero no hay regla que borre `android.util.Log`: '
+      + 'la transcripción del dictado y los nombres de las insulinas vuelven al log '
+      + 'del sistema. Ver docs/adr/0009 (apps/mobile/app.json).',
+    );
+  }
+  if (stripsLogs && !minifies) {
+    problems.push(
+      'Hay reglas de ProGuard para borrar los logs pero `enableProguardInReleaseBuilds` '
+      + 'está apagado, así que NO se ejecutan. Una regla inerte parece un arreglo y no lo '
+      + 'es: enciéndela o quita las reglas (apps/mobile/app.json).',
+    );
+  }
+  return problems;
+}
+
 function check() {
   const problems = [];
 
@@ -301,13 +341,16 @@ function check() {
   // 5. Cada capacidad de db.ts, clasificada para el agente.
   problems.push(...agentToolCoverage());
 
+  // 6. El borrado de logs en release, entero o nada.
+  problems.push(...logStrippingIsWired());
+
   if (problems.length > 0) {
     console.error('✗ verify:contracts falló\n');
     for (const problem of problems) console.error(`  · ${problem}`);
     console.error('');
     process.exit(1);
   }
-  console.log(`✓ verify:contracts — ${manifest.dependencies.length} dependencias declaradas, todas resueltas; presupuestos dentro de techo; capacidades del agente clasificadas`);
+  console.log(`✓ verify:contracts — ${manifest.dependencies.length} dependencias declaradas, todas resueltas; presupuestos dentro de techo; capacidades del agente clasificadas; logs borrados en release`);
 }
 
 function scan() {

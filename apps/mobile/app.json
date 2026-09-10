@@ -58,6 +58,15 @@
           "microphonePermission": "Type 1A usa el micrófono para que puedas dictar en vez de escribir. Si este teléfono no sabe pasar voz a texto por su cuenta, lo hace el servicio de dictado de Android y te lo avisa antes.",
           "speechRecognitionPermission": "Type 1A convierte tu voz en texto para que lo revises y lo corrijas. Nada se guarda hasta que tú lo apruebes."
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": true,
+            "extraProguardRules": "# Android clasifica escribir datos sensibles en el log del sistema como\n# vulnerabilidad (MASVS-STORAGE), y esta es la mitigación que su propia\n# documentación recomienda. Hace falta porque expo-speech-recognition\n# escribe la transcripción Y las pistas de vocabulario (las insulinas de\n# la usuaria y su catálogo) con Log.d, sin condición.\n#\n# No basta con que el log sea privado de la app: Android advierte que en\n# muchos aparatos vienen apps de fábrica con permiso READ_LOGS.\n#\n# `-assumenosideeffects` solo aplica en release. En debug el log sigue.\n-assumenosideeffects class android.util.Log {\n  public static int v(...);\n  public static int d(...);\n  public static int i(...);\n}"
+          }
+        }
       ]
     ],
     "extra": {

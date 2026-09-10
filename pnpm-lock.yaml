@@ -157,6 +157,9 @@ importers:
       '@types/react':
         specifier: ~19.2.2
         version: 19.2.18
+      expo-build-properties:
+        specifier: ^57.0.17
+        version: 57.0.17(expo@57.0.12)
       typescript:
         specifier: ~6.0.3
         version: 6.0.3
@@ -1869,6 +1872,11 @@ packages:
 
   expo-background-task@57.0.11:
     resolution: {integrity: sha512-bpIZN0at6hGfQiNkinTtxSn1PQTlz0Y904DrHNYMO2j/K3P+md/B4qPDzSCrsA/pcxPnYU3l2nIACdK7w/qCdw==}
+    peerDependencies:
+      expo: '*'
+
+  expo-build-properties@57.0.17:
+    resolution: {integrity: sha512-+qA5we2h1Gpnd24RGCR1amfSx7Mtf8glZ0jA5bbe1Nfdw9NdAIl+HPUqU7xyOUDKD0JWsHh9ap6yJG/jTs0tvA==}
     peerDependencies:
       expo: '*'
 
@@ -5411,6 +5419,13 @@ snapshots:
       expo-task-manager: 57.0.11(expo@57.0.12)(react-native@0.86.2(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))
     transitivePeerDependencies:
       - react-native
+
+  expo-build-properties@57.0.17(expo@57.0.12):
+    dependencies:
+      '@expo/schema-utils': 57.0.2
+      expo: 57.0.12(@babel/core@7.29.7(supports-color@8.1.1))(@expo/dom-webview@57.0.1)(react-native@0.86.2(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3)
+      resolve-from: 5.0.0
+      semver: 7.8.5
 
   expo-constants@57.0.10(expo@57.0.12)(react-native@0.86.2(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(supports-color@8.1.1):
     dependencies:

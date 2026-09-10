@@ -8,23 +8,27 @@ _Última actualización: 2026-09-10 (el agente: turno, botón y dictado)._
 llamadas a herramienta como **texto plano**, y una escritura que degrada a prosa
 significa que el modelo dice "listo, registré tu comida" y no se escribió nada.
 `json_schema` ya está en producción acá y sobrevivió al incidente de
-`exclusiveMinimum`. Probado con la clave real: `gpt-audio-1.5` sirve,
-`gpt-audio-mini` dice "no hay audio" pese a estar listado, **`m4a` se rechaza** y
-**audio + `json_schema` no se combinan** — de ahí los dos pasos, que salieron
-mejor: la transcripción **se ve y se corrige** antes de que exista un borrador.
+`exclusiveMinimum`. (Lo que se midió del audio quedó en el 0008; el 0009 lo
+reemplaza: ese camino no se implementó.)
 
 **El registro es código**: `agent-tools.ts` declara qué alcanza y qué no con su
 motivo, y `verify:contracts` falla si una función de `db.ts` no está en ninguna
 lista: cazó una sin clasificar, y un test cazó ocho motivos de relleno míos.
 **El borrador es del mismo tipo que el payload del Modal Maestro**, y `saveTherapyProfile` no es alcanzable: nunca.
 
-**El dictado no manda audio a ninguna parte** (`docs/adr/0009`). El plan del
-0008 —subir el archivo— murió contra un hecho que no miré: Android no graba en
-wav ni mp3, los únicos formatos que el modelo acepta. Lo hace el reconocedor
-del sistema, con dos reglas: se transcribe **en el teléfono** cuando el aparato
-puede (y la pantalla dice cuándo no), y las pistas de vocabulario —nombres de
-sus insulinas y sus comidas— **no salen** si la transcripción no es local. **El
+**El dictado no manda audio a ninguna parte** (`docs/adr/0009`). El plan del 0008
+—subir el archivo— murió contra un hecho que no miré: Android no graba en wav ni
+mp3, los únicos formatos que el modelo acepta. Lo hace el reconocedor del sistema:
+se transcribe **en el teléfono** cuando el aparato puede (si no, se pide permiso
+antes de grabar), las pistas de vocabulario **no salen** si no es local, y **el
 micrófono es un teclado, no un botón de enviar.**
+
+**La app ahora se arma comprimida**, y no por tamaño: es lo que borra del log del
+sistema la transcripción del dictado y los nombres de sus insulinas. Ella pidió
+verificar si era ilegal antes de aceptarlo, y lo era. Lo que yo había dicho —que
+ese log "solo se ve con un cable"— era falso. Riesgo asumido: comprimir rompe
+pantallas sueltas días después; de ahí `docs/PROBAR_UN_BUILD.md` y un candado que
+impide que las reglas queden inertes.
 
 **El botón ya existía y yo agregué otro.** La posición 4 de la barra era del
 chat desde siempre; la dejé diciendo "todavía no está" y metí un acceso rápido
@@ -58,13 +62,11 @@ por la misma glucosa. Lo encontró ella.
 Cinco condiciones, en el código: modelo publicado y citado (exponencial de
 LoopKit/OpenAPS), parámetros que ella configuró, resta **solo de la mitad de
 corrección**, desglose entero en pantalla, y sin insulina elegida **no hay
-estimación**: `undefined`, no cero.
-
-Tres cosas salieron de revisar a mano: la ventana de dosis pedía 6 h contra una
-regular de 8, y el activo **de menos sube** la dosis propuesta; **seis pantallas
-prometían que la app no calcula insulina activa** el día que empezó a calcularla
-(`safetyCopy.test.ts` es el test que faltaba); y la pestaña salió vacía porque el
-filtro pedía una ventana que con varias dosis diarias no existe despierto.
+estimación**: `undefined`, no cero. Tres cosas salieron de revisar a mano: la
+ventana pedía 6 h contra una regular de 8 y el activo **de menos sube** la dosis;
+**seis pantallas prometían que la app no calcula insulina activa** el día que
+empezó a calcularla (`safetyCopy.test.ts`); y la pestaña salió vacía por un filtro
+que con varias dosis diarias no encuentra nada despierto.
 
 ## El IOB se comía la comida, y el agua entró a Nutrición (2026-09-03)
 
