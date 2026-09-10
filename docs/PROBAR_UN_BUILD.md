@@ -5,16 +5,11 @@ versión**: reinstala la anterior y avísame qué punto falló.
 
 ## Por qué existe esta lista
 
-Desde el 10 de septiembre de 2026 la app se arma **comprimida** (se llama
-"minificación"). Sirve para que el teléfono no deje escrito en su libreta
-interna lo que dictas por voz, que incluye los nombres de tus insulinas —
-Android considera eso una falla de seguridad y Play Store exige tratar los
-datos de salud con cuidado.
+Porque una versión nueva puede romper una pantalla suelta sin que la app dé
+ningún síntoma al abrirse. La lista está ordenada de lo más frágil a lo menos,
+y toma diez minutos.
 
-El costo es que comprimir puede romper cosas **sin avisar**, y de una forma
-particularmente traicionera: nada falla al abrir la app, sino una pantalla
-suelta, a veces días después. Por eso hay lista, y por eso está ordenada de lo
-más frágil a lo menos.
+Hazla completa cada vez que instales, aunque el cambio te parezca chico.
 
 ## La lista
 

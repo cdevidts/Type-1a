@@ -23,12 +23,11 @@ se transcribe **en el teléfono** cuando el aparato puede (si no, se pide permis
 antes de grabar), las pistas de vocabulario **no salen** si no es local, y **el
 micrófono es un teclado, no un botón de enviar.**
 
-**La app ahora se arma comprimida**, y no por tamaño: es lo que borra del log del
-sistema la transcripción del dictado y los nombres de sus insulinas. Ella pidió
-verificar si era ilegal antes de aceptarlo, y lo era. Lo que yo había dicho —que
-ese log "solo se ve con un cable"— era falso. Riesgo asumido: comprimir rompe
-pantallas sueltas días después; de ahí `docs/PROBAR_UN_BUILD.md` y un candado que
-impide que las reglas queden inertes.
+**El dictado ya no escribe en el log del sistema**, y el cómo importa: se
+intentó primero comprimiendo la app con la regla que Android recomienda, **se
+construyó el APK y no borró nada**. Una regla de ProGuard no se puede verificar
+desde acá; un parche de la dependencia sí, y además no cambia cómo se arma la
+app. Lo que yo había dicho —que ese log "solo se ve con un cable"— era falso.
 
 **El botón ya existía y yo agregué otro.** La posición 4 de la barra era del
 chat desde siempre; la dejé diciendo "todavía no está" y metí un acceso rápido

@@ -67,5 +67,6 @@ Cada uno costó un build o un número falso; detalle en `git log`.
 | `RECORD_AUDIO` estaba a la vez en `permissions` y en `blockedPermissions`: el bloqueo gana y el permiso se elimina del build | un permiso nuevo se revisa contra `blockedPermissions`; la función habría fallado sin ningún error visible |
 | El resultado final del dictado llegaba después de `stop()` y pisaba la corrección hecha a mano, o rellenaba el cuadro ya enviado | el evento se ignora salvo entre el `start` y el `end` **del reconocedor**, no del estado de la UI |
 | Se avisaba dónde se transcribe la voz **mientras** el micrófono ya grababa | un consentimiento se pide antes del acto, no durante |
-| Se escribieron reglas de ProGuard sin encender la minificación que las ejecuta, y se dieron por buenas | una mitad de un arreglo es peor que ninguna: parece hecho. `verify:contracts` verifica las dos juntas |
+| Se escribieron reglas de ProGuard sin encender la minificación que las ejecuta, y se dieron por buenas | una mitad de un arreglo es peor que ninguna: parece hecho |
+| Encendida la minificación, la regla **tampoco borró nada del APK**, con la configuración generada correcta | un arreglo cuyo efecto no se puede mirar no es un arreglo: se parcheó el origen, que sí se comprueba en el archivo instalable |
 | Se le dijo a Verónica que el log del sistema "solo se ve con un cable", sin verificarlo | una evaluación de exposición se comprueba en la fuente; Android dice que hay apps de fábrica con `READ_LOGS` |

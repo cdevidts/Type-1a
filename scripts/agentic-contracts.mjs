@@ -268,40 +268,49 @@ function agentToolCoverage() {
 }
 
 /**
- * El borrado de logs en release no puede quedar a medias.
+ * El log del dictado se corta en el origen, y eso se verifica.
  *
- * Las reglas de ProGuard **no hacen nada** si la minificación está apagada, y
- * ese fue un error real de esta corrida: se escribieron las reglas y se dieron
- * por buenas sin encender lo que las ejecuta. Al revés es igual de malo:
- * encender la minificación y borrar las reglas devuelve la transcripción del
- * dictado —con los nombres de sus insulinas— al log del sistema.
+ * `expo-speech-recognition` escribe la transcripción **y las pistas de
+ * vocabulario** —los nombres de las insulinas de la usuaria y su catálogo— con
+ * `Log.d`, sin condición. Android llama a eso Log Info Disclosure y `AGENTS.md`
+ * lo prohíbe.
  *
- * Las dos mitades se verifican juntas porque solo juntas significan algo.
+ * Se resolvió parcheando la dependencia y **no** con una regla de ProGuard, por
+ * una razón que costó un build averiguar: una regla no se puede comprobar desde
+ * acá, y la que se escribió no borró nada del APK. El parche sí se comprueba —
+ * los textos desaparecen del archivo instalable.
+ *
+ * Esto verifica que el parche siga declarado. Un `pnpm install` que lo pierda
+ * devolvería la fuga en silencio, que es exactamente cómo se pierden estas
+ * cosas.
  */
-function logStrippingIsWired() {
+function speechLogPatchIsDeclared() {
   const problems = [];
-  const appJsonPath = join(ROOT, 'apps/mobile/app.json');
-  if (!existsSync(appJsonPath)) return problems;
+  const wsPath = join(ROOT, 'pnpm-workspace.yaml');
+  const patchPath = join(ROOT, 'patches/expo-speech-recognition@57.0.0.patch');
+  if (!existsSync(wsPath)) return problems;
 
-  const plugins = JSON.parse(readFileSync(appJsonPath, 'utf8')).expo?.plugins ?? [];
-  const entry = plugins.find((p) => Array.isArray(p) && p[0] === 'expo-build-properties');
-  const android = entry?.[1]?.android ?? {};
-  const minifies = android.enableProguardInReleaseBuilds === true;
-  const rules = String(android.extraProguardRules ?? '');
-  const stripsLogs = /-assumenosideeffects\s+class\s+android\.util\.Log/u.test(rules);
+  const usesPackage = existsSync(join(ROOT, 'apps/mobile/package.json'))
+    && readFileSync(join(ROOT, 'apps/mobile/package.json'), 'utf8').includes('expo-speech-recognition');
+  if (!usesPackage) return problems;
 
-  if (minifies && !stripsLogs) {
+  // La clave, con sus dos puntos: buscar solo el nombre lo encontraba dentro de
+  // la RUTA del .patch y daba por buena una declaración rota.
+  if (!/^\s*'?expo-speech-recognition@57\.0\.0'?\s*:/mu.test(readFileSync(wsPath, 'utf8'))) {
     problems.push(
-      'La minificación está encendida pero no hay regla que borre `android.util.Log`: '
-      + 'la transcripción del dictado y los nombres de las insulinas vuelven al log '
-      + 'del sistema. Ver docs/adr/0009 (apps/mobile/app.json).',
+      'El parche de expo-speech-recognition no está declarado en pnpm-workspace.yaml: '
+      + 'el dictado volvería a escribir la transcripción y los nombres de las insulinas '
+      + 'en el log de Android. Ver docs/adr/0009.',
     );
-  }
-  if (stripsLogs && !minifies) {
+  } else if (!existsSync(patchPath)) {
     problems.push(
-      'Hay reglas de ProGuard para borrar los logs pero `enableProguardInReleaseBuilds` '
-      + 'está apagado, así que NO se ejecutan. Una regla inerte parece un arreglo y no lo '
-      + 'es: enciéndela o quita las reglas (apps/mobile/app.json).',
+      'pnpm-workspace.yaml declara el parche de expo-speech-recognition pero el archivo '
+      + `no existe (${'patches/expo-speech-recognition@57.0.0.patch'}). El install va a fallar.`,
+    );
+  } else if (!readFileSync(patchPath, 'utf8').includes('neutralizado')) {
+    problems.push(
+      'El parche de expo-speech-recognition ya no neutraliza `log()`: revisa que siga '
+      + 'cortando la escritura de la transcripción al log (patches/).',
     );
   }
   return problems;
@@ -341,8 +350,8 @@ function check() {
   // 5. Cada capacidad de db.ts, clasificada para el agente.
   problems.push(...agentToolCoverage());
 
-  // 6. El borrado de logs en release, entero o nada.
-  problems.push(...logStrippingIsWired());
+  // 6. El dictado no vuelve a escribir en el log de Android.
+  problems.push(...speechLogPatchIsDeclared());
 
   if (problems.length > 0) {
     console.error('✗ verify:contracts falló\n');
@@ -350,7 +359,7 @@ function check() {
     console.error('');
     process.exit(1);
   }
-  console.log(`✓ verify:contracts — ${manifest.dependencies.length} dependencias declaradas, todas resueltas; presupuestos dentro de techo; capacidades del agente clasificadas; logs borrados en release`);
+  console.log(`✓ verify:contracts — ${manifest.dependencies.length} dependencias declaradas, todas resueltas; presupuestos dentro de techo; capacidades del agente clasificadas; el dictado no escribe en el log`);
 }
 
 function scan() {

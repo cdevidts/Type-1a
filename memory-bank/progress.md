@@ -92,22 +92,21 @@ indirectas de pedir insulina rechazadas, dos por el modelo mismo. `/v1/auth/*`
 vivas, `/v1/catalog/mine` 401, **ninguna ruta de datos de salud** (404).
 
 ### ✅ Cerrado: el dictado ya no escribe en el log de Android (2026-09-10)
-`expo-speech-recognition` llama `Log.d` sin condición con la transcripción y con
-las pistas —insulinas de ella y su catálogo—. Se había dejado abierto por miedo a
-encender la minificación sin poder probarla; ella pidió averiguar si era ilegal o
-prohibido por la tienda, y lo era: **Android lo clasifica como vulnerabilidad**
-(MASVS-STORAGE) y recomienda exactamente R8 con `-assumenosideeffects`. La
+`expo-speech-recognition` llamaba `Log.d` sin condición con la transcripción y
+con las pistas —insulinas de ella y su catálogo—. Ella pidió averiguar si era
+ilegal antes de aceptarlo y lo era: **Android lo clasifica como vulnerabilidad**
+(MASVS-STORAGE) y Play Store exige tratar los datos de salud como sensibles. La
 evaluación previa era **demasiado benigna**: Android advierte que en muchos
 aparatos vienen apps de fábrica con `READ_LOGS`, así que no hace falta un cable.
 
-`enableProguardInReleaseBuilds: true` + las reglas, con dos resguardos:
-- `logStrippingIsWired()` exige que las dos mitades vayan juntas. Reglas sin
-  minificación **no se ejecutan y parecen un arreglo** (mi error de la corrida
-  anterior); minificación sin reglas devuelve la transcripción al log.
-- `docs/PROBAR_UN_BUILD.md`, ordenada de lo más frágil a lo menos: comprimir no
-  rompe al abrir la app, rompe una pantalla suelta días después.
-
-⚠️ **Primer build con minificación encendida; nunca se probó en un aparato.**
+**Primer intento fallido, y la lección:** se encendió la minificación con la
+regla que Android recomienda, **se construyó el APK y no borró nada** — los
+textos seguían adentro, con la configuración generada correcta. Una regla de
+ProGuard **no se puede verificar desde acá**. Se reemplazó por un parche de la
+dependencia (`patches/`, vía `pnpm.patchedDependencies`) que vacía `log()`: se
+comprueba mirando el APK, y **desaparece el riesgo** de que comprimir rompa una
+pantalla suelta días después. `speechLogPatchIsDeclared()` verifica que el
+parche siga declarado y siga neutralizando; las dos formas de romperlo, probadas.
 
 ### ✅ Cerrado: el código del backend ya está en git (2026-09-10)
 DeepAgent empujó su merge tras pedírselo. `apps/api/src/` ya tiene

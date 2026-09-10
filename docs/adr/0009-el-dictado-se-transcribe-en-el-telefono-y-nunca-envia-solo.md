@@ -124,3 +124,34 @@ borran `Log.v/d/i` en release.
 2. `docs/PROBAR_UN_BUILD.md` es la lista que ella corre al instalar, ordenada
    de lo más frágil a lo menos, porque una compresión no rompe al abrir la app
    sino una pantalla suelta días después.
+
+### Corrección del addendum: se parchea el origen, no se comprime la app
+
+El primer intento fue encender la minificación con la regla que Android
+recomienda. **Se construyó el APK y la regla no borró nada**: los textos
+`"biasing strings"`, `"onResults(), results"` y el tag del módulo seguían
+adentro del archivo instalable. La configuración generada era correcta
+(`android.enableMinifyInReleaseBuilds=true`, reglas en `proguard-rules.pro`,
+`build.gradle` leyendo esa propiedad), así que la causa quedó sin determinar —
+y ese es justamente el problema: **una regla de ProGuard no se puede verificar
+desde acá.**
+
+Se reemplazó por un parche de la dependencia
+(`patches/expo-speech-recognition@57.0.0.patch`, vía `pnpm.patchedDependencies`)
+que deja `log()` vacío en `ExpoSpeechService.kt`. Es mejor por tres razones:
+
+1. **Se comprueba.** El criterio de éxito es que esos textos no estén en el
+   APK, y eso se mira.
+2. **Desaparece el riesgo que había motivado la duda.** Comprimir la app podía
+   romper una pantalla suelta días después; el parche no cambia cómo se arma
+   nada.
+3. Corta el dato en el origen en vez de confiar en que un optimizador lo
+   elimine más abajo.
+
+`speechLogPatchIsDeclared()` en `verify:contracts` verifica que el parche siga
+declarado y que siga neutralizando `log()` — un `pnpm install` que lo pierda
+devolvería la fuga en silencio. Las dos formas de romperlo están probadas.
+
+Queda una llamada a `Log.d` en el módulo, la que registra qué servicio de
+dictado encontró el aparato: es un nombre de paquete del sistema, no un dato de
+la usuaria, y dejarla mantiene el parche mínimo.
