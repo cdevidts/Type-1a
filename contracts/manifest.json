@@ -1,6 +1,6 @@
 {
   "$comment": "Generado por scripts/agentic-contracts.mjs scan. Declara qué documento consume cada activo agéntico. `pnpm verify` falla si una ruta declarada no existe o si un activo referencia algo no declarado.",
-  "generatedAt": "2026-08-26",
+  "generatedAt": "2026-09-10",
   "budgets": {
     "layer0": 100,
     "contract": 60,
@@ -23,7 +23,7 @@
           "lines": [
             8,
             14,
-            46
+            50
           ]
         },
         {
@@ -53,6 +53,18 @@
           "kind": "citation",
           "lines": [
             48
+          ]
+        }
+      ]
+    },
+    {
+      "target": "contracts/agent-tools.md",
+      "consumers": [
+        {
+          "asset": ".claude/agents/domain-safety-reviewer.md",
+          "kind": "hard-read",
+          "lines": [
+            17
           ]
         }
       ]
@@ -97,8 +109,8 @@
           "asset": ".claude/agents/domain-safety-reviewer.md",
           "kind": "citation",
           "lines": [
-            20,
-            47
+            24,
+            51
           ]
         },
         {

@@ -20,7 +20,7 @@ import {
   mealEditSystemPrompt,
   mealTextSystemPrompt,
   mealVisionSystemPrompt,
-} from './prompts.js';
+} from './prompts';
 
 const RouteLLMResponseSchema = z.object({
   choices: z.array(

@@ -1,5 +1,6 @@
 export * from './agp';
 export * from './ai-safety';
+export * from './agent-tools';
 export * from './backup';
 export * from './bolus';
 export * from './correction';

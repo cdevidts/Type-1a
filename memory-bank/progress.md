@@ -1,17 +1,17 @@
 # Progress
 
-_Última actualización: 2026-09-09 (respaldo cableado)._
+_Última actualización: 2026-09-10 (Fase 0 del agente)._
 
 ## Estado de validación
 
 | | |
 |---|---|
 | `pnpm verify` | Verde (`verify:contracts`, lint, typecheck, test, `verify:bundle`). El wrapper de Windows conserva su fallo de rutas; CI Linux es la verificación integral |
-| Tests | **968** — domain 620, mobile 273, ai 34, schemas 21, cgm 10, api 10 |
-| Bundle de Metro | **1.373** medidos hoy; el build `7122edf9` salió con 1.369 |
+| Tests | **981** — domain 633, mobile 273, ai 34, schemas 21, cgm 10, api 10 |
+| Bundle de Metro | **1.374** hoy; el build `444a3ff3` salió con 1.373 |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
-⚠️ Los +4 son `backup`, `backupIO`, `backupOutcome` y `photos`.
+⚠️ `verify:contracts` ahora exige además que **toda** función exportada de `db.ts` esté clasificada para el agente.
 
 ## Entregado y en el dispositivo
 
@@ -38,12 +38,6 @@ al IOB: no adoptar ninguna duración hasta cerrarlo.**
 ### 🟡 Supabase sin uso previsto (2026-09-04)
 `kvhlttcvjamgybwlamcu`, sin tablas. ADR 0007 descartó sincronizar salud; queda
 para cuentas de suscripción. Pausarlo si no se usa.
-
-### 🔴 Bomba: imports `.js` en `@type1a/ai`
-`abacus.ts:23` e `index.ts:1-2` usan `.js` en imports relativos — **la trampa de
-Metro que rompió dos builds**. No explota porque `apps/mobile` no depende de
-`@type1a/ai`, y con el agente detrás del backend seguirá sin depender; se arregla
-igual antes de tocar ese paquete.
 
 ### 🔴 Dos hallazgos vivos de la revisión repuntada (2026-08-26)
 Los dos en `macro-glucose.ts`: la basal no entra como covariable (sin rama para

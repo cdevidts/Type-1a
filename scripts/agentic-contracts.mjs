@@ -220,6 +220,53 @@ function checkBudgets() {
   return problems;
 }
 
+/**
+ * 5. Toda capacidad de `db.ts` está clasificada para el agente.
+ *
+ * El agente de IA solo puede alcanzar lo que `packages/domain/src/agent-tools.ts`
+ * declara. Sin este chequeo, agregar una función a `db.ts` la dejaba en silencio
+ * fuera del alcance del agente, y nadie se enteraba hasta que alguien preguntara
+ * por qué el chat "no sabe hacer eso". La regla es que cada función exportada
+ * está registrada como herramienta o excluida CON SU MOTIVO — nunca por omisión.
+ *
+ * Se lee con expresiones regulares y no importando el módulo a propósito: este
+ * script es `.mjs` y no puede cargar TypeScript sin sumarle un compilador.
+ */
+function agentToolCoverage() {
+  const problems = [];
+  const dbPath = join(ROOT, 'apps/mobile/src/db.ts');
+  const toolsPath = join(ROOT, 'packages/domain/src/agent-tools.ts');
+  if (!existsSync(dbPath) || !existsSync(toolsPath)) return problems;
+
+  const db = readFileSync(dbPath, 'utf8');
+  const tools = readFileSync(toolsPath, 'utf8');
+
+  const exported = [...db.matchAll(/^export (?:async )?function ([A-Za-z0-9_]+)/gmu)].map((m) => m[1]);
+  const backed = new Set([...tools.matchAll(/backing: '([A-Za-z0-9_]+)'/gu)].map((m) => m[1]));
+
+  // El bloque de exclusiones, para no confundir sus claves con otro objeto.
+  const excludedBlock = tools.slice(tools.indexOf('NOT_REACHABLE_BY_AGENT'));
+  const excluded = new Set([...excludedBlock.matchAll(/^  ([A-Za-z0-9_]+):/gmu)].map((m) => m[1]));
+
+  const missing = exported.filter((name) => !backed.has(name) && !excluded.has(name));
+  if (missing.length > 0) {
+    problems.push(
+      `Capacidades de db.ts sin clasificar para el agente: ${missing.join(', ')}. `
+      + 'Regístralas en AGENT_TOOLS o en NOT_REACHABLE_BY_AGENT con su motivo '
+      + '(packages/domain/src/agent-tools.ts).',
+    );
+  }
+
+  // Un `backing` que ya no existe es un puntero muerto, igual que un doc borrado.
+  const exportedSet = new Set(exported);
+  for (const name of backed) {
+    if (!exportedSet.has(name)) {
+      problems.push(`AGENT_TOOLS apunta a \`${name}\`, que ya no existe en db.ts.`);
+    }
+  }
+  return problems;
+}
+
 function check() {
   const problems = [];
 
@@ -251,13 +298,16 @@ function check() {
   // 4. Punteros muertos desde cualquier parte del repo, código incluido.
   problems.push(...danglingReferences());
 
+  // 5. Cada capacidad de db.ts, clasificada para el agente.
+  problems.push(...agentToolCoverage());
+
   if (problems.length > 0) {
     console.error('✗ verify:contracts falló\n');
     for (const problem of problems) console.error(`  · ${problem}`);
     console.error('');
     process.exit(1);
   }
-  console.log(`✓ verify:contracts — ${manifest.dependencies.length} dependencias declaradas, todas resueltas; presupuestos dentro de techo`);
+  console.log(`✓ verify:contracts — ${manifest.dependencies.length} dependencias declaradas, todas resueltas; presupuestos dentro de techo; capacidades del agente clasificadas`);
 }
 
 function scan() {
