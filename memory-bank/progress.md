@@ -109,10 +109,11 @@ aparatos vienen apps de fábrica con `READ_LOGS`, así que no hace falta un cabl
 
 ⚠️ **Primer build con minificación encendida; nunca se probó en un aparato.**
 
-### 🔴 El código del backend NO está en git
-DeepAgent mergeó a mano en su instancia (`55a8db2`) y **no lo empujó**. Confirmado
-mirando el repo: `apps/api/src/` no tiene cuentas, catálogo personal ni fotos, o
-sea **lo que corre en producción no está versionado**. Se le pidió el push.
+### ✅ Cerrado: el código del backend ya está en git (2026-09-10)
+DeepAgent empujó su merge tras pedírselo. `apps/api/src/` ya tiene
+`accounts-store.ts`, `personal-catalog-store.ts` y `catalog-photo-store.ts`, y
+`pnpm verify` pasa con eso adentro. Lo que corre en producción vuelve a estar
+versionado; antes vivía **solo** en su instancia.
 
 Sin verificar (exigiría una cuenta real): que el 401 de login sea idéntico ante
 contraseña mala y correo inexistente.
