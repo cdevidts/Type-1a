@@ -8,9 +8,19 @@
  * modelo cuesta créditos y tarda segundos, para un resultado que un `RegExp`
  * resuelve al instante y sin equivocarse.
  *
- * Lo que **no** entienda cae al modelo entero, sin adivinar la parte que sí.
- * Media frase interpretada es peor que ninguna: quien la lea va a creer que la
- * app entendió todo.
+ * ## Entender a medias sirve, siempre que ella lo vea
+ *
+ * La primera versión tiraba lo entendido cuando sobraba texto, con el argumento
+ * de que media frase registrada hace creer que la app entendió todo. El
+ * argumento vale para **guardar sin preguntar**, y solo para eso. Verónica lo
+ * corrigió el 2026-09-10: si de todos modos va a aparecer el formulario, que
+ * llegue **pre-llenado con lo que sí se entendió**, y ella corrige lo que esté
+ * mal y aprueba.
+ *
+ * Por eso `intents` **siempre** trae lo reconocido, incluso con `complete` en
+ * `false`. Lo que `complete` decide es otra cosa: si hace falta el modelo. El
+ * peligro de entender a medias desaparece cuando ella está mirando el
+ * formulario antes de que se escriba nada.
  *
  * ## La regla que gobierna cada patrón
  *
@@ -53,14 +63,25 @@ export type LocalIntent =
   | { kind: 'insulin'; units: number; insulinType: 'rapid' | 'basal' };
 
 export interface LocalParseResult {
+  /**
+   * Lo reconocido. **Siempre se usa para pre-llenar**, valga o no `complete`.
+   * Nunca se descarta: es trabajo ya hecho que le ahorra tecleo.
+   */
   intents: LocalIntent[];
   /**
-   * `true` si **todo** el texto se entendió acá.
-   *
-   * Con `false`, la frase entera va al modelo aunque haya intenciones
-   * reconocidas: se prefiere pagar una llamada a registrar la mitad.
+   * `true` si **todo** el texto se entendió acá, y por lo tanto **no hace falta
+   * el modelo**. No significa "guardar sin preguntar": eso lo decide la
+   * pantalla, que igual muestra qué va a escribir.
    */
   complete: boolean;
+  /**
+   * Lo que quedó sin interpretar, tal como ella lo escribió.
+   *
+   * Es lo que se le manda al modelo, y también lo que la pantalla puede mostrar
+   * como "esto no lo entendí" en vez de tragárselo en silencio. Vacío cuando
+   * `complete` es `true`.
+   */
+  leftover: string;
 }
 
 /** Un número con coma o punto: "6,5" y "6.5" son el mismo número. */
@@ -162,9 +183,10 @@ export function isPlausibleGlucose(value: number, unit: GlucoseUnit): boolean {
 /**
  * Lee una frase sin llamar al modelo.
  *
- * Devuelve `complete: false` en cuanto queda texto con sustancia sin
- * interpretar. Quien llama decide: con `true` registra directo, con `false`
- * manda la frase **entera** al modelo — nunca los pedazos sueltos.
+ * Con `complete: true` no hace falta llamar al modelo. Con `false`, se manda
+ * `leftover` — **y las intenciones ya reconocidas se usan igual para
+ * pre-llenar**, así el formulario abre lleno al instante en vez de en blanco
+ * mientras llega la respuesta.
  */
 export function parseLocalIntent(text: string, unit: GlucoseUnit): LocalParseResult {
   const intents: LocalIntent[] = [];
@@ -177,13 +199,31 @@ export function parseLocalIntent(text: string, unit: GlucoseUnit): LocalParseRes
     // Un patrón que matchea pero cuyo valor no es plausible NO consume el texto:
     // así "glucosa 900" cae al modelo en vez de desaparecer en silencio.
     if (intent === null) continue;
-    // Una segunda glucosa o un segundo valor del mismo tipo es ambiguo.
-    if (intents.some((existing) => existing.kind === intent.kind)) continue;
+    // Dos valores para el MISMO campo son ambiguos y se descartan. Pero rápida
+    // y basal son campos distintos, no un duplicado: deduplicar por `kind` se
+    // comía la basal de "18 de basal y 5 de rápida".
+    if (intents.some((existing) => slotOf(existing) === slotOf(intent))) continue;
     intents.push(intent);
     rest = rest.replace(pattern.re, ' ');
   }
 
-  return { intents, complete: intents.length > 0 && !hasSubstance(rest) };
+  const leftover = hasSubstance(rest) ? tidy(rest) : '';
+  return { intents, complete: intents.length > 0 && leftover === '', leftover };
+}
+
+/**
+ * Qué campo del formulario ocupa una intención.
+ *
+ * Es lo que decide si dos lecturas se pisan. Una rápida y una basal conviven;
+ * dos glucosas no.
+ */
+function slotOf(intent: LocalIntent): string {
+  return intent.kind === 'insulin' ? `insulin:${intent.insulinType}` : intent.kind;
+}
+
+/** Deja el sobrante legible: sin espacios de más ni puntuación suelta. */
+function tidy(rest: string): string {
+  return rest.replace(/\s+/gu, ' ').replace(/^[\s,.;:]+|[\s,.;:]+$/gu, '').trim();
 }
 
 /**
@@ -200,4 +240,48 @@ function hasSubstance(rest: string): boolean {
     'giu',
   );
   return rest.replace(RUIDO, ' ').replace(/[^\p{L}]/gu, '').trim().length > 0;
+}
+
+
+// ---------------------------------------------------------------------------
+// Pre-llenado
+// ---------------------------------------------------------------------------
+
+/**
+ * Los campos del Modal Maestro que una frase alcanza a llenar.
+ *
+ * Cada campo ausente significa **"no se dijo"**, nunca cero: es la misma regla
+ * que ya gobierna los parches de vitales y de comida. Un `waterMl` en `null`
+ * dice "habló de agua pero no de cuánta", que no es lo mismo que no mencionarla.
+ */
+export interface EntryPrefill {
+  glucose?: { value: number; unit: GlucoseUnit };
+  carbsG?: number;
+  rapidUnits?: number;
+  basalUnits?: number;
+  /** `null` = dijo agua sin decir cuánta; la pantalla ofrece los presets. */
+  waterMl?: number | null;
+}
+
+/**
+ * Convierte lo reconocido en campos listos para el formulario.
+ *
+ * **No inventa nada.** Lo que no se dijo no aparece, y la pantalla lo muestra
+ * vacío para que ella lo llene o lo deje así.
+ */
+export function toPrefill(intents: readonly LocalIntent[]): EntryPrefill {
+  const prefill: EntryPrefill = {};
+  for (const intent of intents) {
+    if (intent.kind === 'glucose') prefill.glucose = { value: intent.value, unit: intent.unit };
+    else if (intent.kind === 'carbs') prefill.carbsG = intent.grams;
+    else if (intent.kind === 'water') prefill.waterMl = intent.ml;
+    else if (intent.insulinType === 'rapid') prefill.rapidUnits = intent.units;
+    else prefill.basalUnits = intent.units;
+  }
+  return prefill;
+}
+
+/** Si el pre-llenado tiene algo que mostrar. */
+export function hasPrefill(prefill: EntryPrefill): boolean {
+  return Object.keys(prefill).length > 0;
 }

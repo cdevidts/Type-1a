@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isPlausibleGlucose, parseLocalIntent, type LocalIntent } from '../src/local-intent';
+import { hasPrefill, isPlausibleGlucose, parseLocalIntent, toPrefill, type LocalIntent } from '../src/local-intent';
 
 const mg = (text: string) => parseLocalIntent(text, 'mg/dL');
 const mmol = (text: string) => parseLocalIntent(text, 'mmol/L');
@@ -78,12 +78,13 @@ describe('LA REGLA: ante la duda, no se interpreta', () => {
     expect(mg('20000 ml de agua').intents).toEqual([]);
   });
 
-  it('PROMESA: si sobra algo con sustancia, la frase ENTERA va al modelo', () => {
-    // Registrar la mitad es peor que no registrar: quien lo lea va a creer que
-    // la app entendió todo.
+  it('si sobra algo, hace falta el modelo — pero lo entendido NO se tira', () => {
     const result = mg('me puse 6 de rápida y comí un plato de tallarines');
     expect(kinds(result.intents)).toEqual(['insulin']);
     expect(result.complete).toBe(false);
+    // Y esto es lo que ella pidió: el formulario abre con las 6 U ya puestas.
+    expect(toPrefill(result.intents)).toEqual({ rapidUnits: 6 });
+    expect(result.leftover).toContain('tallarines');
   });
 
   it('los conectores sobrantes NO cuentan como sustancia', () => {
@@ -96,8 +97,9 @@ describe('LA REGLA: ante la duda, no se interpreta', () => {
   });
 
   it('texto vacío o sin nada reconocible no inventa nada', () => {
-    expect(mg('')).toEqual({ intents: [], complete: false });
-    expect(mg('hola cómo estás')).toEqual({ intents: [], complete: false });
+    expect(mg('').intents).toEqual([]);
+    expect(mg('hola cómo estás').intents).toEqual([]);
+    expect(hasPrefill(toPrefill(mg('hola cómo estás').intents))).toBe(false);
   });
 
   it('dos glucosas en una frase son ambiguas: se queda con una y no da por completa', () => {
@@ -123,5 +125,54 @@ describe('plausibilidad de una glucosa', () => {
   it('un valor no finito nunca es plausible', () => {
     expect(isPlausibleGlucose(Number.NaN, 'mg/dL')).toBe(false);
     expect(isPlausibleGlucose(Number.POSITIVE_INFINITY, 'mg/dL')).toBe(false);
+  });
+});
+
+
+describe('pre-llenado: entender a medias sirve, si ella lo ve', () => {
+  it('LO QUE ELLA PIDIÓ: si igual va a aparecer el formulario, que llegue lleno', () => {
+    const result = mg('me puse 7 de rápida, glucosa 168 y comí unos fideos con salsa');
+    expect(result.complete).toBe(false); // los fideos necesitan al modelo
+    expect(toPrefill(result.intents)).toEqual({
+      rapidUnits: 7,
+      glucose: { value: 168, unit: 'mg/dL' },
+    });
+    expect(result.leftover).toContain('fideos');
+  });
+
+  it('rápida y basal caen en campos distintos', () => {
+    const result = mg('18 de basal y 5 de rápida');
+    expect(toPrefill(result.intents)).toEqual({ basalUnits: 18, rapidUnits: 5 });
+  });
+
+  it('el agua sin volumen llega como null, no como 250', () => {
+    // `null` significa "habló de agua, no dijo cuánta". La pantalla ofrece los
+    // presets; inventar el número sumaría agua que nadie tomó.
+    expect(toPrefill(mg('me tomé un vaso de agua').intents)).toEqual({ waterMl: null });
+  });
+
+  it('lo que no se dijo NO aparece: un campo ausente no es un cero', () => {
+    const prefill = toPrefill(mg('250 ml de agua').intents);
+    expect(prefill).toEqual({ waterMl: 250 });
+    expect('carbsG' in prefill).toBe(false);
+    expect('rapidUnits' in prefill).toBe(false);
+  });
+
+  it('lo que no se entendió se devuelve tal cual, no se traga en silencio', () => {
+    const result = mg('250 ml de agua y una manzana verde chica');
+    expect(result.leftover).toContain('manzana');
+    expect(result.leftover).not.toMatch(/^\s|\s$/u);
+  });
+
+  it('sin sobrante, `leftover` queda vacío', () => {
+    expect(mg('250 ml de agua').leftover).toBe('');
+  });
+
+  it('SEGURIDAD: lo que se rechazó por implausible tampoco pre-llena', () => {
+    // "glucosa 6" en mg/dL no se interpreta, así que el formulario abre con ese
+    // campo VACÍO y ella lo escribe — nunca con un número que la app dedujo mal.
+    const result = mg('glucosa 6');
+    expect(toPrefill(result.intents)).toEqual({});
+    expect(result.leftover).toContain('6');
   });
 });

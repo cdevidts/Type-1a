@@ -21,8 +21,8 @@ motivo escrito en cada exclusión, y `verify:contracts` falla si una función de
 `db.ts` no está en ninguna lista. En su primera corrida cazó una sin clasificar,
 y un test cazó ocho motivos de relleno ("Ídem.") que yo mismo escribí.
 
-**El borrador del agente es del mismo tipo que el payload del Modal Maestro**, así
-que no puede ser más pobre que él. Y `saveTherapyProfile` no es alcanzable: nunca.
+**El borrador es del mismo tipo que el payload del Modal Maestro**, así que no
+puede ser más pobre. `saveTherapyProfile` no es alcanzable: nunca.
 
 ## Ni sincronización ni datos de salud en un servidor (2026-09-04)
 
@@ -133,8 +133,9 @@ prohíbe juzgar a qué hora come.
    tarjeta de confirmación, y el micrófono. La **Fase 1 ya está**:
    `local-intent.ts` lee "250 ml de agua" o "6 de rápida" **sin gastar un
    crédito**, y ante la duda no interpreta — "me puse 6" no dice si fue rápida o
-   basal, y una glucosa imposible para su unidad no se registra. **Nada de esto
-   tiene pantalla todavía.**
+   basal, y una glucosa imposible para su unidad no se registra. Y lo entendido a
+   medias **pre-llena** el formulario (`toPrefill`), decisión de ella: si igual
+   va a aparecer, que llegue lleno. **Nada de esto tiene pantalla todavía.**
 2. **Gráfico de velocidad en Resumen → Insulina** (decisión de ella): se
    **agrega, no reemplaza**. mg/dL por hora en pasos de 30 min hasta 4 h; al ser
    derivada no usa línea base, y por eso es inmune a D2. **Antes hay que cerrar

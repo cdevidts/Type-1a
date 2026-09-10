@@ -7,7 +7,7 @@ _Última actualización: 2026-09-10 (Fase 0 del agente)._
 | | |
 |---|---|
 | `pnpm verify` | Verde (`verify:contracts`, lint, typecheck, test, `verify:bundle`). El wrapper de Windows conserva su fallo de rutas; CI Linux es la verificación integral |
-| Tests | **1.001** — domain 653, mobile 273, ai 34, schemas 21, cgm 10, api 10 |
+| Tests | **1.008** — domain 660, mobile 273, ai 34, schemas 21, cgm 10, api 10 |
 | Bundle de Metro | **1.375** hoy; el build `444a3ff3` salió con 1.373 |
 | CI | `.github/workflows/verify.yml` en cada push y PR |
 
