@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -6,10 +6,13 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, 
 import { hasPrefill, parseLocalIntent, toPrefill, type EntryPrefill } from '@type1a/domain';
 import type { AgentTurn, GlucoseUnit } from '@type1a/schemas';
 import Camera from 'lucide-react-native/icons/camera';
+import CircleStop from 'lucide-react-native/icons/circle-stop';
+import Mic from 'lucide-react-native/icons/mic';
 import SendHorizontal from 'lucide-react-native/icons/send-horizontal';
 import Sparkles from 'lucide-react-native/icons/sparkles';
 
 import { persistPhoto } from '../photos';
+import { useDictation } from '../useDictation';
 import { colors, radius, spacing } from '../theme';
 import { ModalShell } from './ModalShell';
 
@@ -31,6 +34,13 @@ import { ModalShell } from './ModalShell';
  * **La insulina nunca la propone el modelo.** El borrador que vuelve del
  * servidor no tiene dónde poner unidades (ADR 0008); las que se ven acá o las
  * dictó ella, o las calculó el dominio con sus parámetros.
+ *
+ * **El micrófono es un teclado, no un botón de enviar.** Lo dictado cae en el
+ * cuadro de texto y se queda ahí hasta que ella lo lea y lo mande: un
+ * "doscientos sesenta" entendido como "sesenta" tiene que ser un error visible
+ * y corregible, nunca una glucosa falsa registrada sola. Mientras escucha, la
+ * pantalla dice **dónde** se está transcribiendo, porque "en el teléfono" y
+ * "por el servicio de Android" no son lo mismo para un dato de salud.
  */
 
 export interface AgentChatMessage {
@@ -52,6 +62,10 @@ export function AgentChatModal({
   onAsk,
   onConfirmDraft,
   onOpenMaster,
+  insulinNames = [],
+  foodNames = [],
+  cloudDictationAllowed = false,
+  onAllowCloudDictation = () => {},
 }: {
   visible: boolean;
   onClose: () => void;
@@ -63,6 +77,19 @@ export function AgentChatModal({
   onConfirmDraft: (prefill: EntryPrefill) => Promise<void>;
   /** Abre el Modal Maestro con lo entendido, para completar a mano. */
   onOpenMaster: (prefill: EntryPrefill) => void;
+  /**
+   * Nombres de sus insulinas y de su catálogo, como pistas para el
+   * reconocedor de voz. **Solo se usan si transcribe en el teléfono**
+   * (`dictationHints`): son datos de salud y no viajan a un servicio ajeno.
+   */
+  insulinNames?: readonly string[];
+  foodNames?: readonly string[];
+  /**
+   * Si ella ya aceptó alguna vez que el audio salga del teléfono. Se pregunta
+   * **antes** de abrir el micrófono, no mientras graba.
+   */
+  cloudDictationAllowed?: boolean;
+  onAllowCloudDictation?: () => void;
 }): React.JSX.Element {
   const [messages, setMessages] = useState<AgentChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -70,6 +97,21 @@ export function AgentChatModal({
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const nextId = useRef(0);
+  const dictation = useDictation({
+    insulinNames,
+    foodNames,
+    onText: setInput,
+    cloudAllowed: cloudDictationAllowed,
+    onAllowCloud: onAllowCloudDictation,
+  });
+  const listening = dictation.state === 'listening' || dictation.state === 'finishing';
+
+  // Cerrar el chat mientras dicta tiene que apagar el micrófono. El modal no
+  // se desmonta al ocultarse (`visible` es una prop), así que sin esto el
+  // reconocedor seguiría escuchando con la pantalla cerrada.
+  useEffect(() => {
+    if (!visible && dictation.state !== 'idle') dictation.cancel();
+  }, [visible, dictation]);
 
   const newId = useCallback((): string => {
     nextId.current += 1;
@@ -188,30 +230,109 @@ export function AgentChatModal({
           {error === null ? null : <Text style={styles.error}>{error}</Text>}
         </ScrollView>
 
+        {dictation.state === 'asking' ? (
+          /* Con el micrófono TODAVÍA CERRADO. Avisarle mientras graba sería
+             decirle dónde fue su voz después de que fue. */
+          <View style={styles.consent}>
+            <Text style={styles.consentTitle}>
+              Este teléfono no puede pasar tu voz a texto por su cuenta
+            </Text>
+            <Text style={styles.consentBody}>
+              Si sigues, lo hace el servicio de dictado de Android: tu voz —diciendo
+              en cuánto estás y qué te pusiste— sale del teléfono. Escribir a mano
+              no manda nada.
+            </Text>
+            <View style={styles.consentButtons}>
+              <Pressable
+                style={styles.consentSecondary}
+                accessibilityRole="button"
+                onPress={dictation.cancel}
+              >
+                <Text style={styles.consentSecondaryText}>Mejor escribo</Text>
+              </Pressable>
+              <Pressable
+                style={styles.consentPrimary}
+                accessibilityRole="button"
+                onPress={dictation.allowCloud}
+              >
+                <Text style={styles.consentPrimaryText}>Dictar igual</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+        {listening ? (
+          <View style={styles.listening}>
+            {/* El estado no se comunica solo con color: dice que escucha, y
+                dice dónde se convierte la voz en texto. */}
+            <Text style={styles.listeningText}>
+              {dictation.state === 'finishing' ? 'Terminando…' : 'Escuchando…'}{' '}
+              {dictation.onDevice
+                ? 'se transcribe en el teléfono'
+                : 'lo transcribe el servicio de Android'}
+            </Text>
+            <Pressable
+              style={styles.listeningCancel}
+              accessibilityRole="button"
+              accessibilityLabel="Descartar lo dictado"
+              hitSlop={8}
+              onPress={dictation.cancel}
+            >
+              <Text style={styles.listeningCancelText}>Descartar</Text>
+            </Pressable>
+          </View>
+        ) : null}
+        {dictation.error === null ? null : (
+          <Text style={styles.dictationError}>{dictation.error}</Text>
+        )}
+
         <View style={styles.composer}>
           <Pressable
             style={styles.iconButton}
             accessibilityRole="button"
             accessibilityLabel="Tomar una foto de la comida"
-            disabled={busy}
+            disabled={busy || listening}
             onPress={() => { void attachPhoto(); }}
           >
-            <Camera size={22} color={colors.teal} />
+            <Camera size={22} color={busy || listening ? colors.muted : colors.teal} />
+          </Pressable>
+          <Pressable
+            style={[styles.iconButton, listening && styles.iconButtonActive]}
+            accessibilityRole="button"
+            accessibilityLabel={listening ? 'Terminar de dictar' : 'Dictar en vez de escribir'}
+            accessibilityState={{ busy: listening }}
+            disabled={busy || dictation.state === 'asking' || dictation.state === 'finishing'}
+            // Se toca para empezar y se toca para terminar, en vez de mantener
+            // apretado: un dedo que resbala no puede costarle lo dictado, y
+            // sostener un botón es justo lo que peor sale con las manos
+            // temblando por una hipoglucemia.
+            onPress={() => {
+              if (dictation.state === 'listening') dictation.stop();
+              else if (dictation.state === 'idle') void dictation.start(input);
+            }}
+          >
+            {listening
+              ? <CircleStop size={22} color={colors.red} />
+              : <Mic size={22} color={busy ? colors.muted : colors.teal} />}
           </Pressable>
           <TextInput
             style={styles.input}
             value={input}
             onChangeText={setInput}
-            placeholder="Cuéntame o pregúntame…"
+            placeholder={listening ? 'Habla y aparece acá…' : 'Cuéntame o pregúntame…'}
             placeholderTextColor={colors.muted}
             multiline
             editable={!busy}
           />
           <Pressable
-            style={[styles.sendButton, (busy || input.trim().length === 0) && styles.disabled]}
+            style={[
+              styles.sendButton,
+              (busy || listening || input.trim().length === 0) && styles.disabled,
+            ]}
             accessibilityRole="button"
             accessibilityLabel="Enviar"
-            disabled={busy || input.trim().length === 0}
+            // Deshabilitado mientras dicta: mandar a mitad de una frase
+            // enviaría media glucosa.
+            disabled={busy || listening || input.trim().length === 0}
             onPress={() => { void send(input); }}
           >
             <SendHorizontal size={20} color="#FFFFFF" />
@@ -377,6 +498,37 @@ const styles = StyleSheet.create({
   iconButton: {
     width: 44, height: 44, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center',
     borderColor: colors.line, borderWidth: 1,
+  },
+  iconButtonActive: { borderColor: colors.red, backgroundColor: colors.redSoft },
+  listening: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    backgroundColor: colors.redSoft,
+  },
+  consent: {
+    gap: spacing.sm, padding: spacing.md,
+    backgroundColor: colors.warningSoft, borderTopColor: colors.line, borderTopWidth: 1,
+  },
+  consentTitle: { fontSize: 15, fontWeight: '600', color: colors.ink },
+  consentBody: { fontSize: 13, lineHeight: 19, color: colors.ink },
+  consentButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.sm },
+  consentSecondary: {
+    minHeight: 44, paddingHorizontal: spacing.md, justifyContent: 'center',
+    borderRadius: radius.sm, borderColor: colors.line, borderWidth: 1,
+    backgroundColor: colors.surface,
+  },
+  consentSecondaryText: { fontSize: 14, fontWeight: '600', color: colors.ink },
+  consentPrimary: {
+    minHeight: 44, paddingHorizontal: spacing.md, justifyContent: 'center',
+    borderRadius: radius.sm, backgroundColor: colors.teal,
+  },
+  consentPrimaryText: { fontSize: 14, fontWeight: '600', color: '#FFFFFF' },
+  listeningText: { flex: 1, fontSize: 13, color: colors.red },
+  listeningCancel: { minHeight: 44, justifyContent: 'center' },
+  listeningCancelText: { fontSize: 13, fontWeight: '600', color: colors.red },
+  dictationError: {
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    fontSize: 13, color: colors.red, backgroundColor: colors.redSoft,
   },
   input: {
     flex: 1, minHeight: 44, maxHeight: 120, borderColor: colors.line, borderWidth: 1,

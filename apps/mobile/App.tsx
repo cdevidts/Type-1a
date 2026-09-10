@@ -206,6 +206,15 @@ import type { EntryFocus, LegacyQuickRoute, MasterEditPayload, NutritionDayData,
 
 /** Flag de "ya vio la bienvenida"; vive en `settings`, no en el perfil de terapia. */
 const ONBOARDING_SEEN_KEY = 'onboardingSeenAt';
+/**
+ * Si ella aceptó alguna vez que el audio del dictado salga del teléfono.
+ *
+ * Se pregunta **antes** de abrir el micrófono, una sola vez, y solo en un
+ * aparato que no sabe transcribir por su cuenta (`docs/adr/0009`). No entra al
+ * respaldo: es un consentimiento de este teléfono, y una instalación nueva
+ * tiene que volver a pedirlo.
+ */
+const CLOUD_DICTATION_KEY = 'cloudDictationAllowedAt';
 
 const EMPTY_PROFILE: TherapyProfile = {
   glucoseUnit: 'mg/dL',
@@ -241,6 +250,7 @@ function Type1AApp() {
   const [quickRoute, setQuickRoute] = useState<QuickRoute | null>(null);
   const [mealOpen, setMealOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [cloudDictationAllowed, setCloudDictationAllowed] = useState(false);
   /**
    * El Modal Maestro: `null` = cerrado.
    *
@@ -322,7 +332,7 @@ function Type1AApp() {
     // latestLiveReading() finds the true latest live point regardless of
     // how wide this window is.
     const from = new Date(to.getTime() - 30 * 24 * 60 * 60_000);
-    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending, mealOffsets, correctionSettings, alertStyle, capillarySettings, onboardingSeen, isLegacyBackendInstall, nutrition, catalog, nextRecipes] = await Promise.all([
+    const [cached, nextTimeline, nextProfile, configured, rapid, privacy, pending, mealOffsets, correctionSettings, alertStyle, capillarySettings, onboardingSeen, cloudDictation, isLegacyBackendInstall, nutrition, catalog, nextRecipes] = await Promise.all([
       getCGMReadings(db, from, to, readTally),
       getTimeline(db),
       getTherapyProfile(db),
@@ -335,6 +345,7 @@ function Type1AApp() {
       getReminderAlertStyle(db),
       getCapillaryReminderSettings(db),
       getSetting(db, ONBOARDING_SEEN_KEY),
+      getSetting(db, CLOUD_DICTATION_KEY),
       resolveLegacyBackendSensor(db, LEGACY_BACKEND_SENSOR_KEY),
       getNutritionProfile(db),
       getCatalogFoods(db, CATALOG_LOAD_LIMIT),
@@ -385,6 +396,7 @@ function Type1AApp() {
     void ensureReminderChannels(alertStyle);
     setCapillaryReminder(capillarySettings);
     setOnboardingDone(onboardingSeen === 'true');
+    setCloudDictationAllowed(cloudDictation !== null);
     setNutritionProfile(nutrition);
     setCatalogFoods(catalog);
     setRecipes(nextRecipes);
@@ -1489,6 +1501,23 @@ function Type1AApp() {
     setNotice('Contexto de insulina confirmado; el episodio fue recalculado.');
   }
 
+  /**
+   * Las palabras que el reconocedor de voz debe esperar. Sin ellas, "Fiasp"
+   * sale fonético y el parser local no lo encuentra.
+   *
+   * `dictationHints` decide si se usan o no: si la transcripción no ocurre en
+   * el teléfono, devuelve una lista vacía. Estos nombres son datos de salud.
+   */
+  const agentDictationInsulins = useMemo(
+    () => [profile.rapidInsulinName, profile.basalInsulinName]
+      .filter((name): name is string => name !== undefined),
+    [profile.rapidInsulinName, profile.basalInsulinName],
+  );
+  const agentDictationFoods = useMemo(
+    () => catalogFoods.map((food) => food.name),
+    [catalogFoods],
+  );
+
   const sourceLabel = useMemo(() => {
     if (status?.isSynthetic === true) return 'PRUEBA · DATOS SINTÉTICOS';
     if (status?.state === 'connected') return 'CGM CONECTADO';
@@ -1802,6 +1831,19 @@ function Type1AApp() {
         glucoseUnit={profile.glucoseUnit}
         onAsk={askAgentTurn}
         onConfirmDraft={confirmAgentDraft}
+        // Pistas para el reconocedor de voz. `dictationHints` las descarta si
+        // la transcripción no ocurre en el teléfono: el nombre de una insulina
+        // dice que quien habla es diabético y con qué se trata.
+        insulinNames={agentDictationInsulins}
+        foodNames={agentDictationFoods}
+        // Se pregunta una sola vez, y solo en un teléfono que no sabe
+        // transcribir por su cuenta. Ver ADR 0009.
+        cloudDictationAllowed={cloudDictationAllowed}
+        onAllowCloudDictation={() => {
+          setCloudDictationAllowed(true);
+          void setSetting(db, CLOUD_DICTATION_KEY, new Date().toISOString())
+            .catch(() => { /* Que no se recuerde vuelve a preguntar; no rompe nada. */ });
+        }}
         onOpenMaster={(prefill) => {
           setChatOpen(false);
           // El maestro es el mismo componente de siempre: el asistente no monta

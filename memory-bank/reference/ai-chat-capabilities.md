@@ -121,3 +121,20 @@ herramienta determinística con sus propios parámetros.
 - Si una tarea requiere **operar** el panel de Abacus (no solo leer su
   documentación), necesita su propio documento con el paso a paso y el prompt
   textual a pegar, preparado de antemano y reutilizable.
+
+## Dictado por voz (2026-09-10)
+
+Se le habla al chat en vez de escribirle. **El micrófono es un teclado, no un
+botón de enviar**: lo dictado cae en el cuadro de texto y espera a que ella lo
+lea. De ahí para adelante el camino es idéntico al del texto escrito —parser
+local, turno del modelo, tarjeta confirmable— así que **una capacidad nueva del
+chat la hereda el dictado sin trabajo extra**.
+
+Lo que sí hay que respetar al tocarlo (`docs/adr/0009`):
+
+- Se transcribe **en el teléfono** cuando el aparato puede. Cuando no, se
+  pregunta **antes** de abrir el micrófono y se recuerda la respuesta.
+- Las pistas de vocabulario (sus insulinas, su catálogo) salen de
+  `dictationStartOptions`, junto con `requiresOnDeviceRecognition`, para que no
+  se puedan desincronizar: si el audio va a la red, la lista va vacía.
+- Nada llega a la base de datos por lo que el reconocedor creyó escuchar.
