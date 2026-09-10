@@ -128,9 +128,10 @@ Cada uno costó un build o un número falso; detalle en `git log`.
 ## Backend (2026-09-10)
 
 ⚠️ **`/v1/ai/chat` está escrito y NO desplegado.** La pantalla del chat ya existe
-en la app, pero hasta el redeploy solo funciona lo que se entiende **sin modelo**
+y se abre desde la **posición 4 de la barra** (la que estaba reservada) y desde
+el swipe, pero hasta el redeploy solo funciona lo que se entiende **sin modelo**
 (`local-intent`): agua, insulina con su tipo, carbos y glucosa. Preguntar por los
-datos da error hasta entonces.
+datos da error hasta entonces. ⚠️ **Exige build nuevo** para llegar al teléfono.
 
 Desplegado el head `37c03e1` y, encima, cuentas de suscripción y catálogo con
 dueño (DeepAgent). **Verificado contra la URL en vivo, no reportado**: v4

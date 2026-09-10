@@ -1,6 +1,6 @@
 # Active Context
 
-_Última actualización: 2026-09-10 (Fase 0 del agente: el andamio y el candado)._
+_Última actualización: 2026-09-10 (el agente: andamio, turno y su botón)._
 
 ## El agente: el andamio y el turno (2026-09-10)
 
@@ -15,9 +15,14 @@ mejor: la transcripción **se ve y se corrige** antes de que exista un borrador.
 
 **El registro es código**: `agent-tools.ts` declara qué alcanza y qué no con su
 motivo, y `verify:contracts` falla si una función de `db.ts` no está en ninguna
-lista. En su primera corrida cazó una sin clasificar, y un test cazó ocho motivos
-de relleno que yo mismo escribí. **El borrador es del mismo tipo que el payload
-del Modal Maestro**, y `saveTherapyProfile` no es alcanzable: nunca.
+lista: cazó una sin clasificar, y un test cazó ocho motivos de relleno míos.
+**El borrador es del mismo tipo que el payload del Modal Maestro**, y `saveTherapyProfile` no es alcanzable: nunca.
+
+**El botón ya existía y yo agregué otro.** La posición 4 de la barra era del
+chat desde siempre; la dejé diciendo "todavía no está" y metí un acceso rápido
+redundante. Lo cazó ella. Hoy la posición 4 abre la pantalla, el acceso rápido
+no existe y `chat` entró al swipe — pero su modal **no** lleva `swipeHandlers`:
+adentro hay un cuadro de texto, y eso es un formulario.
 
 ## Ni sincronización ni datos de salud en un servidor (2026-09-04)
 
@@ -136,11 +141,10 @@ prohíbe juzgar a qué hora come.
    derivada no usa línea base, y por eso es inmune a D2. **Antes hay que cerrar
    D1–D4** (`reference/insulin-duration-method.md`), o quedan tres gráficos y
    dos mintiendo.
-3. **PDF y Excel más ricos**: iconografía y una síntesis que describe y **nunca**
-   evalúa una dosis.
+3. **PDF y Excel más ricos**: describen y **nunca** evalúan una dosis.
 4. **Hallazgos abiertos**: ver `progress.md`.
 
 ## Fuera de foco pero pendiente
 
 - **Fase 22** — swipe animado, JS puro. **Fase 20** — widget, necesita build.
-- Pendiente de ella: exclusión de episodios confundidos en Patrones.
+  Pendiente de ella: exclusión de episodios confundidos en Patrones.

@@ -93,8 +93,8 @@ backend sin estado (ADR 0003). `junction-link.ts` quedó sin uso activo.
 modales. `db.ts` (~2.300) es SQLite, migraciones y el timeline.
 
 - **Navegación**: no hay librería. Una pantalla es un `Modal` vía `ModalShell`;
-  sub-páginas son pestañas (`SummaryModal.tsx`). `BottomNav.tsx` +
-  `useSwipeNavigation.ts` + `swipeOrder.ts`.
+  sub-páginas son pestañas (`SummaryModal.tsx`). `BottomNav.tsx` (5 destinos, el
+  4 abre `AgentChatModal.tsx`) + `useSwipeNavigation.ts` + `swipeOrder.ts`.
 - **Modal Maestro**: `UnifiedEntryModal.tsx` crea **y** edita (`mode` dice cuál).
   Sus reglas puras están en `masterModal.ts`: dónde escribe cada tipo (`masterTargetOf`),
   qué carga (`masterSeedFrom`), qué se abre (`masterSectionsFor`, **por contenido**).

@@ -10,7 +10,6 @@ import Calculator from 'lucide-react-native/icons/calculator';
 import FlaskConical from 'lucide-react-native/icons/flask-conical';
 import GlassWater from 'lucide-react-native/icons/glass-water';
 import Settings from 'lucide-react-native/icons/settings';
-import Sparkles from 'lucide-react-native/icons/sparkles';
 import Syringe from 'lucide-react-native/icons/syringe';
 import UtensilsCrossed from 'lucide-react-native/icons/utensils-crossed';
 import {
@@ -1504,7 +1503,8 @@ function Type1AApp() {
     nutritionOpen ? 'nutrition'
       : catalogOpen ? 'catalog'
         : summaryOpen ? 'summary'
-          : null;
+          : chatOpen ? 'chat'
+            : null;
 
   /**
    * `true` cuando el "+" registraría en una fecha pasada.
@@ -1531,15 +1531,14 @@ function Type1AApp() {
     setNutritionOpen(false);
     setCatalogOpen(false);
     setSummaryOpen(false);
+    setChatOpen(false);
     setMasterMode(null);
     if (destination === null) return;
     if (destination === 'nutrition') setNutritionOpen(true);
     else if (destination === 'summary') setSummaryOpen(true);
     else if (destination === 'entry') openMasterCreate('all', inheritedDay);
     else if (destination === 'catalog') setCatalogOpen(true);
-    else if (destination === 'chat') {
-      setNotice('El chat de IA todavía no está disponible.');
-    }
+    else if (destination === 'chat') setChatOpen(true);
   }
 
   const swipe = useSwipeNavigation({ active: activeDestination, onNavigate: navigateTo });
@@ -1648,14 +1647,6 @@ function Type1AApp() {
             color={colors.orange}
             soft={colors.orangeSoft}
             onPress={() => { setMealOpen(true); }}
-          />
-          <QuickButton
-            label="Asistente"
-            hint="Cuéntale o pregúntale"
-            Icon={Sparkles}
-            color={colors.blue}
-            soft="#E3EEF7"
-            onPress={() => { setChatOpen(true); }}
           />
           <QuickButton
             label="Corrección"
