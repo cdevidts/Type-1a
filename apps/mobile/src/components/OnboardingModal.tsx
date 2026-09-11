@@ -117,10 +117,10 @@ const STEPS: Step[] = [
   {
     title: '¿Qué insulinas usas?',
     body:
-      'Elige las tuyas. Type 1A lo usa para leer mejor tus patrones: cuando una dosis anterior todavía podía estar actuando, ese tramo no se promedia como si fuera limpio.',
+      'Elige las tuyas. Type 1A lo usa para dos cosas: leer mejor tus patrones (un tramo con otra dosis actuando no se promedia como si fuera limpio) y estimar cuánta insulina te queda activa cuando calculas una dosis.',
     kind: 'insulin',
     warning:
-      'Esto no calcula insulina activa ni entra en ninguna calculadora de dosis. Puedes saltarlo ahora y elegirlas después en Ajustes → Terapia.',
+      'La insulina activa se descuenta solo de la parte de corrección, nunca de los carbohidratos, y verás el desglose antes de confirmar. Si saltas este paso no se descuenta nada: puedes elegirlas después en Ajustes → Terapia.',
   },
   {
     title: 'Falta un paso, y lo das tú',

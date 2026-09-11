@@ -31,9 +31,37 @@ const MINIMUM_INTERVAL_MINUTES = 15;
 
 const SYNC_WINDOW_MS = 4 * 60 * 60_000;
 
+/**
+ * `useNewConnection` no es una optimización: es la mitad del arreglo del bug
+ * de "no se puede guardar, inténtelo otra vez".
+ *
+ * En Android el módulo nativo **cachea las conexiones** por
+ * `(ruta, opciones, !useNewConnection)` y las lleva con contador de
+ * referencias. Sin esta bandera, este `openDatabaseAsync(DATABASE_NAME)` con
+ * opciones por defecto recibía **exactamente la misma conexión nativa** que el
+ * `<SQLiteProvider databaseName="type1a.db">` de `App.tsx`, y el `closeAsync`
+ * de abajo solo bajaba el contador sin cerrar nada.
+ *
+ * Es decir: cada ~15 minutos, y en cada toque de "Actualizar" de la
+ * notificación, este módulo corría `initializeDatabase` (PRAGMA key,
+ * `journal_mode`, doce `CREATE TABLE`, los `ALTER TABLE`) y el `BEGIN…COMMIT`
+ * de `upsertCGMReadings` **sobre la conexión en la que la usuaria estaba
+ * escribiendo**. SQLite no anida transacciones, y por cómo `expo-sqlite`
+ * implementa `withTransactionAsync` la colisión no falla limpio: el `ROLLBACK`
+ * de una cierra la transacción de la otra. El detalle está en
+ * `dbWriteQueue.ts`, que cierra la otra mitad —dos escrituras de la app entre
+ * sí— con una cola compartida.
+ *
+ * Con conexión propia, `initializeDatabase` la autentica con su propio PRAGMA
+ * key (SQLCipher es por conexión) y `closeAsync` la cierra de verdad. Las dos
+ * conexiones ahora concurren a nivel de archivo, que es concurrencia que WAL y
+ * el `busy_timeout` de `initializeDatabase` sí saben manejar.
+ */
 async function openDb(): Promise<SQLiteDatabase> {
-  const db = await SQLite.openDatabaseAsync(DATABASE_NAME);
+  const db = await SQLite.openDatabaseAsync(DATABASE_NAME, { useNewConnection: true });
   // Idempotent: safe to call on every headless run, not just first launch.
+  // Obligatorio en esta conexión aunque la app ya haya migrado: el PRAGMA key
+  // de SQLCipher es por conexión, no por archivo.
   await initializeDatabase(db);
   return db;
 }
@@ -54,6 +82,11 @@ async function openDb(): Promise<SQLiteDatabase> {
  * connection below means at most one connection this module owns is ever
  * open at a time, and a burst of taps collapses into sequential runs instead
  * of concurrent ones.
+ *
+ * Sigue haciendo falta después de `useNewConnection`: esa bandera separa a
+ * este módulo de la pantalla, no a este módulo de sí mismo. Sin la cola, dos
+ * corridas de acá abrirían dos conexiones nuevas simultáneas contra el mismo
+ * archivo cifrado, que es el crash que documenta el párrafo de arriba.
  */
 let syncChain: Promise<void> = Promise.resolve();
 

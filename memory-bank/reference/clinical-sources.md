@@ -1,15 +1,15 @@
 # Fuentes — de dónde sale cada constante
 
-Se lee al **cambiar una constante clínica**, no en cada corrida. Si vas a mover
-un umbral, una duración de insulina o una meta, la cita que lo respalda está
-acá; si no está, no se cambia el número.
+Se lee al **cambiar una constante clínica**, no en cada corrida. Si vas a mover un
+umbral, una duración de insulina o una meta, la cita que lo respalda está acá; si
+no está, no se cambia el número.
 
 ## Duración de acción de las insulinas
 
-Respaldan `packages/domain/src/insulin-catalog.ts`. Se usan **solo para higiene
-de datos** —decidir si una dosis anterior todavía podía estar actuando dentro de
-la ventana de un episodio— nunca para estimar insulina activa ni para ningún
-cálculo de dosis.
+Respaldan `packages/domain/src/insulin-catalog.ts`. Sirven para higiene de datos
+—si una dosis anterior podía estar actuando dentro de un episodio— y alimentan la
+curva de insulina activa (abajo). Nunca fijan una dosis sola: lo que calculan se
+resta de la corrección y se muestra desglosado.
 
 - [Cleveland Clinic — Injectable insulin medications](https://my.clevelandclinic.org/health/drugs/13902-injectable-insulin-medications):
   inicio/pico/duración por insulina. De ahí salen lispro (Humalog), aspart
@@ -25,15 +25,29 @@ cálculo de dosis.
   lispro.
 
 **Por qué el extremo alto del rango** (5 h y no 4, 42 h y no 40): para marcar un
-episodio como confundido conviene errar por exceso. Marcar de más cuesta
-precisión —y el `n` se muestra en pantalla y en el reporte—; marcar de menos
-publica como patrón un promedio contaminado, que es el daño que esto existe para
-evitar.
+episodio confundido conviene errar por exceso. Marcar de más cuesta precisión —el
+`n` se muestra—; de menos publica como patrón un promedio contaminado.
 
 **Y por qué las elige la usuaria y no la app**: `AGENTS.md` prohíbe inferir
-parámetros de terapia. Estos números son el dato del fabricante, no una
-estimación de la app sobre esa persona, y se sobrescriben con lo que haya
-indicado su equipo clínico.
+parámetros de terapia. Son el dato del fabricante, no una estimación sobre esa
+persona, y se sobrescriben con lo que indique su equipo clínico.
+
+## Insulina activa (IOB) — curva exponencial
+
+`packages/domain/src/iob.ts`. Modelo de LoopKit/OpenAPS, el estándar de los
+sistemas de código abierto. Con `td` = duración y `tp` = pico:
+`τ = tp(1 − tp/td)/(1 − 2tp/td)`, `a = 2τ/td`, `S = 1/(1 − a + (1+a)e^(−td/τ))`,
+`restante(t) = 1 − S(1−a)((t²/(τ·td(1−a)) − t/τ − 1)e^(−t/τ) + 1)`.
+Picos (presets de Loop): análogas rápidas 75 min, aceleradas 55, regular 150.
+[OpenAPS](https://openaps.readthedocs.io/en/latest/docs/While%20You%20Wait%20For%20Gear/understanding-insulin-on-board-calculations.html)
+
+Se eligió sobre la lineal porque la insulina no se agota a ritmo constante: una
+recta sobreestima lo activo temprano y lo subestima tarde. Las cinco condiciones
+para usarlo están en `docs/adr/0005`.
+
+## Duración observada de la insulina, por tramo del día
+`insulin-duration.ts`. El método, sus fuentes y **por qué la primera versión no
+mostró un solo dato** están en `reference/insulin-duration-method.md`.
 
 ## Umbrales de glucosa
 
@@ -51,6 +65,18 @@ Una meta poblacional (ej. ">70% en rango") se muestra como contexto de lectura,
 aclarando que el objetivo personal lo define el equipo clínico — nunca como si
 la app se lo hubiera fijado a la usuaria.
 
+## Meta de fibra — 14 g por cada 1000 kcal
+
+`FIBER_G_PER_1000_KCAL` en `nutrition-targets.ts`: la Ingesta Adecuada del IOM
+(DRI 2005), que la ADA recomienda también en diabetes. Se escala con la energía.
+
+- [Dietary Reference Intakes, cap. 7 (IOM)](https://nap.nationalacademies.org/read/10490/chapter/9)
+- [ADA Standards of Care — nutrición](https://diabetesjournals.org/care/article/48/Supplement_1/S86/157558)
+
+Tres cosas que la implementación fija: es un **piso, no un techo** (la barra lo
+dice en positivo); **no se descuenta de los carbohidratos** —los "netos" los
+define el equipo tratante y `AGENTS.md` prohíbe inferirlo—; y **no entra en el
+reparto 4/4/9**, porque ya está contada dentro de los carbohidratos.
 ## Respuesta post-prandial con comidas solapadas
 
 Respaldan el rediseño de `macro-glucose.ts` y `nutrition-insights.ts`. Verónica
@@ -83,17 +109,14 @@ cualquier dato que no venga en formato fácil"*.
   covariable constante o un sistema mal condicionado: **cuando el ajuste no se
   sostiene se muestra el promedio crudo y se declara.**
 
-Cómo quedó aplicado:
-
 | Pantalla | Salida | Qué pasa con un episodio confundido |
 |---|---|---|
 | Patrones (grasa+proteína) | promedio mg/dL | se **conserva** y se le descuenta por OLS el aporte de los confusores; se declara `n`, cuántos traían eventos, y si está ajustado |
 | Comidas (% en rango) | porcentaje | un porcentaje no se residualiza, así que se **cuenta y se declara** (`confoundedCount`) junto al número |
 
-Lo único que saca un episodio del cálculo es **no tener lecturas de glucosa**.
+Lo único que saca un episodio es **no tener lecturas de glucosa**.
 
 ## CGM — LibreLinkUp, LibreView, Junction
-
 Contexto de `docs/adr/0004-cgm-provider-librelinkup.md`.
 
 - [Junction — Abbott LibreView provider guide](https://docs.junction.com/wearables/guides/abbott-libreview)
@@ -105,7 +128,6 @@ Contexto de `docs/adr/0004-cgm-provider-librelinkup.md`.
   `timoschlueter/nightscout-librelink-up`.
 
 ## UX y fatiga de alarma
-
 Respaldan `reference/ux-rationale.md` y `contracts/ux-checklist.md`.
 
 - Apple HIG — [Layout](https://developers.apple.com/design/human-interface-guidelines/foundations/layout/),

@@ -92,6 +92,61 @@ describe('buildReportRows', () => {
     expect(row!.detail).toContain('38 g estimados por IA');
   });
 
+  it('does not report a meal and its confirmed-carb mirror as two consumptions', () => {
+    const timestamp = '2026-08-18T13:00:00.000Z';
+    const meal: MealEvent = {
+      id: 'm1', timestamp, confirmedCarbsG: 45, createdAt: timestamp,
+    };
+    const mirror: CarbEvent = {
+      id: 'c1', timestamp, carbsG: 45, source: 'meal_confirmed', createdAt: timestamp,
+    };
+
+    const rows = buildReportRows({ ...EMPTY_INPUT, meals: [meal], carbs: [mirror] });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.kind).toBe('meal');
+  });
+
+  it('keeps an orphan confirmed-carb mirror visible rather than hiding data', () => {
+    const timestamp = '2026-08-18T13:00:00.000Z';
+    const mirror: CarbEvent = {
+      id: 'c1', timestamp, carbsG: 45, source: 'meal_confirmed', createdAt: timestamp,
+    };
+
+    const rows = buildReportRows({ ...EMPTY_INPUT, carbs: [mirror] });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.kind).toBe('carbs');
+  });
+
+  it('does not hide an orphan mirror behind another meal at the same time', () => {
+    const timestamp = '2026-08-18T13:00:00.000Z';
+    const mealWithoutCarbs: MealEvent = { id: 'm1', timestamp, createdAt: timestamp };
+    const orphanMirror: CarbEvent = {
+      id: 'c1', timestamp, carbsG: 45, source: 'meal_confirmed', createdAt: timestamp,
+    };
+
+    const rows = buildReportRows({
+      ...EMPTY_INPUT,
+      meals: [mealWithoutCarbs],
+      carbs: [orphanMirror],
+    });
+
+    expect(rows.map((row) => row.kind).sort()).toEqual(['carbs', 'meal']);
+  });
+
+  it('pairs mirrors one-to-one when duplicate timestamps collide', () => {
+    const timestamp = '2026-08-18T13:00:00.000Z';
+    const meal: MealEvent = { id: 'm1', timestamp, confirmedCarbsG: 45, createdAt: timestamp };
+    const mirrors: CarbEvent[] = ['c1', 'c2'].map((id) => ({
+      id, timestamp, carbsG: 45, source: 'meal_confirmed', createdAt: timestamp,
+    }));
+
+    const rows = buildReportRows({ ...EMPTY_INPUT, meals: [meal], carbs: mirrors });
+
+    expect(rows.map((row) => row.kind).sort()).toEqual(['carbs', 'meal']);
+  });
+
   it('describes an insulin dose without ever implying the purpose fed a calculation', () => {
     const [row] = buildReportRows({
       ...EMPTY_INPUT,
@@ -174,5 +229,47 @@ describe('cetonas en el reporte (Fase 13, ítem 8)', () => {
       expect(detailFor(value).toLowerCase())
         .not.toMatch(/\b(insulina|unidades?|dosis|corrige|corregir|ponte|inyecta)\b/u);
     }
+  });
+});
+
+describe('el agua llega al reporte del equipo clínico (auditoría 2026-09-03)', () => {
+  const at = '2026-09-03T10:00:00.000Z';
+  const empty = {
+    readings: [], insulin: [], carbs: [], meals: [], activities: [], notes: [], vitals: [], hba1c: [],
+  };
+
+  it('una fila por registro, con sus mililitros', () => {
+    // Se registraba, se veía en Nutrición y en el timeline, y **no salía en el
+    // PDF ni en el Excel**: el equipo clínico no lo veía. En tipo 1 la sed
+    // excesiva puede ser síntoma de hiperglucemia, así que un día de 4 litros
+    // al lado de unas glucosas altas dice algo.
+    const rows = buildReportRows({
+      ...empty,
+      water: [{ id: 'w1', timestamp: at, ml: 500, source: 'manual', createdAt: at }],
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.kind).toBe('water');
+    expect(rows[0]!.kindLabel).toBe('Agua');
+    expect(rows[0]!.detail).toBe('500 mL');
+  });
+
+  it('la procedencia distingue lo que estimó la IA', () => {
+    // Un volumen que produjo un modelo no puede llegar al equipo clínico como
+    // un dato medido: es la misma regla que rige los macros estimados.
+    const rows = buildReportRows({
+      ...empty,
+      water: [
+        { id: 'w1', timestamp: at, ml: 250, source: 'ai_photo', createdAt: at },
+        { id: 'w2', timestamp: at, ml: 250, source: 'ai_text', createdAt: at },
+        { id: 'w3', timestamp: at, ml: 250, source: 'quick', createdAt: at },
+      ],
+    });
+    expect(rows.map((row) => row.provenance)).toEqual([
+      'Estimado por IA (foto)', 'Estimado por IA (texto)', 'Manual',
+    ]);
+  });
+
+  it('sin agua el reporte queda exactamente como estaba', () => {
+    expect(buildReportRows(empty)).toHaveLength(0);
   });
 });

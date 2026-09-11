@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { glucoseInsightJsonSchema, mealAnalysisJsonSchema } from '@type1a/schemas';
 
 import {
   AbacusGlucoseInsightService,
@@ -9,6 +10,7 @@ import {
   MEAL_TEXT_PROMPT_VERSION,
   mealEditSystemPrompt,
   mealTextSystemPrompt,
+  knownFoodsBlock,
   sanitizeForStrictJsonSchema,
 } from '../src/index.js';
 
@@ -42,6 +44,7 @@ describe('Abacus RouteLLM services', () => {
             confidence: 0.7,
           },
         ],
+        waterMl: null,
         uncertaintyNotes: ['La porción se estima visualmente.'],
       });
     };
@@ -75,6 +78,7 @@ describe('Abacus RouteLLM services', () => {
             confidence: 0.3,
           },
         ],
+        waterMl: null,
         uncertaintyNotes: ['No hay foto: la porción es una suposición.'],
       });
     };
@@ -119,6 +123,7 @@ describe('Abacus RouteLLM services', () => {
             confidence: 0.7,
           },
         ],
+        waterMl: null,
         uncertaintyNotes: [],
       });
     };
@@ -203,6 +208,7 @@ describe('modo edición (Fase 17)', () => {
         confidence: 0.5,
       },
     ],
+    waterMl: null,
     uncertaintyNotes: ['El tipo de pan no se especifica.'],
   };
 
@@ -251,5 +257,75 @@ describe('modo edición (Fase 17)', () => {
       }),
     ).rejects.toBeInstanceOf(AIServiceError);
     expect(called).toBe(0);
+  });
+});
+
+describe('knownFoodsBlock', () => {
+  it('vacío o ausente no cambia el mensaje', () => {
+    expect(knownFoodsBlock(undefined)).toBe('');
+    expect(knownFoodsBlock([])).toBe('');
+    expect(knownFoodsBlock(['  '])).toBe('');
+  });
+
+  it('lista solo nombres, uno por línea, con la regla de "solo si es el mismo"', () => {
+    const block = knownFoodsBlock(['Muslo de pollo', ' Arroz ']);
+    expect(block).toContain('- Muslo de pollo');
+    expect(block).toContain('- Arroz');
+    expect(block).toMatch(/nombre EXACTO solo si es el mismo alimento/);
+    // Nada más que el nombre viaja: ni macros ni veces vista.
+    expect(block).not.toMatch(/\d/);
+  });
+});
+
+describe('sanitizeForStrictJsonSchema — lista blanca de lo que sobrevive', () => {
+  /**
+   * Lo que el validador de esquemas de un proveedor acepta, comprobado contra
+   * producción. Todo lo demás se filtra: son cotas que el modelo no necesita,
+   * porque la respuesta se re-valida entera contra el Zod real después.
+   */
+  const ALLOWED = new Set([
+    'type', 'properties', 'required', 'items', 'enum', 'anyOf', 'additionalProperties',
+    'description', 'title', 'const', 'format', 'pattern', 'minLength', 'maxLength',
+  ]);
+
+  function keywordsOf(node: unknown, inProperties = false, out = new Set<string>()): Set<string> {
+    if (Array.isArray(node)) { for (const item of node) keywordsOf(item, false, out); return out; }
+    if (node === null || typeof node !== 'object') return out;
+    for (const [key, value] of Object.entries(node)) {
+      // Dentro de `properties` las claves son nombres de campo, no palabras
+      // del esquema: un alimento podría llamarse "maximum".
+      if (!inProperties) out.add(key);
+      keywordsOf(value, key === 'properties', out);
+    }
+    return out;
+  }
+
+  for (const [name, schema] of [
+    ['meal-analysis', mealAnalysisJsonSchema],
+    ['glucose-insight', glucoseInsightJsonSchema],
+  ] as const) {
+    it(`${name}: nada fuera de la lista blanca llega al proveedor`, () => {
+      // Este test existe por un incidente real: la lista de palabras filtradas
+      // tenía cuatro de las cinco que importan, un `z.number().positive()`
+      // nuevo emitió `exclusiveMinimum`, y todas las fotos empezaron a
+      // responder 502 mientras el texto seguía bien. Enumerar lo que
+      // SOBREVIVE lo habría atrapado; enumerar lo que se filtra, no.
+      const survivors = [...keywordsOf(sanitizeForStrictJsonSchema(schema))].filter((k) => !ALLOWED.has(k));
+      expect(survivors, `palabras no previstas en ${name}`).toEqual([]);
+    });
+  }
+
+  it('las cotas numéricas se van, incluida la exclusiva', () => {
+    const sanitized = JSON.stringify(sanitizeForStrictJsonSchema(mealAnalysisJsonSchema));
+    for (const keyword of ['exclusiveMinimum', 'exclusiveMaximum', 'minimum', 'maximum', 'minItems', 'maxItems']) {
+      expect(sanitized, keyword).not.toContain(`"${keyword}"`);
+    }
+  });
+
+  it('no filtra un campo que se LLAME como una palabra del esquema', () => {
+    const schema = { type: 'object', properties: { maximum: { type: 'number', maximum: 10 } } };
+    const out = JSON.parse(JSON.stringify(sanitizeForStrictJsonSchema(schema)));
+    expect(out.properties.maximum).toBeDefined();
+    expect(out.properties.maximum.maximum).toBeUndefined();
   });
 });

@@ -429,9 +429,10 @@ function eventTableHtml(rows: ReportRow[]): string {
  * distintas con Fiasp que con regular humana, y con Lantus que con Tresiba.
  * Es un dato que la usuaria eligió, no uno que la app dedujo.
  *
- * Se declara además que la duración se usa solo para descartar tramos
- * confundidos: sin esa frase, un médico podría leer "duración: 5 h" como si
- * la app estuviera estimando insulina activa, que es justo lo que no hace.
+ * Se declara además **para qué** se usa esa duración, que desde el 2026-09-02
+ * son dos cosas: descartar tramos confundidos al promediar, y alimentar la
+ * curva de insulina activa que se descuenta de la corrección propuesta. Sin
+ * esa frase, un médico no sabría si el número que ve ya venía descontado.
  */
 function insulinSectionHtml(data: ReportExport): string {
   const rapid = findCatalogInsulin(data.rapidInsulinId);
@@ -447,7 +448,7 @@ function insulinSectionHtml(data: ReportExport): string {
     ${row('Rápida', rapid, data.rapidInsulinDurationHours)}
     ${row('Basal', basal, data.basalInsulinDurationHours)}
   </table>
-  <p class="muted">Dato declarado por la usuaria. La duración se usa únicamente para saber si otra dosis pudo estar actuando dentro de una ventana, y así tenerlo en cuenta al promediar los patrones de abajo. Type 1A no estima insulina activa ni calcula dosis.</p>`;
+  <p class="muted">Dato declarado por la usuaria. La duración se usa para dos cosas: saber si otra dosis pudo estar actuando dentro de una ventana al promediar los patrones de abajo, y estimar la insulina activa que la calculadora descuenta <strong>solo de la parte de corrección</strong> de una dosis propuesta (curva exponencial de LoopKit/OpenAPS). Type 1A no dosifica sola: toda dosis la confirma y la registra la usuaria, y las filas de insulina de abajo muestran el desglose cuando lo tienen.</p>`;
 }
 
 export function reportHtml(data: ReportExport, rangeLabel: string): string {
@@ -578,7 +579,7 @@ export function reportWorkbookBytes(data: ReportExport): Uint8Array {
         basalCatalog === undefined ? 'No registrada' : `${basalCatalog.brand} (${basalCatalog.generic})`,
         basalCatalog === undefined ? '' : `Duración considerada: ${data.basalInsulinDurationHours ?? basalCatalog.durationHours} h`,
       ],
-      ['Dato declarado por la usuaria. La duración solo se usa para saber si otra dosis pudo estar actuando dentro de una ventana, y tenerlo en cuenta al promediar los patrones. Type 1A no estima insulina activa ni calcula dosis.'],
+      ['Dato declarado por la usuaria. La duración se usa para descartar tramos confundidos al promediar los patrones y para estimar la insulina activa que la calculadora descuenta solo de la parte de corrección. Type 1A no dosifica sola: toda dosis la confirma y la registra la usuaria.'],
     ];
   summarySheetData.push(...insulinRows);
 

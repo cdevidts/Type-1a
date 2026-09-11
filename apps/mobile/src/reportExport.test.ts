@@ -310,11 +310,17 @@ describe('insulinas en el reporte (2026-08-25)', () => {
     expect(html).toContain('4 h');
   });
 
-  it('nunca insinúa que la app estime insulina activa', () => {
-    // El texto es superficie de seguridad: "duración: 5 h" al lado de unas
-    // dosis se puede leer como IOB si no se aclara para qué se usa.
+  it('dice para qué se usa la duración, y que la app no dosifica sola', () => {
+    // El texto es superficie de seguridad. Desde que sí se estima insulina
+    // activa (2026-09-02), lo que el equipo clínico necesita saber cambió: no
+    // "no la estimamos" sino **de dónde sale y de qué mitad se descuenta**, y
+    // que ninguna dosis se aplica sin que la usuaria la confirme.
     const html = reportHtml({ ...base, rapidInsulinId: 'fiasp', rapidInsulinDurationHours: 5 }, 'rango');
-    expect(html).toContain('no estima insulina activa');
+    expect(html).toContain('insulina activa');
+    expect(html).toContain('solo de la parte de corrección');
+    expect(html).toContain('no dosifica sola');
+    // Y nunca la frase vieja, que ahora sería mentira en un documento clínico.
+    expect(html).not.toContain('no estima insulina activa');
   });
 
   it('sin insulinas registradas lo dice, y aclara qué implica', () => {

@@ -12,7 +12,7 @@ que se leen **siempre**; esta tabla dice cuándo vale la pena traer el resto.
 | `systemPatterns.md` | las tres Reglas de Oro del código | antes de escribir lógica que ya existe en otra capa |
 | `workflow.md` | commits, qué skill se dispara sola, auditoría de cierre | al abrir y al cerrar la corrida |
 | `activeContext.md` | foco actual, qué se cerró, qué quedó abierto | siempre; es lo que cambia entre corridas |
-| `progress.md` | validación, deuda, bugs vivos, historial fallo→regla | siempre; ahí están los bugs que todavía muerden |
+| `progress.md` | validación, deuda y bugs vivos | siempre; ahí están los bugs que todavía muerden |
 
 ## Capa 2 — bajo demanda
 
@@ -21,7 +21,11 @@ que se leen **siempre**; esta tabla dice cuándo vale la pena traer el resto.
 | `codemap.md` | vas a tocar código y no sabes en qué archivo vive — es "vas a tocar X → lee Y" |
 | `reference/ux-rationale.md` | vas a diseñar algo **sin patrón previo** en la app y necesitas el porqué tipográfico o de espaciado. Para revisar una pantalla basta `contracts/ux-checklist.md` |
 | `reference/clinical-sources.md` | vas a cambiar una constante clínica (umbrales, duración de insulina, metas) y necesitas su respaldo |
+| `reference/insulin-duration-method.md` | vas a tocar la duración observada por tramo horario, el filtro de qué episodio cuenta, o la pestaña Resumen → Insulina |
 | `reference/ai-chat-capabilities.md` | trabajas en el chat de IA o agregas una capacidad que el chat futuro debería alcanzar |
+| `reference/meal-ai-text-fields.md` | vas a tocar el cuadro de texto de la IA de comida: la pista para la foto, la estimación solo con texto, o corregir sobre la propuesta ya hecha |
+| `reference/failure-history.md` | vas a discutir una de las Reglas de Oro, o a repetir algo que "ya se intentó": es la tabla fallo→regla, cada fila costó un build o un número falso |
+| `reference/catalog-recipes.md` | vas a tocar recetas del catálogo, duplicados propuestos por la IA, calorías en la tarjeta de alimento, fotos por alimento, o la nota que el botón rápido no guarda |
 
 ## Capa 1 — contratos (`/contracts/`)
 

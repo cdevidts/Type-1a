@@ -16,6 +16,11 @@ tomó; su valor está justamente en que sobrevive a la decisión.
 | [0002](0002-ai-boundary.md) | La IA interpreta; el código determinístico calcula | Accepted (2026-08-12) |
 | [0003](0003-shared-food-catalog.md) | Catálogo de alimentos compartido — el backend gana estado, acotado | Accepted (2026-08-21) |
 | [0004](0004-cgm-provider-librelinkup.md) | LibreLinkUp es la ruta de CGM; Junction queda como alternativa | Accepted (2026-08-26) |
+| [0005](0005-insulin-on-board.md) | Insulina activa (IOB): se levanta la prohibición, con cinco condiciones | Accepted (2026-09-02) |
+| [0006](0006-iob-de-comida-si-cuenta-pero-nunca-toca-la-comida.md) | El IOB incluye la insulina de comida, pero nunca toca la cobertura de carbohidratos | Accepted (2026-09-03) |
+| [0007](0007-la-cuenta-es-para-cobrar-no-para-guardar-datos-de-salud.md) | La cuenta es solo para cobrar; ningún dato de salud sale del teléfono | Accepted (2026-09-04) |
+| [0008](0008-el-agente-responde-con-salida-estructurada-y-no-con-tool-calling.md) | El agente usa salida estructurada, no tool calling; el registro de capacidades es código y `verify` lo exige | Accepted (2026-09-10) |
+| [0009](0009-el-dictado-se-transcribe-en-el-telefono-y-nunca-envia-solo.md) | El dictado usa el reconocedor del sistema, se transcribe en el teléfono cuando se puede, y nunca envía solo | Accepted (2026-09-10) |
 
 ## Cuándo escribir uno
 

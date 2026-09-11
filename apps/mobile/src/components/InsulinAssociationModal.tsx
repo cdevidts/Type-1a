@@ -70,7 +70,7 @@ export function InsulinAssociationModal({
           >
             <Text style={styles.noneText}>Confirmar que no hubo rápida asociada</Text>
           </Pressable>
-          <Text style={styles.safety}>Esto completa el contexto del episodio; no calcula IOB ni modifica una dosis.</Text>
+          <Text style={styles.safety}>Esto solo completa el contexto del episodio: no cambia ninguna dosis ya registrada ni sus unidades.</Text>
           {error === null ? null : <Text style={styles.error}>{error}</Text>}
         </>
       )}

@@ -1,0 +1,26 @@
+diff --git a/android/src/main/java/expo/modules/speechrecognition/ExpoSpeechService.kt b/android/src/main/java/expo/modules/speechrecognition/ExpoSpeechService.kt
+index 0e6b676ffc7e68f320c0c4ea25a7ebd774b0065f..cf4ea10cd69be440afe1841b8fee9b873f8954d7 100644
+--- a/android/src/main/java/expo/modules/speechrecognition/ExpoSpeechService.kt
++++ b/android/src/main/java/expo/modules/speechrecognition/ExpoSpeechService.kt
+@@ -86,7 +86,20 @@ class ExpoSpeechService(
+     }
+ 
+     private fun log(message: String) {
+-        Log.d("ExpoSpeechService", message)
++        // Type 1A: neutralizado a propósito.
++        //
++        // Este método recibía la transcripción del dictado y la lista de pistas
++        // de vocabulario, que en esta app son los nombres de las insulinas de la
++        // usuaria y su catálogo de comidas enteros. Escribir eso en el log del
++        // sistema es lo que Android clasifica como MASVS-STORAGE (Log Info
++        // Disclosure) y lo que AGENTS.md prohíbe explícitamente.
++        //
++        // No basta con que el log sea privado de la app: Android advierte que en
++        // muchos aparatos vienen aplicaciones preinstaladas con READ_LOGS.
++        //
++        // Se parchea el origen en vez de confiar en que R8 lo borre, porque una
++        // regla de ProGuard no se puede comprobar desde acá y esto sí: los
++        // textos desaparecen del APK.
+     }
+ 
+     private fun createSpeechRecognizer(options: SpeechRecognitionOptions): SpeechRecognizer? {

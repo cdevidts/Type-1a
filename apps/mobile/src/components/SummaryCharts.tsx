@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, G, Line, Path, Polyline, Rect, Text as SvgText } from 'react-native-svg';
 
 import {
+  CURVE_HOURS,
   convertGlucose,
   HIGH_THRESHOLD,
   HYPOGLYCEMIA_THRESHOLD,
@@ -10,6 +11,7 @@ import {
   VERY_LOW_THRESHOLD,
   type AmbulatoryProfile,
   type GlucoseRangeBreakdown,
+  type SegmentCurve,
 } from '@type1a/domain';
 import type { CGMReading } from '@type1a/schemas';
 
@@ -381,3 +383,93 @@ const styles = StyleSheet.create({
   rangeLegendValue: { fontWeight: '800' },
   rangeLegendRange: { color: colors.muted, fontSize: 11, marginTop: 1 },
 });
+
+/* ── Curva de efecto de la insulina ──────────────────────────────────────
+ *
+ * Cuánto se movió la glucosa a 1, 2, 3… horas de inyectarse, agrupado por el
+ * tramo en que **empezó** la inyección. Pedido por Verónica el 2026-09-03.
+ *
+ * ## Por qué pequeños múltiplos y no cuatro líneas en un gráfico
+ *
+ * Cuatro tramos son una paleta **categórica**, y `contracts/dataviz-palette.md`
+ * es explícito en que la identidad no puede descansar en el color. Cuatro
+ * colores categóricos separables por daltonismo dentro de 390 pt, además de
+ * los de estado que la app ya usa para glucosa, era pedirle demasiado a la
+ * paleta — y el riesgo de que un naranja "tarde" se leyera como "glucosa alta"
+ * es real en una app donde el naranja significa exactamente eso.
+ *
+ * Con un gráfico por tramo cada serie está sola, el título la nombra, y no
+ * hace falta leyenda ni color categórico. La **escala Y es compartida**, que
+ * es lo que hace comparables los cuatro de un vistazo: es el punto entero.
+ */
+
+const CURVE_HEIGHT = 86;
+const CURVE_AXIS_WIDTH = 34;
+const CURVE_PAD_Y = 10;
+
+export function InsulinEffectCurve({
+  segment,
+  extremeDeltaMgDl,
+  width,
+}: {
+  segment: SegmentCurve;
+  /** El máximo absoluto de TODOS los tramos: la escala se comparte. */
+  extremeDeltaMgDl: number;
+  width: number;
+}) {
+  const plotWidth = Math.max(40, width - CURVE_AXIS_WIDTH);
+  // Un piso de 40 mg/dL evita que un tramo casi plano se dibuje como una
+  // montaña rusa por autoescalado — el clásico gráfico que exagera el ruido.
+  const scale = Math.max(40, extremeDeltaMgDl);
+  const midY = CURVE_HEIGHT / 2;
+  const yFor = (delta: number): number =>
+    midY - (delta / scale) * (CURVE_HEIGHT / 2 - CURVE_PAD_Y);
+  const xFor = (hour: number): number =>
+    CURVE_AXIS_WIDTH + ((hour - 1) / (CURVE_HOURS.length - 1)) * plotWidth;
+
+  const drawn = segment.points.filter((point) => point.medianDeltaMgDl !== undefined);
+  const path = drawn
+    .map((point, index) => `${index === 0 ? 'M' : 'L'}${xFor(point.hour)},${yFor(point.medianDeltaMgDl!)}`)
+    .join(' ');
+
+  return (
+    <Svg width={width} height={CURVE_HEIGHT}>
+      {/* Cero: la referencia que dice si subió o bajó respecto de la dosis. */}
+      <Line
+        x1={CURVE_AXIS_WIDTH} y1={midY} x2={CURVE_AXIS_WIDTH + plotWidth} y2={midY}
+        stroke={colors.line} strokeWidth={1}
+      />
+      <SvgText x={CURVE_AXIS_WIDTH - 5} y={midY + 3} fontSize={9} fill={colors.muted} textAnchor="end">0</SvgText>
+      <SvgText x={CURVE_AXIS_WIDTH - 5} y={CURVE_PAD_Y + 3} fontSize={9} fill={colors.muted} textAnchor="end">
+        {`+${Math.round(scale)}`}
+      </SvgText>
+      <SvgText x={CURVE_AXIS_WIDTH - 5} y={CURVE_HEIGHT - CURVE_PAD_Y + 3} fontSize={9} fill={colors.muted} textAnchor="end">
+        {`−${Math.round(scale)}`}
+      </SvgText>
+
+      {CURVE_HOURS.map((hour) => (
+        <SvgText
+          key={hour}
+          x={xFor(hour)}
+          y={CURVE_HEIGHT - 1}
+          fontSize={8}
+          fill={colors.muted}
+          textAnchor="middle"
+        >
+          {hour}
+        </SvgText>
+      ))}
+
+      {path === '' ? null : <Path d={path} stroke={colors.teal} strokeWidth={2} fill="none" />}
+      {drawn.map((point) => (
+        <Circle
+          key={point.hour}
+          cx={xFor(point.hour)}
+          cy={yFor(point.medianDeltaMgDl!)}
+          r={3}
+          fill={colors.teal}
+        />
+      ))}
+    </Svg>
+  );
+}

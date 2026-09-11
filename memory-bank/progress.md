@@ -1,125 +1,150 @@
 # Progress
 
-_Última actualización: 2026-08-26._
+_Última actualización: 2026-09-10 (Fase 0 del agente)._
 
 ## Estado de validación
 
 | | |
 |---|---|
-| `pnpm verify` | ✅ verde |
-| Tests | **466** — domain 291, mobile 127, ai 15, schemas 13, cgm 10, api 10 |
-| Bundle de Metro | **1.333 módulos** (línea base; un salto grande = barrel importado) |
-| CI | `.github/workflows/verify.yml` en cada push y PR |
+| `pnpm verify` | Verde. El wrapper de Windows conserva su fallo de rutas; CI Linux es la verificación integral |
+| Tests | **1.055** — domain 700, mobile 274, ai 34, schemas 21, cgm 10, api 16 |
+| Bundle de Metro | **1.388** (el dictado sumó 9); CI en cada push y PR |
 
-`pnpm verify` corre, en orden: `verify:contracts` (guard de memoria agéntica,
-<1 s), `lint`, `typecheck`, `test`, `verify:bundle` (export real de Metro).
+⚠️ `verify:contracts` exige además: toda función de `db.ts` clasificada para el agente, el parche del dictado declarado, y el permiso de micrófono sin bloquear.
 
 ## Entregado y en el dispositivo
 
-Build `preview` (`.apk`) del 2026-08-26 instalado. Incluye:
-
-- **Fase 19** — notificaciones distinguibles: emoji, color y título por tipo, y
-  un canal de Android por tipo (interruptor propio en los ajustes del sistema).
-  Más un botón "Probar cómo se ven" en Ajustes.
-- **Fase 21** — "Comida" reemplaza a "Carbos" y "Rápida"; comida e insulina bajo
-  un mismo timestamp; tres decisiones independientes (registrar / catálogo /
-  insulina); macros al editar.
-- **Fase 23** — el episodio captura todo lo de su ventana.
-- **Catálogo de insulinas** con duración configurable (rápidas y basales), en
-  Ajustes y en el flujo de primer uso.
-- **Patrones y Comidas** rehechos: se ajusta por covariables en vez de excluir.
-- **Cetonas** en "Nueva entrada", en el editor y en el timeline.
-- Accesos rápidos rediseñados con iconos de Lucide (se fueron los glifos
-  Unicode `ƒ(x)`, `mmol/L`, `◎`).
+- 2026-08-26 → 08-31 (`a706510`): notificaciones por tipo, episodio con ventana,
+  catálogo de insulinas, Patrones, Lucide, Modal Maestro, calendario, carrito,
+  fibra y las transacciones SQLite.
+- 2026-09-01/02 (`6f1c2cd`→`e85c760`, builds `9bdc3d95`, `03fb5c6d`, `e93ce4a2`):
+  porción confirmada, calorías, fotos desde el editor, recetas de verdad, campos
+  de IA, cobertura de días, macros por porción, meta de fibra y hora local.
+- 2026-09-04 (build `7122edf9`): el tope del IOB, la curva de efecto por tramo,
+  el agua entera en Nutrición y las 5 correcciones de la auditoría. Huella
+  verificada (`3D:42:7A:…:62:33`).
+- 2026-09-10/11 (builds de esta corrida): el chat abre desde la barra, el dictado
+  por voz (`docs/adr/0009`; el parche de la dependencia le corta el log, y el
+  intento con ProGuard **no borró nada del APK** — una regla no se verifica desde
+  acá, un parche sí), y el backend de cuentas ya está versionado en git.
+- 2026-09-09 (sin build todavía): el respaldo `.t1a.json` cableado entero —
+  exportar e importar desde Ajustes, con `entry_group_id`, fotos y procedencia—
+  y las fotos fuera de la caché, con migración de las que ya estaban.
 
 ## Deuda conocida
 
-### 🔴 Bomba: imports `.js` en `@type1a/ai`
+### 🔴 D1–D4: la curva de efecto mide mal, y D2 alcanza al IOB (2026-09-09)
+Cuatro defectos verificados leyendo el código, con detalle en
+`reference/insulin-duration-method.md`. ⚠️ **D2 sesga el número que "adoptar" mete
+al IOB: no adoptar ninguna duración hasta cerrarlo.**
 
-`packages/ai/src/abacus.ts:23` y `packages/ai/src/index.ts:1-2` usan extensión
-`.js` en imports relativos — **la trampa de Metro que rompió dos builds**.
+### 🟡 Supabase sin uso previsto (2026-09-04)
+`kvhlttcvjamgybwlamcu`, sin tablas. ADR 0007 descartó sincronizar salud; queda
+para cuentas de suscripción. Pausarlo si no se usa.
 
-Hoy **no explota solo porque `apps/mobile/package.json` no depende de
-`@type1a/ai`**. `domain`, `cgm` y `schemas` (los que sí se bundlean) están
-limpios.
+### 🔴 Dos hallazgos vivos de la revisión repuntada (2026-08-26)
+Los dos en `macro-glucose.ts`: la basal no entra como covariable (sin rama para
+`basal_insulin`), y `event.amount ?? 0` con `> 0` borra del conteo a una comida
+sin carbos confirmados. Menor: `MealModal` no recibe glucosa.
 
-El día que la app móvil dependa de `@type1a/ai` —el chat de IA es el candidato
-obvio— el bundle rompe con `pnpm verify` en verde. Ahora `verify:bundle` lo
-atraparía, pero **la causa sigue ahí**: la regla se aplica de forma
-inconsistente entre paquetes. Arreglarlo cuesta tres líneas y elimina la mina.
+### 🟠 Hallazgos de la revisión de seguridad del 2026-08-27, no corregidos
 
-### 🔴 Cuatro hallazgos vivos que la revisión repuntada encontró (2026-08-26)
+Contra `f9c12d5..f2e9e93`: **cero críticos**, 5 altos, 3 medios, 3 bajos. Los
+altos y cuatro de los seis restantes se cerraron en el mismo commit; quedan tres,
+declarados a propósito:
 
-Salieron de correr el `domain-safety-reviewer` contra `d868ece` y `c4ca192`.
-Los dos que corrompían datos en cada uso **están cerrados** (rama
-`fix/macros-data-corruption`); estos cuatro siguen abiertos.
-
-1. **La basal es invisible al modelo y al aviso de ventana sucia.**
-   `macro-glucose.ts:281-287` no tiene rama para `basal_insulin`, así que 20 U
-   de Tresiba en la ventana no entran como covariable **ni** marcan
-   `confoundedCount`. La pantalla imprime "sin eventos".
-2. **Cantidad ausente = "no pasó nada".** `event.amount ?? 0` con
-   `any = ... > 0`: una comida real sin carbos confirmados desaparece del conteo.
-3. **Un fallo al registrar la insulina se pisa con un mensaje de éxito.**
-   `App.tsx:620` pone el aviso de error y `App.tsx:636` lo sobrescribe
-   incondicionalmente con "Comida guardada". Ella cierra la app creyendo que la
-   dosis quedó registrada.
-4. **La insulina de la comida se escribe sin `entryGroupId`.**
-   `App.tsx:608` no pasa el tercer argumento que `saveInsulinEvent`
-   (`db.ts:266-270`) acepta, y el timeline agrupa solo por `entry_group_id`.
-   Tres horas después `getPendingInsulinAssociations` le vuelve a preguntar qué
-   insulina fue con qué comida — justo lo que la Fase 21 dijo que eliminaba.
-
-Menores del mismo lote: la calculadora de `MealModal` no recibe glucosa, así
-que `isHypoglycemic` nunca puede dispararse ahí (`EntryModal` sí lo avisa); las
-unidades tecleadas se descartan sin avisar si se apaga "Registrarla como comida
-de ahora" (`MealModal.tsx:454`); y la lista de validación previa de
-`attachEntryToReading` (`db.ts:1173-1176`) no creció con cetonas ni macros,
-aunque su comentario promete que sí.
+1. **Dos comidas SIN grupo a la misma hora exacta comparten espejo**: emparejan
+   por `timestamp + source`. Cerrarlo pide `meal_id` en `carb_events`.
+2. **La foto de un alimento suelto es del plato.** Con receta ya no; sin ella la
+   etiqueta lo dice, y recortar exige coordenadas que la IA no da.
+3. **Editar un `carb_events` importado conserva `source: 'imported'`.** Decisión
+   de producto: relabelar pierde el origen, dejarlo miente. Va a Verónica.
 
 ### 🟡 Menores
+- 🔴 **Ni la UI ni `db.ts` tienen test de ejecución**, y el 2026-09-11 eso dejó
+  pasar un riesgo clínico: el `return` temprano del chat tiraba una dosis recién
+  declarada y la calculadora la daba por inexistente. Lo cazó una revisión leyendo
+  el diff, no la suite. Todo lo puro tiene test; **el cableado no tiene ninguno**.
+- El dictado y el swipe al chat **no se probaron en un teléfono**.
+- Una escritura **suelta** (`runAsync` fuera de transacción) puede caer dentro
+  de la de otro y volver atrás con ella. Daño bajo: ajustes, no historial.
+- `README.md` sigue en pie (63 líneas). Se **reescribe a ~30**, no se elimina.
+- Un alimento `listed = 0` fuera de toda receta queda invisible. No suma nada.
 
-- Editar una entrada no ofrece foto ni re-análisis de IA.
-- `README.md` sigue en pie (63 líneas). La purga que lo iba a borrar se abortó;
-  la decisión tomada es **reescribirlo a ~30 líneas** como puerta de entrada del
-  repo en GitHub, no eliminarlo. Pendiente para la Fase 4.
+## Backend (2026-09-10)
 
-## Historial de fallos que definieron las reglas
+El chat se abre desde la posición 4 de la barra y desde el swipe, y dicta por voz
+(`docs/adr/0009`). Trampa que costó un build: **un permiso que está en
+`permissions` y a la vez en `blockedPermissions` desaparece del build sin ningún
+error visible.**
 
-Se conserva porque cada uno costó un build, una corrida o un número falso en un
-reporte médico. El detalle completo vive en el historial de git
-(`git log --format=full`), que quedó como la bitácora del proyecto.
+**Verificado en vivo, no leído de un informe** (2026-09-10): los tres caminos de
+`/v1/ai/chat` responden —rechazo en 0,7 s sin gastar modelo, respuesta con citas,
+y **borrador de comida**, que DeepAgent no probó—. `/v1/auth/*` vivas,
+`/v1/catalog/mine` 401, **ninguna ruta de datos de salud** (404).
 
-| Fallo | Regla que produjo |
-|---|---|
-| `.js` en imports relativos rompió 2 builds con verify en verde | `verify:bundle` obligatorio |
-| Barrel de Lucide: 1.263 → 3.088 módulos | subpath obligatorio, canario de bundle |
-| Filas sueltas emparejadas por timestamp | `entry_group_id` (Regla 3b) |
-| `macrosSource` en 4 capas → 3 bugs | Regla 1 |
-| Prompt con dosis habilitó afirmar IOB sin disparar el filtro | Regla 2 hermana |
-| Promedio "ajustado" publicaba +57 donde la verdad era +10, con 372 tests en verde | test contra verdad sembrada |
-| Exclusión binaria vació la pantalla de Patrones | truncar y ajustar, nunca obviar |
-| `.positive()` en un esquema rompió un caso legítimo una corrida después | Regla 3, hermana |
-| `eas-cli` desde la raíz dejó `app.json`/`eas.json` basura (2 veces) | correr desde `apps/mobile/` |
-| Una purga de docs dejó ciegos a 5 de 7 activos de `.claude/` sin un solo error | `verify:contracts` |
-| Un documento de arquitectura abandonado en el código indujo a error a varias corridas | ADR en la misma corrida que el cambio (0004) |
-| El inventario de esa purga solo miraba `.claude/`: el código citaba 17 docs más | el guard escanea **todo** el repo, código incluido |
-| `macrosSource` se caía en un spread sobre un tipo que no lo declaraba, con verify en verde | el chequeo de propiedades en exceso **no aplica a un spread**: el campo se declara o se pierde |
-| Dos booleanos `hasMeal` divergentes borraron y descartaron comidas | una sola lista (`mealFields.ts`), pura y con test |
-| Precargar los macros de la IA volvió `'mixed'` toda comida analizada: "el campo tiene valor" dejó de significar "ella lo escribió" | la procedencia se compara contra el valor precargado, no contra la ausencia |
-| El mismo bloque de macros escrito seis veces; los campos del editor quedaron en ~32 pt de área tocable | `MacroFields` compartido, con `minHeight: 44` explícito |
-| Un `WHERE entry_group_id IS NOT NULL` escondió las cetonas del acceso rápido: se guardaban bien y no se veían | el filtro de una consulta es una decisión de producto, no un detalle de SQL |
-| Quitar ese `WHERE` a secas puso a competir agrupadas y sueltas por el mismo `LIMIT`, y una fila caída de la ventana se borraba al editar la entrada | una ventana de visualización **nunca** puede destruir un dato guardado; el borrado exige señal explícita, no una ausencia |
-| Un `accessibilityLabel` explícito reemplaza el texto de los hijos: TalkBack anunciaba el título y no el valor ni la banda | la etiqueta lleva detalle y hora, o el color queda como único diferenciador |
-| `XLSX.write(…, { type: 'array' })` devuelve un **`ArrayBuffer`**, y un `as Uint8Array` lo disfrazó: el Excel nunca se escribía | un `as` sobre el retorno de una librería es una afirmación sin verificar; el test comprueba el envase, no solo el contenido |
-| Los tests del Excel pasaban el resultado a `XLSX.read`, que acepta ambos tipos | un round-trip por la misma librería no valida el contrato con quien consume el dato |
-| Un modal por combinación (basal, cetonas, entrada) trajo tres copias del mismo formulario | la variante es **qué sección arranca abierta**, no qué componente se monta |
-| `kind === 'meal'` dejaba a una comida empaquetada fuera de su propio editor con IA | las herramientas aparecen por **contenido**, no por tipo del ítem |
-| El catálogo vivía dentro de `MealModal`, así que "Nueva entrada" no podía reusar un alimento guardado | una facultad que solo tiene un camino es una asimetría, no una simplificación: se extrae y la montan los dos |
+⚠️ **El backend NO está redesplegado**: no manda `opens` ni tiene el prompt v2.
+La app funciona igual por las capas 1 y 3; falta la 2 (que el modelo decida).
 
-## Redeploy del backend
+### 🔴→✅ El micrófono salió sin permiso, y el build no dijo nada (2026-09-11)
+Ella instaló y reportó que en los ajustes del teléfono **no existe la opción de
+micrófono**. Cierto: `RECORD_AUDIO` **no estaba en el manifiesto del APK**, pese a
+`app.json` y pese al plugin de dictado. Causa: `expo-image-picker` con
+`microphonePermission: false` llama a `withBlockedPermissions(['RECORD_AUDIO'])`
+—*"to ensure no package can add them"*— y el bloqueo gana sobre todo. Se quitó;
+el picker no la necesita (`mediaTypes: ['images']` en cada `launchCameraAsync`).
+**Verificado en el manifiesto generado por `prebuild` ANTES de construir**, que
+es lo que faltó. `microphonePermissionSurvives()` lo detiene.
 
-`apps/api` **no** se tocó desde el último despliegue salvo `packages/ai/src/prompts.ts`
-(prompt del insight a `glucose-insight.v5`). El backend desplegado sigue con el
-prompt anterior: es de bajo riesgo y **no urgente**. Cada redeploy consume
-créditos de Abacus, así que se agrupa y no se dispara salvo que sea crítico.
+### 🔴→✅ Un campo nuevo requerido rompió la app contra el servidor viejo (2026-09-11)
+`opens` entró **requerido** en `AgentTurnSchema` y el servidor desplegado no lo
+manda, así que el teléfono rechazaba **todas** las respuestas y le mostraba el
+volcado de Zod donde esperaba una frase. **Regla: un campo nuevo que el cliente
+LEE entra siempre con `.default()`.** Una app instalada siempre habla con un
+servidor que puede ser más viejo que ella.
+
+Dos más de la misma captura: el error mostraba `caught.message` crudo (un error
+técnico no es una respuesta) y un `say` vacío no se veía. Y si el fallo es de red
+**y** pedía una dosis, igual aparece el botón: la calculadora no usa internet.
+
+### 🔴→✅ El ruteo por frases no cubría cómo habla (2026-09-11)
+"Quiero hacerme una corregida" no lo tocaba ninguna frase listada. Ella lo dijo
+completo: *"no puede ser que palabras clave determinen la respuesta, es el
+contenido lo que importa"*, y describió la arquitectura: **su texto → el agente
+determina qué palabras del ruteo corresponden → ruteo → respuesta, con la IA de
+fallback para que nunca falte una respuesta coherente.**
+
+Tres capas: (1) el teléfono normaliza —sin tildes, minúsculas— y reconoce
+**raíces** (`correg|correcc|corrij` cubre corregirme/corregida/corrección),
+instantáneo y sin red; (2) el modelo decide con `opens`; (3) todo rechazo lleva
+botón. El test usa **las frases reales de sus capturas** + una invariante: todo
+lo que abre una calculadora tiene que ser algo que el guardia rechazaría — cazó
+una divergencia ("me pincho?").
+
+### 🔴→✅ El guardia tampoco veía esas frases (2026-09-11)
+Mismo origen, y no era comodidad: la pregunta **llegaba al modelo** (3,2 s contra
+los 0,7 s del guardia), que existe para no depender de que el modelo se porte
+bien. Ahora también va por raíz.
+
+### ✅ Y antes: la IA no estaba tonta, estaba sin cablear (2026-09-11)
+1. **La foto se descartaba** (`void imageBase64`) y el botón de cámara no hacía
+   nada. Ahora va a `/v1/ai/meal-analysis` y vuelve como borrador.
+2. **No había memoria**: no se mandaba `history`. Verificado en vivo: una
+   pregunta de seguimiento se entiende, y **dice que no tiene el dato en vez de
+   inventarlo**.
+3. **Pedir una dosis era un callejón.** Ahora abre la calculadora; el modelo
+   sigue sin dar números.
+
+Al cablear (3) **introduje un riesgo clínico y lo cazó la revisión**: un `return`
+temprano se comía el resto del mensaje, así que "me puse 4 de rápida, ¿cuánto me
+pincho?" navegaba **tirando las 4 U** y la calculadora afirmaba "no hay eventos
+registrados" sobre una dosis activa → propondría **más** corrección. Hoy el
+borrador se muestra **antes**, y con algo que guardar o con foto **no se navega**:
+aparece un botón. Los otros cinco hallazgos: el encuadre se pintaba en una
+pantalla que se cerraba en el mismo render (viaja como aviso); decía "tu glucosa
+del sensor" con `latestLiveReading`, que incluye manuales y sintéticas; sin
+parámetros mandaba a tres campos en blanco (ahora a Ajustes); el texto sin
+precarga negaba la lectura aunque ella la hubiera borrado; y se saltaba
+`openQuickRoute`. El error de red además **mentía** ("lo que escribiste sigue
+acá" con el cuadro vacío).
+

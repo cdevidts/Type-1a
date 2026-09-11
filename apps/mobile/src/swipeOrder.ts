@@ -17,14 +17,22 @@ import type { NavDestination } from './components/BottomNav';
  * - **`entry`** es una *acción*, no un lugar. Abrir un formulario con campos
  *   por un gesto accidental es justo lo que no se quiere en una app que se usa
  *   apurada y a veces en hipoglucemia.
- * - **`chat`** no existe todavía (Fase 8). Mientras sea un aviso de "todavía
- *   no está", ponerlo en el recorrido significa que un swipe desde la pantalla
- *   principal no llega a ninguna parte — que es literalmente lo que pasaba.
+ *
+ * **`chat` sí entró, el 2026-09-10**, cuando dejó de ser un aviso de "todavía
+ * no está" y pasó a abrir una pantalla real. Va entre la principal y Resumen,
+ * que es su posición en la barra, para que el gesto y el botón sigan contando
+ * la misma historia.
+ *
+ * Su modal **no** recibe `swipeHandlers`, y la asimetría es a propósito: se
+ * entra deslizando, se sale tocando. Adentro hay un cuadro de texto, y perder
+ * un mensaje a medio escribir por un gesto lateral es el mismo daño que perder
+ * un formulario a medio llenar — el motivo por el que `entry` tampoco está acá.
  */
 export const SWIPE_ORDER: readonly (NavDestination | null)[] = [
   'nutrition',
   'catalog',
   null,
+  'chat',
   'summary',
 ];
 

@@ -8,7 +8,12 @@ These rules apply to the entire repository.
 - Never infer therapy parameters. Target glucose, correction factor, and dose increment are user-entered values.
 - Never silently use stale CGM values. Preserve `sourceTimestamp` separately from `ingestedAt`.
 - Never present synthetic, mock, imported, or delayed CGM data as live sensor data.
-- Never implement insulin-on-board or automatic dosing in the MVP.
+- Insulin-on-board is allowed only under all of these, and never automatic
+  dosing: a published, cited model (`packages/domain/src/iob.ts`); parameters
+  the user entered; the subtraction shown in full on screen; subtracted from
+  the correction half only, never from carb coverage; and no estimate at all
+  when the user has not chosen an insulin — absence is never zero. See
+  `docs/adr/0005-insulin-on-board.md`.
 - AI-estimated carbohydrates remain separate from user-confirmed carbohydrates.
 - A failed AI or CGM provider must degrade to manual logging.
 

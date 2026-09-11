@@ -1,7 +1,16 @@
 import { containsTherapyRecommendation } from '@type1a/domain';
 import { describe, expect, it } from 'vitest';
 
-import { GLUCOSE_INSIGHT_PROMPT_VERSION, glucoseInsightSystemPrompt } from '../src/prompts';
+import {
+  GLUCOSE_INSIGHT_PROMPT_VERSION,
+  MEAL_EDIT_PROMPT_VERSION,
+  MEAL_TEXT_PROMPT_VERSION,
+  MEAL_VISION_PROMPT_VERSION,
+  glucoseInsightSystemPrompt,
+  mealEditSystemPrompt,
+  mealTextSystemPrompt,
+  mealVisionSystemPrompt,
+} from '../src/prompts';
 
 /**
  * El prompt del insight es superficie de seguridad, no copy. Estos tests
@@ -50,10 +59,78 @@ describe('glucoseInsightSystemPrompt', () => {
     expect(glucoseInsightSystemPrompt).toMatch(/negative for before it/i);
   });
 
+  it('prohíbe convertir la hora a otra zona', () => {
+    // El resumen decía "el episodio empezó a las 21:30" para una comida de
+    // las 17:30: recibía UTC y lo citaba tal cual. Ahora las marcas viajan
+    // con desfase local explícito (`localizeEpisodeMetrics`), y esta regla es
+    // la mitad del arreglo que vive en el prompt.
+    expect(glucoseInsightSystemPrompt).toMatch(/explicit UTC offset/i);
+    expect(glucoseInsightSystemPrompt).toMatch(/Never convert a timestamp to UTC/i);
+  });
+
+  it('prohíbe juzgar o aconsejar sobre la hora de comer', () => {
+    // La hora local le da al modelo, por primera vez, material para juzgar un
+    // hábito: en UTC no significaba nada. La prohibición viaja en el mismo
+    // cambio que la hora local, y `containsTherapyRecommendation` la respalda
+    // en estructura — al crecer lo que el modelo puede decir, crece el filtro.
+    expect(glucoseInsightSystemPrompt).toMatch(/too late or too early/i);
+    expect(glucoseInsightSystemPrompt).toMatch(/not a habit to correct/i);
+  });
+
   it('la versión se movió al cambiar las reglas de seguridad', () => {
     // La versión viaja con cada respuesta guardada: si el texto cambia y la
     // versión no, no hay forma de saber después bajo qué reglas se generó un
     // insight ya almacenado.
-    expect(GLUCOSE_INSIGHT_PROMPT_VERSION).toBe('glucose-insight.v5');
+    expect(GLUCOSE_INSIGHT_PROMPT_VERSION).toBe('glucose-insight.v6');
+  });
+});
+
+describe('nombres conocidos del catálogo (2026-09-02)', () => {
+  it('los tres prompts de comida piden reusar el nombre EXACTO solo si es el mismo alimento', () => {
+    // La mitad del arreglo de los duplicados vive acá; la otra mitad es que
+    // el cliente mande los nombres. Un prompt que reuse de más mezcla macros
+    // de dos alimentos, así que la regla lleva su propio freno escrito.
+    for (const prompt of [mealVisionSystemPrompt, mealTextSystemPrompt, mealEditSystemPrompt]) {
+      expect(prompt).toMatch(/return its name EXACTLY as listed/i);
+      expect(prompt).toMatch(/a different cut, preparation, variety or brand is a different food/i);
+    }
+  });
+
+  it('las versiones de los tres se movieron con la regla', () => {
+    expect(MEAL_VISION_PROMPT_VERSION).toBe('meal-analysis.v4');
+    expect(MEAL_TEXT_PROMPT_VERSION).toBe('meal-analysis-text.v4');
+    expect(MEAL_EDIT_PROMPT_VERSION).toBe('meal-analysis-edit.v4');
+  });
+});
+
+describe('el agua es agua, y solo agua (2026-09-03)', () => {
+  /**
+   * La regla que no se puede aflojar: un jugo tiene carbohidratos y necesita
+   * su dosis. Si el modelo lo manda a `waterMl` en vez de a `foods`, esos
+   * carbohidratos desaparecen del registro y de la dosis propuesta. Por eso
+   * el prompt enumera las bebidas que NO son agua en vez de decir "solo agua"
+   * y confiar en que se entienda.
+   */
+  const prompts = [
+    ['visión', mealVisionSystemPrompt],
+    ['texto', mealTextSystemPrompt],
+    ['edición', mealEditSystemPrompt],
+  ] as const;
+
+  it.each(prompts)('el prompt de %s manda el agua a waterMl y no a foods', (_name, prompt) => {
+    expect(prompt).toContain('waterMl');
+    expect(prompt).toContain('Only plain water counts');
+    expect(prompt).toContain('never in waterMl');
+  });
+
+  it.each(prompts)('el prompt de %s nombra las bebidas que NO son agua', (_name, prompt) => {
+    for (const drink of ['juice', 'soft drink', 'milk', 'coffee with milk', 'soup']) {
+      expect(prompt).toContain(drink);
+    }
+  });
+
+  it.each(prompts)('el prompt de %s prohíbe inventar un volumen', (_name, prompt) => {
+    expect(prompt).toContain('return null');
+    expect(prompt).toContain('Never guess a round volume');
   });
 });

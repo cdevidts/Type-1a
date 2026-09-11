@@ -90,6 +90,7 @@ filtro de salida cubre lo que ese dato le permite decir.
 | Perfil de nutrición | `saveNutritionProfile` | deliberadamente separado de `TherapyProfile`, para que cambiar una meta de peso no toque algo que llega a una jeringa |
 | Alarmas, importación MySugr, conectar sensor | `save*Settings`, `importMySugrCsv`, `connectFreestyleLibre` | lo importado queda marcado como tal |
 | Catálogo COMPARTIDO | `GET`/`POST /v1/food-catalog` | backend listo, **sin cliente en mobile** (ADR 0003). La subida es la única W que no necesita confirmación: es anónima por construcción, no hay nada suyo que confirmar |
+| Recetas: ver, componer, reusar | `getRecipes`, `recipeTotals`, `updateRecipeItems`, `updateRecipe`, `recipeToCartLines`, `setCatalogFoodListed` | los totales **se derivan**, nunca se citan como guardados; reusar una receta es una línea por componente y sigue siendo estimación. Un componente `listed: false` existe solo dentro de sus recetas: no ofrecerlo suelto |
 
 ## Cálculo determinístico — el chat *muestra*, no inventa
 
@@ -120,3 +121,20 @@ herramienta determinística con sus propios parámetros.
 - Si una tarea requiere **operar** el panel de Abacus (no solo leer su
   documentación), necesita su propio documento con el paso a paso y el prompt
   textual a pegar, preparado de antemano y reutilizable.
+
+## Dictado por voz (2026-09-10)
+
+Se le habla al chat en vez de escribirle. **El micrófono es un teclado, no un
+botón de enviar**: lo dictado cae en el cuadro de texto y espera a que ella lo
+lea. De ahí para adelante el camino es idéntico al del texto escrito —parser
+local, turno del modelo, tarjeta confirmable— así que **una capacidad nueva del
+chat la hereda el dictado sin trabajo extra**.
+
+Lo que sí hay que respetar al tocarlo (`docs/adr/0009`):
+
+- Se transcribe **en el teléfono** cuando el aparato puede. Cuando no, se
+  pregunta **antes** de abrir el micrófono y se recuerda la respuesta.
+- Las pistas de vocabulario (sus insulinas, su catálogo) salen de
+  `dictationStartOptions`, junto con `requiresOnDeviceRecognition`, para que no
+  se puedan desincronizar: si el audio va a la red, la lista va vacía.
+- Nada llega a la base de datos por lo que el reconocedor creyó escuchar.

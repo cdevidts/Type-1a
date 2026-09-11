@@ -8,6 +8,7 @@ import type {
   MealEvent,
   NoteEvent,
   VitalsEvent,
+  WaterEvent,
 } from '@type1a/schemas';
 
 /**
@@ -30,6 +31,7 @@ export type ReportRowKind =
   | 'activity'
   | 'note'
   | 'vitals'
+  | 'water'
   | 'hba1c';
 
 export interface ReportRow {
@@ -54,6 +56,15 @@ export interface ReportInput {
   meals: MealEvent[];
   activities: ActivityEvent[];
   notes: NoteEvent[];
+  /**
+   * Agua bebida. Entra al reporte porque la hidratación es contexto clínico
+   * real —y en tipo 1 la sed excesiva puede ser un síntoma de hiperglucemia—,
+   * así que un día de 4 litros al lado de unas glucosas altas dice algo que
+   * un día de 800 mL no dice.
+   *
+   * Opcional para no romper a quien construya un `ReportInput` sin ella.
+   */
+  water?: WaterEvent[];
   vitals: VitalsEvent[];
   hba1c: HbA1cLabResult[];
 }
@@ -72,6 +83,16 @@ function eventProvenance(source: 'manual' | 'imported' | 'meal_confirmed'): stri
     case 'manual': return 'Manual';
     case 'imported': return 'Importado';
     case 'meal_confirmed': return 'Confirmado en comida';
+  }
+}
+
+function waterProvenance(source: WaterEvent['source']): string {
+  switch (source) {
+    case 'manual': return 'Manual';
+    case 'quick': return 'Manual';
+    case 'ai_photo': return 'Estimado por IA (foto)';
+    case 'ai_text': return 'Estimado por IA (texto)';
+    case 'imported': return 'Importado';
   }
 }
 
@@ -108,6 +129,14 @@ export function buildReportRows(input: ReportInput): ReportRow[] {
   for (const dose of input.insulin) {
     const parts = [`${dose.units} U`, INSULIN_TYPE_LABEL[dose.type]];
     if (dose.purpose !== undefined) parts.push(INSULIN_PURPOSE_LABEL[dose.purpose]);
+    // El desglose de una dosis calculada, para que el equipo clínico no vea
+    // solo un total: cuánto cubría el plato, cuánto corregía la glucosa, y
+    // cuánta insulina activa se descontó al proponerla. Cada parte se agrega
+    // solo si se sabe — una dosis escrita a mano no tiene desglose, y un cero
+    // inventado ahí se leería como un dato.
+    if (dose.mealUnits !== undefined) parts.push(`${dose.mealUnits} U de comida`);
+    if (dose.correctionUnits !== undefined) parts.push(`${dose.correctionUnits} U de corrección`);
+    if (dose.iobUnits !== undefined) parts.push(`menos ${dose.iobUnits} U activas`);
     if (dose.insulinName !== undefined) parts.push(dose.insulinName);
     rows.push({
       timestamp: dose.timestamp,
@@ -118,7 +147,27 @@ export function buildReportRows(input: ReportInput): ReportRow[] {
     });
   }
 
+  // `meal_confirmed` es la fila espejo SQL de `MealEvent.confirmedCarbsG`,
+  // no un segundo consumo. Se consume uno-a-uno por hora + gramos: usar solo
+  // la hora ocultaba un espejo huérfano detrás de otra comida sin carbos en
+  // una colisión. La comida muestra la fila rica (confirmado + estimación
+  // separada); un espejo sin pareja se conserva como dato legado/dañado.
+  const mirrorKey = (timestamp: string, carbsG: number): string => `${timestamp}\u0000${carbsG}`;
+  const unmatchedMeals = new Map<string, number>();
+  for (const meal of input.meals) {
+    if (meal.confirmedCarbsG === undefined) continue;
+    const key = mirrorKey(meal.timestamp, meal.confirmedCarbsG);
+    unmatchedMeals.set(key, (unmatchedMeals.get(key) ?? 0) + 1);
+  }
   for (const carb of input.carbs) {
+    if (carb.source === 'meal_confirmed') {
+      const key = mirrorKey(carb.timestamp, carb.carbsG);
+      const matches = unmatchedMeals.get(key) ?? 0;
+      if (matches > 0) {
+        unmatchedMeals.set(key, matches - 1);
+        continue;
+      }
+    }
     rows.push({
       timestamp: carb.timestamp,
       kind: 'carbs',
@@ -166,6 +215,19 @@ export function buildReportRows(input: ReportInput): ReportRow[] {
       kindLabel: 'Nota',
       detail: note.text,
       provenance: eventProvenance(note.source),
+    });
+  }
+
+  for (const water of input.water ?? []) {
+    rows.push({
+      timestamp: water.timestamp,
+      kind: 'water',
+      kindLabel: 'Agua',
+      detail: `${water.ml} mL`,
+      // La procedencia distingue lo que estimó la IA de lo que ella escribió,
+      // igual que en el resto del reporte: un volumen que produjo un modelo no
+      // puede llegar al equipo clínico como un dato medido.
+      provenance: waterProvenance(water.source),
     });
   }
 

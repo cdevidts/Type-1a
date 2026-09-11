@@ -1,134 +1,149 @@
 # Active Context
 
-_Última actualización: 2026-08-26 (los tres Pecados Capitales cerrados)._
+_Última actualización: 2026-09-11 (el agente en el teléfono: lo que falló de verdad)._
 
-## Cerrado y fusionado (2026-08-26)
+## El agente: el andamio y el turno (2026-09-10)
 
-Cuatro hitos, todos en `main`. El detalle vive en los cuerpos de commit
-(`git log --format=full`), que son la bitácora real; acá queda solo lo que la
-corrida siguiente necesita saber.
+`docs/adr/0008`. **Salida estructurada, no tool calling**: RouteLLM devuelve las
+llamadas a herramienta como **texto plano**, y una escritura que degrada a prosa
+significa que el modelo dice "listo, registré tu comida" y no se escribió nada.
+`json_schema` ya está en producción acá y sobrevivió al incidente de
+`exclusiveMinimum`. (Lo que se midió del audio quedó en el 0008; el 0009 lo
+reemplaza: ese camino no se implementó.)
 
-- **Migración de memoria agéntica.** Cuatro capas con presupuesto verificado y
-  `verify:contracts` en `pnpm verify`. El árbol viejo, en el commit `af6c865`.
-- **Corrupción de datos de macros.** `macrosSource` se descartaba en un spread
-  sobre un tipo que no lo declaraba; una entrada de solo macros se perdía
-  entera diciendo "Entrada guardada". Los dos cerrados, con `mealFields.ts`
-  como única lista de qué es una comida.
-- **Pecado Capital 1.** `resolveMacrosSource()` en `packages/domain`; los
-  cuatro sitios que decidían procedencia por su cuenta la consumen.
-- **Pecado Capital 2.** `MacroFields.tsx` reemplazó seis copias del trío de
-  macros, y los `parseBlankAs*` de `format.ts`, 53 chequeos del blanco a mano.
+**El registro es código**: `agent-tools.ts` declara qué alcanza y qué no con su
+motivo, y `verify:contracts` falla si una función de `db.ts` no está en ninguna
+lista: cazó una sin clasificar, y un test cazó ocho motivos de relleno míos.
+**El borrador es del mismo tipo que el payload del Modal Maestro**, y `saveTherapyProfile` no es alcanzable: nunca.
 
-## Pecado Capital 3 — cerrado
+**Lo que el teléfono enseñó y el repo no.** Ella instaló y encontró dos cosas
+que ninguna suite habría visto: el micrófono salió **sin permiso** (otro plugin
+lo bloqueaba con `microphonePermission: false`, que gana sobre toda declaración)
+y el asistente estaba "tonto" por **cableado ausente**, no por el modelo: la foto
+se descartaba (`void imageBase64`), no se mandaba `history`, y pedir una dosis
+terminaba en un rechazo sin salida. Las tres cableadas; la tercera abre la
+calculadora, que siempre estuvo permitida y no se alcanzaba desde el chat.
+**La lección: un permiso y un cableado se verifican en el artefacto, no en el
+código fuente** — el manifiesto generado, el APK, el endpoint en vivo.
 
-Las cetonas del acceso rápido ya se ven en el timeline. `getTimeline`
-consultaba `vitals_events WHERE entry_group_id IS NOT NULL` y no tenía rama
-para las sueltas: se guardaban bien y desaparecían. Es el dato de triage de
-cetoacidosis, así que la app aceptaba el gesto de anotarlo y después no estaba.
+**El dictado no manda audio a ninguna parte** (`docs/adr/0009`). El plan del 0008
+—subir el archivo— murió contra un hecho que no miré: Android no graba en wav ni
+mp3, los únicos formatos que el modelo acepta. Lo hace el reconocedor del sistema:
+se transcribe **en el teléfono** cuando el aparato puede (si no, se pide permiso
+antes de grabar), las pistas de vocabulario **no salen** si no es local, y **el
+micrófono es un teclado, no un botón de enviar.**
 
-- La banda clínica la decide `summarizeVitals` en `packages/domain` — es
-  `assessKetones`, no una decisión de pantalla.
-- El mapeo fila → ítem vive en `src/timelineVitals.ts`, puro y con test,
-  porque es exactamente donde estaba el hueco y `db.ts` no se puede verificar
-  sin teléfono.
-- **La banda va escrita en el texto**, no solo en el tono rojo.
-- Se agregó `deleteVitalsEvent`: un ítem que se ve y no se puede quitar es un
-  callejón sin salida. Solo alcanza a los que no tienen grupo.
+**El dictado ya no escribe en el log del sistema**, y el cómo importa: se
+intentó primero comprimiendo la app con la regla que Android recomienda, **se
+construyó el APK y no borró nada**. Una regla de ProGuard no se puede verificar
+desde acá; un parche de la dependencia sí, y además no cambia cómo se arma la
+app. Lo que yo había dicho —que ese log "solo se ve con un cable"— era falso.
 
-**Lo que quedó abierto:** editarlas. El formulario de `TimelineDetailModal` no
-tiene campo de cetonas, así que por ahora se ven y se borran. Editarlas es
-trabajo del **Modal Maestro** (`projectbrief.md`), no un parche a ese
-formulario.
+**El botón ya existía y yo agregué otro.** La posición 4 de la barra era del
+chat desde siempre; la dejé diciendo "todavía no está" y metí un acceso rápido
+redundante. Lo cazó ella. Hoy la posición 4 abre la pantalla y `chat` entró al
+swipe — pero su modal **no** lleva `swipeHandlers`: adentro hay un cuadro de
+texto, y eso es un formulario.
 
-## Regla de proceso que sobrevive a los tres
+## Ni sincronización ni datos de salud en un servidor (2026-09-04)
 
-Antes de agregar un campo a cualquiera de los formularios de comida, **primero**
-se mira si va en `MacroFields` o en un componente compartido nuevo. Escribirlo
-suelto en un modal es cómo llegamos a tener el mismo bloque seis veces.
+`docs/adr/0007`, tras entender la **Ley 21.719** (plena vigencia el 1 de diciembre
+de 2026, datos de salud = máxima protección, multas de 20.000 UTM). Tres reglas:
+**ningún dato de salud sale del teléfono**, **la cuenta es solo para cobrar**, y
+**ADR 0003 no cambia**. Un consentimiento firmado es la base legal, no el
+cumplimiento. ⚠️ **WhatsApp reabriría esto**: Meta vería todo.
+
+La portabilidad la resuelve **`.t1a.json`**, cableado y en el teléfono desde el
+build `444a3ff3`. Tres promesas probadas — completo, sin pérdida y **sin
+duplicar**. Auditarlo encontró dos fugas, cerradas y con test:
+**`legacyBackendSensor`** habría hecho que una instalación nueva mostrara el
+sensor de otra persona, y **`therapyConfiguredAt`** habría desbloqueado las
+calculadoras sobre los parámetros de fábrica. `SETTINGS_NEVER_BACKED_UP` filtra
+al **exportar**. En la misma corrida salieron las fotos de la caché, que Android
+vacía sola: `photos.ts` las guarda en `Paths.document` y migra las viejas.
+
+## Insulina activa (IOB), que era el riesgo mayor (2026-09-02)
+
+`AGENTS.md` la prohibía. Se levantó **a propósito** (`docs/adr/0005`) porque no
+tenerla era peor: dos comidas seguidas producían **dos correcciones completas**
+por la misma glucosa. Lo encontró ella.
+
+Cinco condiciones, en el código: modelo publicado y citado (exponencial de
+LoopKit/OpenAPS), parámetros que ella configuró, resta **solo de la mitad de
+corrección**, desglose entero en pantalla, y sin insulina elegida **no hay
+estimación**: `undefined`, no cero. Tres cosas salieron de revisar a mano: la
+ventana pedía 6 h contra una regular de 8 y el activo **de menos sube** la dosis;
+**seis pantallas prometían que la app no calcula insulina activa** el día que
+empezó a calcularla (`safetyCopy.test.ts`); y la pestaña salió vacía por un filtro
+que con varias dosis diarias no encuentra nada despierto.
+
+## El IOB se comía la comida, y el agua entró a Nutrición (2026-09-03)
+
+**El bug.** `bolus.ts` restaba el IOB sin tope, así que el sobrante se comía la
+cobertura de carbohidratos: comió y se corrigió hace 10 min, quiere 20 g más, la
+app proponía **0 U**. El comentario decía "solo de la corrección" y el código
+hacía otra cosa; los tests **afirmaban el bug**. Regla de ella, que es la del
+código: **carbos nuevos = siempre te pinchas; corrección nueva = no
+necesariamente** (`docs/adr/0006`). En el mismo ADR: el IOB **sí** incluye la
+insulina de comida —práctica estándar de bombas, y sin modelar COB lo seguro es
+contarla entera.
+
+**La curva de efecto** existe porque ella dudó del resumen. El tramo nunca estuvo
+mal, pero la duración observada **sufre censura**: su ventana se corta en la dosis
+siguiente. La curva no tiene ese sesgo, aunque tiene **D1–D4 abiertos**
+(`reference/insulin-duration-method.md`).
+
+**Agua.** Meta diaria, barra en Nutrición, sección en el maestro, acceso rápido, y
+la IA la propone desde foto o texto. **Solo agua**: un jugo es comida, con su dosis.
+
+## Lo que cambió el foco
+
+El Modal Maestro es **el** formulario: `TimelineDetailModal` solo lee, y su botón
+**Editar** abre el mismo componente que monta "Nueva entrada". La regla que lo
+ordena todo: **el foco decide qué se abre primero y nunca qué se puede guardar.**
+Al crear manda el acceso rápido; al editar manda el **contenido**. El tipo con el
+que nació un registro no limita lo que se le suma después.
+
+## Ya entregado al teléfono (`a706510`) — el detalle, en los cuerpos de commit
+
+- **La edición retroactiva no tiene límite de tipo**: `promoteEventToEntryGroup`
+  conserva id, hora, `created_at`, `source` y procedencia, en una transacción.
+- **`ingestedAt` y la hora de una lectura externa no se mueven nunca.** Un blanco
+  no es un cero; el nombre de la insulina es configuración, no un campo suelto.
+
+## Cerrado y en el teléfono (2026-08-28 / 09-01)
+
+**Transacciones SQLite**: el fondo recibía la misma conexión nativa que la
+pantalla y el `ROLLBACK` de una cerraba la de la otra. Hoy `useNewConnection` y
+cola FIFO. **Porción**: la IA propone `servingGrams` y ella confirma
+(confirmarlo lo vuelve `'user'`); se muestra por porción, se guarda por 100 g.
+**Fibra**: meta de 14 g/1000 kcal (IOM/ADA), piso y no techo. **La hora del
+resumen salía en UTC**; cada marca lleva desfase local (`localizeEpisodeMetrics`,
+por marca, porque el horario de verano existe), y como una hora local dice algo
+de su vida, el mismo cambio le prohíbe al modelo juzgar a qué hora come.
+(`03fb5c6d`, `e93ce4a2`)
+
+## Reglas de proceso que sobreviven
+
+1. Antes de agregar un campo a un formulario de comida, se mira si va en
+   `MacroFields` u otro compartido: suelto en un modal es cómo llegamos a tener
+   el mismo bloque seis veces.
+2. **Una decisión de datos no se verifica a ojo.** Lo que decide qué se guarda,
+   qué se ve o qué es un hecho vive en un módulo puro con test: `masterModal`,
+   `mealCarbMirror`, `entryTime`, `mealFields`, `meal-cart`, `entryGroupClaim`,
+   `dbWriteQueue`, `mealNote`, `episode-local-time`, `nutrition-targets`,
+   `backup`, `agent-tools`, `agent-context`, `local-intent`.
+3. Un dato que el formulario **no ve** es un dato que el guardado borra: por eso
+   `TimelineEntryGroupRaw` relee insulina, calorías, peso y presión.
 
 ## Backlog de producto priorizado
 
-Notas directas de los fundadores (2026-08-26). Con los tres Pecados
-Capitales cerrados, **esto es el foco**. En este orden.
-
-### 1. ✅ El informe en Excel — reparado
-
-`XLSX.write(…, { type: 'array' })` devuelve un `ArrayBuffer`, no un
-`Uint8Array`, y un `as Uint8Array` se lo ocultaba a TypeScript. `File.write()`
-de `expo-file-system` declara `string | Uint8Array`. Los tests no podían verlo
-porque pasaban el resultado a `XLSX.read`, que acepta los dos.
-
-Reparado en tres capas: el tipo, un test que comprueba el envase y la firma
-`PK\x03\x04`, y la verificación de que lo escrito en disco pesa lo que debía
-antes de compartirlo. El mensaje de error ahora lleva la causa real.
-
-**Sin tocar datos ni columnas**, a propósito: la estructura cambia con el Modal
-Maestro y rediseñarla ahora sería trabajo tirado.
-
-### 1b. ✅ Modal Maestro — Fase 1 (la espina)
-
-`UnifiedEntryModal` (antes `EntryModal`) es el formulario único. La diferencia
-entre un acceso rápido y una entrada completa es **qué sección arranca
-abierta**, no qué componente se monta: `focus` decide qué se ve primero y
-**nunca** qué se puede guardar.
-
-- **Borrados:** `NumericEntryModal` y `KetonesModal`. Basal y cetonas son
-  secciones del maestro, con un foco cada una.
-- **`EntrySection`**: encabezado tocable de 44 pt, y el resumen de lo que hay
-  adentro visible con la sección plegada — un dato clínico escondido detrás de
-  un acordeón es uno que se olvida.
-- **Por contenido, no por tipo:** `mealOf()` hace que las herramientas de IA
-  aparezcan para cualquier ítem que tenga comida. Antes la condición era
-  `kind === 'meal'`, así que una comida guardada desde "Nueva entrada" quedaba
-  fuera de su propio editor aunque tuviera foto y macros.
-- Las dos reglas viven en `src/masterModal.ts`, puras y con test: son
-  arquitectura de `projectbrief.md`, no se verifican a ojo.
-
-**Paridad de la sección de comida (2026-08-26).** La sección de comida del
-maestro tenía foto, IA por texto y macros, pero **no** el catálogo ni la
-decisión de guardar en él: para reusar un alimento había que salir e ir por el
-otro botón. `CatalogQuickAdd` se extrajo de `MealModal` —movido, no
-reescrito— y ahora **los dos caminos montan el mismo componente**. Ya no hay
-una versión primitiva.
-
-De paso se cerró una fuga de procedencia: `saveEntry` alimentaba el catálogo
-siempre que hubiera análisis, sin ofrecer la decisión, y un carbo transcrito
-desde el catálogo llegaba sin `aiEstimatedCarbsG` — indistinguible de uno
-pesado en balanza para el reporte médico.
-
-**Fase 2 del maestro, pendiente:** absorber el resto de `MealModal` (la
-pregunta de tres salidas del catálogo, los toggles de registrar/catálogo con su
-interacción) y `MealEditModal` (IA de edición) como secciones en vez de modales
-hospedados. La espina ya está y las recibe.
-
-### 2. Catálogo multi-porción con foto
-
-Hoy se agrega un alimento a la vez. Debe poder:
-- guardar **fotos** de los alimentos del catálogo;
-- elegirlos con un **dropdown con búsqueda**, no la lista de chips actual;
-- **agregar varias comidas/porciones de una vez**, con macros y carbohidratos
-  tentativos **sumándose en vivo** antes de confirmar.
-
-Se integra al **Modal Maestro** (`projectbrief.md`), no como pantalla aparte.
-Los carbohidratos tentativos siguen siendo estimación: se sugieren, no se
-guardan como confirmados sin que ella confirme.
-
-### 3. Reportes PDF más ricos
-
-Legibilidad, **iconografía en los gráficos** para identificar de un vistazo qué
-evento es cada marca, y una síntesis clínica al cierre. Ojo con la frontera:
-una conclusión describe lo que pasó, **nunca** evalúa si una dosis fue adecuada
-ni sugiere cambiarla (`contracts/safety-acceptance.md`). Y las marcas nuevas no
-pueden distinguirse solo por color.
-
-## Fuera de foco pero pendiente
-
-- Editar una entrada todavía no ofrece **foto ni re-análisis de IA** (lo único
-  que quedó de la Fase 21). La capa de datos ya lo aguanta: es trabajo de UI, y
-  es parte del Modal Maestro.
-- **Fase 22** — animación del swipe entre pantallas. JS puro, no necesita build.
-- **Fase 20** — widget de pantalla de inicio. **Sí** necesita build (config
-  plugin).
-- Decisión pendiente de Verónica: qué tan agresiva debe ser la exclusión de
-  episodios confundidos. Hoy se eximen los bolos atribuibles a una comida para
-  que la pantalla no se vacíe; el criterio estricto se cambia en una línea.
+1. **Gráfico de velocidad en Resumen → Insulina** (decisión de ella): se
+   **agrega, no reemplaza**. mg/dL por hora en pasos de 30 min hasta 4 h; por
+   ser derivada no usa línea base y es inmune a D2. **Antes hay que cerrar
+   D1–D4** (`reference/insulin-duration-method.md`), o quedan tres gráficos y
+   dos mintiendo.
+2. **PDF y Excel más ricos**: describen y **nunca** evalúan una dosis.
+   **Hallazgos abiertos**: ver `progress.md`.
+3. **Fase 22** — swipe animado. **Fase 20** — widget, necesita build. Pendiente
+   de ella: exclusión de episodios confundidos en Patrones.

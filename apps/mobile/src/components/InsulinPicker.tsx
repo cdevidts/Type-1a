@@ -17,15 +17,17 @@ import { colors, radius, spacing } from '../theme';
  * dos formularios distintos, se irían separando (es exactamente lo que pasó
  * entre `EntryModal` y `MealEditModal`, documentado en la Fase 21).
  *
- * ── Qué NO es esto ────────────────────────────────────────────────────────
+ * ── Qué era y qué es ahora ────────────────────────────────────────────────
  *
- * La duración se usa **solo** para higiene de datos: decidir si había otra
- * dosis actuando dentro de la ventana de un episodio, y por lo tanto si ese
- * episodio entra o no a un promedio descriptivo. **No es insulina activa
- * (IOB)** y no alimenta ninguna calculadora de dosis — `AGENTS.md` prohíbe
- * IOB y dosificación automática en el MVP. La copia visible lo dice, porque
- * un campo que dice "cuánto dura tu insulina" invita justamente a la lectura
- * equivocada.
+ * Hasta el 2026-09-02 la duración servía **solo** para higiene de datos, y la
+ * copia lo decía. Ya no: desde el ADR 0005 esta misma duración alimenta la
+ * curva de insulina activa que la calculadora descuenta de la corrección. El
+ * campo pasó de descriptivo a operativo, así que la copia visible cambió con
+ * él — dejarla como estaba habría sido una promesa falsa en la pantalla donde
+ * se elige el número que mueve la dosis.
+ *
+ * Lo que sigue siendo cierto y hay que seguir diciendo: la app **no dosifica
+ * sola**. Propone, muestra el desglose entero, y la usuaria confirma.
  *
  * ── Por qué nada viene preseleccionado ────────────────────────────────────
  *
@@ -164,10 +166,12 @@ export function InsulinPickerSafetyNote() {
   return (
     <View style={styles.safetyBox}>
       <Text style={styles.safetyText}>
-        Esto sirve para leer mejor tus patrones: la app usa la duración para saber si otra dosis pudo estar
-        actuando en un tramo, y en ese caso no lo promedia como si fuera limpio.{'\n\n'}
-        Type 1A no calcula insulina activa ni la resta de ninguna dosis, y este dato no entra en ninguna
-        calculadora. Las decisiones de insulina son siempre de tu equipo clínico.
+        La duración se usa para dos cosas: para no promediar un tramo en que otra dosis todavía podía estar
+        actuando, y para estimar cuánta insulina te queda activa.{'\n\n'}
+        Esa estimación se descuenta <Text style={styles.safetyStrong}>solo de la parte de corrección</Text> de una
+        dosis propuesta: los carbohidratos siempre llevan su dosis completa. Es una estimación sobre este número,
+        no una medición. Type 1A nunca aplica una dosis sola —siempre la confirmas tú— y los parámetros los define
+        tu equipo clínico.
       </Text>
     </View>
   );
@@ -219,6 +223,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     marginTop: spacing.lg,
   },
+  safetyStrong: { fontWeight: '900' },
   safetyText: { color: colors.warning, fontSize: 13, lineHeight: 19 },
 });
 
