@@ -1,93 +1,94 @@
-import { requestsInsulinAdvice } from './ai-safety';
-
 /**
- * Qué calculadora abre el asistente cuando ella pregunta por una dosis.
+ * Qué calculadora abre el asistente, y cómo se decide.
  *
- * ## Por qué existe
+ * ## La arquitectura, en las palabras de Verónica
  *
- * Verónica lo reportó con el teléfono en la mano: *"si le digo 'me quiero
- * corregir, cuánto me pincho', me dice 'no puedo decirte eso, pero puedo abrir
- * el modal'. Obviamente que no quiero que me diga él, pero quiero que
- * automáticamente abra el modal y cargue mi glucosa del sensor."*
+ * > "mi texto → agente determina cuáles palabras del ruteo corresponden a lo
+ * > que dije → ruteo de palabras → respuesta. Y con fallback a la IA para que
+ * > nunca falte una respuesta coherente."
  *
- * Tenía razón, y el rechazo solo con palabras era el error. **La prohibición
- * sigue intacta:** ningún modelo calcula, infiere ni recomienda insulina
- * (`AGENTS.md`). Lo que cambia es qué pasa después de negarse: en vez de
- * dejarla en un callejón, se abre la calculadora de la app, que hace la
- * aritmética con los parámetros que **ella** cargó y muestra el desglose
- * entero. Eso siempre estuvo permitido; simplemente no se alcanzaba desde el
- * chat.
+ * Son tres capas, y este módulo es la del medio:
  *
- * ## Por qué corre en el teléfono
+ * 1. **El teléfono normaliza y reconoce raíces** (acá). Instantáneo, sin red.
+ * 2. **El modelo decide** cuando lo de arriba no alcanza, con el campo `opens`
+ *    del turno — un enum, sin lugar donde escribir una dosis.
+ * 3. **Cualquier rechazo lleva botón**, pase lo que pase.
  *
- * Sin red, sin esperar, y sin gastar una llamada. Preguntar "cuánto me pincho"
- * y quedarse mirando un "Pensando…" es justo el momento en que la app tiene
- * que ser instantánea.
+ * ## Por qué raíces y no frases
+ *
+ * La primera versión listaba frases y se le escapó todo lo que ella escribe de
+ * verdad: "Quiero corregirme", "Quiero hacerme una corregida". Una lista de
+ * frases no cubre cómo habla una persona, y ella lo dijo con todas sus letras:
+ * *"no puede ser que palabras clave determinen la respuesta, es el contenido
+ * lo que importa"*.
+ *
+ * "corregirme", "corregida", "corrección", "corrijo" y "corregir" comparten la
+ * raíz **correg/correcc/corrij**. Reconocer la raíz sobre el texto normalizado
+ * —sin tildes, en minúsculas— cubre la familia entera, incluido cómo se escribe
+ * con apuro y sin acentos desde el teléfono.
  */
 export type CalculatorRoute = 'correction' | 'meal';
 
+/** Minúsculas y sin tildes: así se escribe de verdad desde un teléfono. */
+function normalize(text: string): string {
+  return text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/gu, '');
+}
+
+/** Corregirse la glucosa. En esta app la palabra no significa otra cosa. */
+const CORRECTION_STEM = /\b(?:correg|correc|corrij|corrid)/u;
+
+/** Pincharse: la acción, en todas sus formas, en los dos idiomas. */
+const INJECT_STEM =
+  /\b(?:insulin|unidad|bolo|dosis|pinch|inyect|pongo|poner|puse|unit|bolus|dose|inject|shot)/u;
+
+/** Pregunta por una cantidad. */
+const AMOUNT_ASK = /\b(?:cuant|que cantidad|how much|how many)/u;
+
 /**
- * Señales de que la pregunta es por una comida y no por una corrección suelta.
+ * Preguntas que mencionan insulina pero **no** piden una dosis ahora.
  *
- * Ante la duda **gana `correction`**, y no es arbitrario: la calculadora de
- * corrección parte de la glucosa actual, que es el dato que ella ya tiene en
- * pantalla, y desde el Modal Maestro se puede agregar la comida después. Al
- * revés —abrir el formulario de comida cuando solo quería corregirse— la
- * obliga a cerrar y volver a empezar.
+ * Lo marcó la revisión de seguridad: navegar cuesta mucho más que responder,
+ * así que "¿cuántas horas dura mi basal?" no puede terminar en una calculadora.
  */
-const MEAL_QUESTION_PATTERN =
-  /\b(?:comida|comer|com[ií]|almuerzo|desayuno|once|cena|colaci[oó]n|carbohidratos?|carbos?|hidratos|plato|pan|arroz|fideos|tallarines|postre|raci[oó]n|bolo de comida|meal|carbs?)\b/iu;
+const INFORMATIONAL = /\b(?:cuant\w*)\s+(?:horas?|minutos?|dias?|tiempo|dura|duran|demora|veces)/u;
+
+/** Está contando algo que ya hizo, no preguntando. */
+const IS_A_LOG = /\b(?:me\s+)?(?:puse|inyecte|pinche|tome|comi|bebi)\b/u;
+
+const MEAL_CONTEXT =
+  /\b(?:comida|comer|comi|almuerzo|desayuno|once|cena|colacion|carbohidrat|carbos|hidratos|plato|pan|arroz|fideos|tallarines|postre|racion|meal|carbs)/u;
 
 /**
- * Preguntas por una **cantidad, ahora**: "cuánto me pongo", "cuántas unidades".
+ * Qué calculadora corresponde, o `null` si la frase no pide una dosis.
  *
- * `requestsInsulinAdvice` es más ancho a propósito, y su comentario lo declara:
- * acepta falsos positivos porque *"el costo es un mensaje explicando por qué"*.
- * Eso valía cuando la respuesta era un mensaje. **Navegar tiene un costo mucho
- * mayor**, así que para mover la pantalla hace falta esta segunda condición,
- * más estrecha. Lo cazó la revisión de seguridad con tres casos reales:
- * "¿qué pasa si me salto la basal?", "no sé qué pasó con la dosis de ayer" y
- * "cuántas horas dura mi insulina basal" caían todas en la calculadora.
- *
- * Lo que NO cambia es el rechazo: una frase que `requestsInsulinAdvice`
- * detecta y esta no, sigue yendo al backend y sigue siendo rechazada con
- * palabras. Ancho para negarse, estrecho para navegar.
- */
-const DOSE_AMOUNT_QUESTION_PATTERN =
-  /\b(?:cu[aá]nt[ao]s?)(?![a-záéíóúñ])(?!\s+(?:horas?|minutos?|d[ií]as?|tiempo|dura|duran|demora))[^.?!]{0,40}\b(?:insulina|unidad(?:es)?|bolo|me pongo|me inyecto|me administro|me pincho)\b/iu;
-
-const EXPLICIT_CALCULATE_PATTERN =
-  /\b(?:cal[cq]ula(?:me)?|calcular|corr[ií]geme|corregirme|me quiero corregir|necesito corregir)\b/iu;
-
-/**
- * "¿debo ponerme insulina?" no pregunta una cantidad, pero sí pregunta por
- * pincharse **ahora**: abrirle la calculadora es justo lo útil, porque ahí ve
- * los números y decide ella. Es distinto de "¿qué pasa si me salto la basal?",
- * que no es sobre este momento.
- */
-const SHOULD_INJECT_NOW_PATTERN =
-  /\b(?:debo|tengo que|deber[ií]a|me conviene)\s+(?:ponerme|inyectarme|administrarme|pincharme|corregirme)\b/iu;
-
-const ENGLISH_AMOUNT_PATTERN =
-  /\b(?:how much|how many)\b[^.?!]{0,30}\b(?:insulin|units?|bolus)\b/iu;
-
-/**
- * `null` cuando la frase no está pidiendo **cuánta** insulina ponerse ahora.
- *
- * Se apoya en `requestsInsulinAdvice` como primera condición a propósito, en
- * vez de escribir un detector paralelo: ese es el mismo predicado con el que el
- * backend decide rechazar, así que **lo que el servidor considera "está
- * pidiendo insulina" y lo que el teléfono considera "abro la calculadora" no
- * pueden divergir** (Regla 1 de `systemPatterns.md`; `macrosSource` ya costó
- * tres bugs por ignorarla). La segunda condición solo **estrecha**: nunca
- * navega por algo que el servidor no habría rechazado.
+ * Lo importante de leer acá es **el orden**: primero se descarta lo que no es
+ * una petición (informativas y registros), y recién después se busca la
+ * intención. Al revés, "me puse 4 de rápida" abriría una calculadora encima de
+ * un dato que ella acaba de dictar — y eso ya pasó una vez.
  */
 export function insulinQuestionOpensCalculator(text: string): CalculatorRoute | null {
-  if (!requestsInsulinAdvice(text)) return null;
-  const asksForAnAmount = DOSE_AMOUNT_QUESTION_PATTERN.test(text)
-    || EXPLICIT_CALCULATE_PATTERN.test(text)
-    || SHOULD_INJECT_NOW_PATTERN.test(text)
-    || ENGLISH_AMOUNT_PATTERN.test(text);
-  if (!asksForAnAmount) return null;
-  return MEAL_QUESTION_PATTERN.test(text) ? 'meal' : 'correction';
+  const t = normalize(text);
+
+  // "¿cuántas horas dura la basal?" pregunta por insulina y no pide dosis.
+  if (INFORMATIONAL.test(t)) return null;
+
+  const wantsCorrection = CORRECTION_STEM.test(t);
+  // Pedir una cantidad, o preguntar si corresponde pincharse ahora.
+  const asksAmount = AMOUNT_ASK.test(t) && INJECT_STEM.test(t);
+  const shouldInjectNow = /\b(?:debo|tengo que|deberia|me conviene|me toca)\b/u.test(t)
+    && (INJECT_STEM.test(t) || wantsCorrection);
+  const asksToCalculate = /\b(?:calcul)/u.test(t) && (INJECT_STEM.test(t) || wantsCorrection);
+  // "me pincho?" y "ayúdame con la dosis" no dicen una cantidad ni un verbo de
+  // obligación, pero están pidiendo exactamente lo mismo. La forma de pregunta
+  // —o de pedido de ayuda— sobre la acción de pincharse ya es la intención.
+  const asksAboutInjecting = (t.includes('?') || /\b(?:ayud|help)/u.test(t)) && INJECT_STEM.test(t);
+
+  const wantsADose = wantsCorrection || asksAmount || shouldInjectNow || asksToCalculate
+    || asksAboutInjecting;
+  if (!wantsADose) return null;
+
+  // Un registro no abre nada… salvo que además pregunte de verdad por la dosis.
+  if (IS_A_LOG.test(t) && !asksAmount && !asksToCalculate && !wantsCorrection) return null;
+
+  return MEAL_CONTEXT.test(t) ? 'meal' : 'correction';
 }

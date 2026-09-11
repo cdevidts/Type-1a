@@ -125,9 +125,15 @@ const INSULIN_REQUEST_PATTERNS = [
   //
   // "corregirme" suelto es un falso positivo aceptable acá y en ninguna otra
   // app: el costo sigue siendo un mensaje, nunca una dosis inventada.
-  /\bcorregirme\b/iu,
-  /\bme\s+quiero\s+corregir\b/iu,
+  // Por RAÍZ, no por frase: "corregirme", "corregida", "corrección", "corrijo"
+  // y "corregir" son la misma intención, y una lista de frases nunca cubre
+  // cómo escribe una persona. Ella lo probó escribiendo "Quiero hacerme una
+  // corregida", que ninguna de las frases listadas tocaba.
+  /\bcorreg|\bcorrecc|\bcorrij/iu,
   /\b(?:dime|d[ií]game|decime|dame)\b.{0,15}\b(?:cu[aá]nt[ao]s?|la dosis|el bolo)\b/iu,
+  // "¿me pincho?" — la pregunta entera. Se exige el signo de interrogación
+  // porque "me pincho el dedo" es medirse con el capilar, no dosificar.
+  /\bme\s+(?:pincho|pongo|inyecto|administro)\b[^.!]{0,25}\?/u,
 ];
 
 /**

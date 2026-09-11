@@ -73,23 +73,18 @@ declarados a propósito:
 
 ## Backend (2026-09-10)
 
-El chat se abre desde la posición 4 de la barra y desde el swipe, y dicta por
-voz (`docs/adr/0009`). ⚠️ **Nada de eso llega al teléfono hasta un build nuevo**:
-el dictado es un módulo nativo.
-
-Trampa que casi cuesta un build: **un permiso que está en `permissions` y a la
-vez en `blockedPermissions` se elimina del build, y la función falla sin ningún
-error visible.** `RECORD_AUDIO` estaba bloqueado desde la Fase 13 por higiene de
-la ficha de Play Store.
-
-Bundle 1.379 → **1.388** módulos (el módulo nativo + dos iconos, sin barrel).
-`pnpm verify` en verde.
+El chat se abre desde la posición 4 de la barra y desde el swipe, y dicta por voz
+(`docs/adr/0009`). Trampa que costó un build: **un permiso que está en
+`permissions` y a la vez en `blockedPermissions` desaparece del build sin ningún
+error visible.**
 
 **Verificado en vivo, no leído de un informe** (2026-09-10): los tres caminos de
-`/v1/ai/chat` responden —rechazo de insulina en 0,7 s sin gastar modelo, respuesta
-con citas, y **borrador de comida**, que DeepAgent no probó—; tres formas
-indirectas de pedir insulina rechazadas, dos por el modelo mismo. `/v1/auth/*`
-vivas, `/v1/catalog/mine` 401, **ninguna ruta de datos de salud** (404).
+`/v1/ai/chat` responden —rechazo en 0,7 s sin gastar modelo, respuesta con citas,
+y **borrador de comida**, que DeepAgent no probó—. `/v1/auth/*` vivas,
+`/v1/catalog/mine` 401, **ninguna ruta de datos de salud** (404).
+
+⚠️ **El backend NO está redesplegado**: no manda `opens` ni tiene el prompt v2.
+La app funciona igual por las capas 1 y 3; falta la 2 (que el modelo decida).
 
 ### 🔴→✅ El micrófono salió sin permiso, y el build no dijo nada (2026-09-11)
 Ella instaló y reportó que en los ajustes del teléfono **no existe la opción de
@@ -101,50 +96,55 @@ el picker no la necesita (`mediaTypes: ['images']` en cada `launchCameraAsync`).
 **Verificado en el manifiesto generado por `prebuild` ANTES de construir**, que
 es lo que faltó. `microphonePermissionSurvives()` lo detiene.
 
-### 🔴→✅ El guardia no veía "quiero corregirme, dime cuánto" (2026-09-11)
-Con capturas: el asistente se negó, ofreció *"puedo abrirla"* —no podía— y al
-insistir dijo *"no puedo abrir pantallas"*. `requestsInsulinAdvice` devolvía
-**false** para sus dos frases: los patrones exigían "insulina"/"dosis"/"unidades"
-cerca, y ella no las nombra — en una app de diabetes **"corregirme" ya significa
-corregir la glucosa**. Y no era comodidad: la pregunta **llegó al modelo** (3,2 s
-en vivo; el guardia responde en 0,7 s).
+### 🔴→✅ Un campo nuevo requerido rompió la app contra el servidor viejo (2026-09-11)
+`opens` entró **requerido** en `AgentTurnSchema` y el servidor desplegado no lo
+manda, así que el teléfono rechazaba **todas** las respuestas y le mostraba el
+volcado de Zod donde esperaba una frase. **Regla: un campo nuevo que el cliente
+LEE entra siempre con `.default()`.** Una app instalada siempre habla con un
+servidor que puede ser más viejo que ella.
 
-Y su corrección de fondo, que es la que vale: *"no quiero solo esas frases
-permitidas… no puede ser que palabras clave determinen la respuesta, es el
-contenido lo que importa"*. **Decide el modelo**, con el campo `opens` del turno
-(`'correction' | 'meal' | null`). Se le puede dejar porque es la **Regla 2**: un
-enum de tres valores no tiene dónde escribir "6 U". El `.refine` además exige que
-`opens` solo acompañe a un rechazo — si respondiera Y abriera, la frase del
-modelo competiría con el número de la app. Los regex quedan como camino rápido
-local (instantáneo, sin red) y como red si el turno viene sin `opens`, pero ya no
-son el portón. ⚠️ **Exige redesplegar el backend** para que el modelo vea el
-prompt v2; hasta entonces funciona por el camino local y por la red de rechazo.
+Dos más de la misma captura: el error mostraba `caught.message` crudo (un error
+técnico no es una respuesta) y un `say` vacío no se veía. Y si el fallo es de red
+**y** pedía una dosis, igual aparece el botón: la calculadora no usa internet.
 
-### ✅ Y antes, lo que la hacía sentir tonta: cableado ausente (2026-09-11)
-1. **La foto se descartaba**: `void imageBase64`, y el botón de cámara no hacía
+### 🔴→✅ El ruteo por frases no cubría cómo habla (2026-09-11)
+"Quiero hacerme una corregida" no lo tocaba ninguna frase listada. Ella lo dijo
+completo: *"no puede ser que palabras clave determinen la respuesta, es el
+contenido lo que importa"*, y describió la arquitectura: **su texto → el agente
+determina qué palabras del ruteo corresponden → ruteo → respuesta, con la IA de
+fallback para que nunca falte una respuesta coherente.**
+
+Tres capas: (1) el teléfono normaliza —sin tildes, minúsculas— y reconoce
+**raíces** (`correg|correcc|corrij` cubre corregirme/corregida/corrección),
+instantáneo y sin red; (2) el modelo decide con `opens`; (3) todo rechazo lleva
+botón. El test usa **las frases reales de sus capturas** + una invariante: todo
+lo que abre una calculadora tiene que ser algo que el guardia rechazaría — cazó
+una divergencia ("me pincho?").
+
+### 🔴→✅ El guardia tampoco veía esas frases (2026-09-11)
+Mismo origen, y no era comodidad: la pregunta **llegaba al modelo** (3,2 s contra
+los 0,7 s del guardia), que existe para no depender de que el modelo se porte
+bien. Ahora también va por raíz.
+
+### ✅ Y antes: la IA no estaba tonta, estaba sin cablear (2026-09-11)
+1. **La foto se descartaba** (`void imageBase64`) y el botón de cámara no hacía
    nada. Ahora va a `/v1/ai/meal-analysis` y vuelve como borrador.
-2. **No había memoria**: no se mandaba `history`. Verificado en vivo: "¿y cuántas
-   fueron las bajas?" se entiende como seguimiento, y **dice que no tiene el dato
-   en vez de inventarlo**.
-3. **Pedir una dosis era un callejón.** Ahora abre la calculadora. La
-   prohibición no se tocó — el modelo sigue sin dar números; lo que cambió es
-   que tras negarse **hace algo**.
+2. **No había memoria**: no se mandaba `history`. Verificado en vivo: una
+   pregunta de seguimiento se entiende, y **dice que no tiene el dato en vez de
+   inventarlo**.
+3. **Pedir una dosis era un callejón.** Ahora abre la calculadora; el modelo
+   sigue sin dar números.
 
-Además, el error de red **mentía**: decía "lo que escribiste sigue acá" con el
-cuadro ya vaciado. Ahora devuelve el texto de verdad.
+Al cablear (3) **introduje un riesgo clínico y lo cazó la revisión**: un `return`
+temprano se comía el resto del mensaje, así que "me puse 4 de rápida, ¿cuánto me
+pincho?" navegaba **tirando las 4 U** y la calculadora afirmaba "no hay eventos
+registrados" sobre una dosis activa → propondría **más** corrección. Hoy el
+borrador se muestra **antes**, y con algo que guardar o con foto **no se navega**:
+aparece un botón. Los otros cinco hallazgos: el encuadre se pintaba en una
+pantalla que se cerraba en el mismo render (viaja como aviso); decía "tu glucosa
+del sensor" con `latestLiveReading`, que incluye manuales y sintéticas; sin
+parámetros mandaba a tres campos en blanco (ahora a Ajustes); el texto sin
+precarga negaba la lectura aunque ella la hubiera borrado; y se saltaba
+`openQuickRoute`. El error de red además **mentía** ("lo que escribiste sigue
+acá" con el cuadro vacío).
 
-**Al cablear eso introduje un riesgo clínico real, y lo cazó la revisión.** Un
-`return` temprano se comía el resto del mensaje: "me puse 4 de rápida, ¿cuánto me
-pincho?" navegaba **tirando las 4 U**, y la calculadora afirmaba "no hay eventos
-registrados" sobre una dosis activa → propondría **más** corrección. Hoy se
-muestra el borrador **antes**, y con algo que guardar o con foto **no se navega**:
-aparece un botón. Los otros cinco: el encuadre se pintaba en una pantalla que se
-cerraba en el mismo render (viaja como aviso); decía "tu glucosa del sensor" con
-`latestLiveReading`, que incluye manuales y sintéticas; sin parámetros mandaba a
-tres campos en blanco (ahora a Ajustes); el texto sin precarga negaba la lectura
-borrado; y se saltaba `openQuickRoute`. **Además el gatillo se estrechó**:
-`requestsInsulinAdvice` acepta falsos positivos porque "el costo es un mensaje",
-y navegar cuesta más — ancho para negarse, estrecho para navegar.
-
-Sin verificar (exigiría una cuenta real): que el 401 de login sea idéntico ante
-contraseña mala y correo inexistente.

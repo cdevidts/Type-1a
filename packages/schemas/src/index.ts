@@ -896,7 +896,15 @@ const AgentTurnShape = z.object({
    *
    * `'correction'` es la calculadora de corrección; `'meal'`, la de comida.
    */
-  opens: z.enum(['correction', 'meal']).nullable(),
+  /**
+   * ⚠️ **Opcional con default, y eso NO es opcional.** Se agregó como requerido
+   * y el teléfono empezó a rechazar TODAS las respuestas del servidor
+   * desplegado, que todavía no lo manda: a Verónica le apareció el volcado de
+   * Zod en pantalla. Una app instalada siempre habla con un servidor que puede
+   * ser más viejo que ella, así que **un campo nuevo que el cliente lee entra
+   * siempre con default**, nunca requerido.
+   */
+  opens: z.enum(['correction', 'meal']).nullable().default(null),
 });
 
 /** `true` si el turno es coherente con su propio `kind`. */

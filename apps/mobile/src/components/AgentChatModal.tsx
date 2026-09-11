@@ -270,24 +270,43 @@ export function AgentChatModal({
       const refusalRoute = turn.opens ?? (turn.kind === 'refusal'
         ? insulinQuestionOpensCalculator(trimmed) ?? 'correction'
         : undefined);
+      // Una respuesta vacía o en blanco es lo mismo que ninguna: ella pidió que
+      // NUNCA falte una respuesta coherente.
+      const say = turn.say.trim().length > 0
+        ? turn.say
+        : 'No entendí eso. Puedes contármelo de otra forma, o registrarlo a mano desde el botón de nueva entrada.';
       push({
         id: newId(),
         role: 'assistant',
-        text: turn.say,
+        text: say,
         ...(remotePrefill === undefined ? {} : { prefill: remotePrefill, pending: true }),
         ...(turn.cites.length === 0 ? {} : { cites: turn.cites }),
         ...(refusalRoute === undefined ? {} : { opensCalculator: refusalRoute }),
       });
-    } catch (caught) {
+    } catch {
       // Degradar a manual, nunca a un callejón sin salida (`AGENTS.md`).
       //
       // El texto se devuelve al cuadro. El mensaje decía "lo que escribiste
       // sigue acá" cuando `setInput('')` ya lo había borrado: era falso, y la
       // dejaba retecleando la frase entera para reintentar.
       if (trimmed.length > 0) setInput(trimmed);
-      setError(caught instanceof Error
-        ? `${caught.message} Te devolví el texto al cuadro para que lo reintentes o lo registres a mano.`
-        : 'No se pudo consultar al asistente. Te devolví el texto al cuadro para que lo reintentes o lo registres a mano.');
+      // **Nunca el mensaje crudo del error.** `caught.message` fue a parar a la
+      // pantalla como un volcado de Zod con corchetes y `invalid_value`: ella
+      // vio eso donde esperaba una respuesta. Un error técnico no es una
+      // respuesta, y esta pantalla siempre tiene que dar una.
+      setError('No pude consultar al asistente. Te devolví el texto al cuadro: reinténtalo, o regístralo a mano desde el botón de nueva entrada.');
+
+      // Y si lo que pedía era una dosis, el fallo de red no puede quitarle la
+      // salida: la calculadora funciona sin internet.
+      const offline = insulinQuestionOpensCalculator(trimmed);
+      if (offline !== null) {
+        push({
+          id: newId(),
+          role: 'assistant',
+          text: 'Me quedé sin conexión con el asistente, pero esto no la necesita: la calculadora usa tus parámetros y funciona sin internet.',
+          opensCalculator: offline,
+        });
+      }
     } finally {
       setBusy(false);
     }
