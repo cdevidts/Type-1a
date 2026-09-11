@@ -57,7 +57,7 @@ const DOSE_AMOUNT_QUESTION_PATTERN =
   /\b(?:cu[aá]nt[ao]s?)(?![a-záéíóúñ])(?!\s+(?:horas?|minutos?|d[ií]as?|tiempo|dura|duran|demora))[^.?!]{0,40}\b(?:insulina|unidad(?:es)?|bolo|me pongo|me inyecto|me administro|me pincho)\b/iu;
 
 const EXPLICIT_CALCULATE_PATTERN =
-  /\b(?:cal[cq]ula(?:me)?|calcular|corr[ií]geme|me quiero corregir|quiero corregirme|necesito corregir(?:me)?)\b/iu;
+  /\b(?:cal[cq]ula(?:me)?|calcular|corr[ií]geme|corregirme|me quiero corregir|necesito corregir)\b/iu;
 
 /**
  * "¿debo ponerme insulina?" no pregunta una cantidad, pero sí pregunta por

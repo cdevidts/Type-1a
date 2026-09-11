@@ -250,12 +250,33 @@ export function AgentChatModal({
             ...(turn.draft.waterMl === null ? {} : { waterMl: turn.draft.waterMl }),
             ...(turn.draft.foods === null ? {} : { carbsG: sumCarbs(turn.draft.foods) }),
           };
+      // Red de seguridad: si el turno vuelve como RECHAZO, lleva el botón de la
+      // calculadora aunque el detector local no haya visto la frase.
+      //
+      // Existe porque falló exactamente así: "Quiero corregirme, dime cuánto."
+      // no caía en ningún patrón, llegaba al modelo, y el modelo contestaba
+      // "puedo abrirla" — algo que no podía hacer — y a la insistencia
+      // respondía "no puedo abrir pantallas". Un rechazo sin salida es el
+      // problema que esta fase vino a resolver, así que **todo** rechazo tiene
+      // que terminar en una acción, venga de donde venga.
+      // **El modelo decide, no mis palabras clave.** Verónica lo pidió así:
+      // "no puede ser que palabras clave determinen la respuesta, es el
+      // contenido lo que importa". `turn.opens` es un enum de tres valores —
+      // no hay dónde escribir una dosis— así que entender la intención se le
+      // puede dejar a él sin ceder nada.
+      //
+      // El `??` es la red por si un turno viejo o un rechazo por otro motivo
+      // llega sin `opens`: un rechazo sin salida es justo lo que sobra.
+      const refusalRoute = turn.opens ?? (turn.kind === 'refusal'
+        ? insulinQuestionOpensCalculator(trimmed) ?? 'correction'
+        : undefined);
       push({
         id: newId(),
         role: 'assistant',
         text: turn.say,
         ...(remotePrefill === undefined ? {} : { prefill: remotePrefill, pending: true }),
         ...(turn.cites.length === 0 ? {} : { cites: turn.cites }),
+        ...(refusalRoute === undefined ? {} : { opensCalculator: refusalRoute }),
       });
     } catch (caught) {
       // Degradar a manual, nunca a un callejón sin salida (`AGENTS.md`).

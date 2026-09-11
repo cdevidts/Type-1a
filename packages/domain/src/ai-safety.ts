@@ -110,6 +110,24 @@ const INSULIN_REQUEST_PATTERNS = [
   /\b(?:cu[aá]nt[ao]s?|qu[eé])(?![a-záéíóúñ]).{0,20}\b(?:me pongo|me inyecto|me administro|me pincho)\b/iu,
   /\b(?:debo|tengo que|deber[ií]a)\s+(?:ponerme|inyectarme|administrarme|pincharme)\b/iu,
   /\b(?:how much|how many)\b.{0,30}\b(?:insulin|units?|bolus|basal|dose)\b/iu,
+
+  // Agregados el 2026-09-11 porque Verónica los escribió en el teléfono y NO
+  // los detectaba ninguno de los de arriba:
+  //
+  //   "Quiero corregirme, dime cuánto."
+  //   "Me quiero corregir dime cuanto"
+  //
+  // Los patrones anteriores exigían que la palabra "insulina", "dosis" o
+  // "unidades" apareciera cerca, y ella no la nombra: en una app de diabetes
+  // "corregirme" ya significa corregir la glucosa. La pregunta llegó al modelo,
+  // que se negó por su cuenta — pero **el guardia existe justamente para no
+  // depender de que el modelo se porte bien**, y acá no lo atajó.
+  //
+  // "corregirme" suelto es un falso positivo aceptable acá y en ninguna otra
+  // app: el costo sigue siendo un mensaje, nunca una dosis inventada.
+  /\bcorregirme\b/iu,
+  /\bme\s+quiero\s+corregir\b/iu,
+  /\b(?:dime|d[ií]game|decime|dame)\b.{0,15}\b(?:cu[aá]nt[ao]s?|la dosis|el bolo)\b/iu,
 ];
 
 /**

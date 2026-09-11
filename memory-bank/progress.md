@@ -23,6 +23,10 @@ _Última actualización: 2026-09-10 (Fase 0 del agente)._
 - 2026-09-04 (build `7122edf9`): el tope del IOB, la curva de efecto por tramo,
   el agua entera en Nutrición y las 5 correcciones de la auditoría. Huella
   verificada (`3D:42:7A:…:62:33`).
+- 2026-09-10/11 (builds de esta corrida): el chat abre desde la barra, el dictado
+  por voz (`docs/adr/0009`; el parche de la dependencia le corta el log, y el
+  intento con ProGuard **no borró nada del APK** — una regla no se verifica desde
+  acá, un parche sí), y el backend de cuentas ya está versionado en git.
 - 2026-09-09 (sin build todavía): el respaldo `.t1a.json` cableado entero —
   exportar e importar desde Ajustes, con `entry_group_id`, fotos y procedencia—
   y las fotos fuera de la caché, con migración de las que ya estaban.
@@ -97,52 +101,50 @@ el picker no la necesita (`mediaTypes: ['images']` en cada `launchCameraAsync`).
 **Verificado en el manifiesto generado por `prebuild` ANTES de construir**, que
 es lo que faltó. `microphonePermissionSurvives()` lo detiene.
 
-### ✅ El chat dejaba de ser tonto por tres cosas concretas (2026-09-11)
-Ella: *"la IA está bastante tonta"*. Las tres causas, todas cableado ausente:
-1. **La foto se descartaba**: `askAgentTurn` tenía `void imageBase64`. El botón
-   de cámara del chat no hacía nada. Ahora va a `/v1/ai/meal-analysis`, el mismo
-   endpoint probado que usa el resto de la app, y vuelve como borrador.
-2. **No había memoria de conversación**: no se mandaba `history` aunque el
-   contrato lo acepta. Verificado en vivo: "¿y cuántas fueron las bajas?" ahora
-   se entiende como seguimiento, y **dice que no tiene el dato en vez de
-   inventarlo**.
-3. **Pedir una dosis era un callejón.** Se negaba con palabras y ya. Ahora abre
-   la calculadora (`agent-routing.ts`): corrección por defecto, comida si la
-   frase habla de comer. La prohibición no se tocó — el modelo sigue sin dar
-   números; lo que cambió es que después de negarse **hace algo**.
-   `insulinQuestionOpensCalculator` reusa `requestsInsulinAdvice` a propósito:
-   un detector paralelo habría divergido del guardia del servidor.
+### 🔴→✅ El guardia no veía "quiero corregirme, dime cuánto" (2026-09-11)
+Con capturas: el asistente se negó, ofreció *"puedo abrirla"* —no podía— y al
+insistir dijo *"no puedo abrir pantallas"*. `requestsInsulinAdvice` devolvía
+**false** para sus dos frases: los patrones exigían "insulina"/"dosis"/"unidades"
+cerca, y ella no las nombra — en una app de diabetes **"corregirme" ya significa
+corregir la glucosa**. Y no era comodidad: la pregunta **llegó al modelo** (3,2 s
+en vivo; el guardia responde en 0,7 s).
+
+Y su corrección de fondo, que es la que vale: *"no quiero solo esas frases
+permitidas… no puede ser que palabras clave determinen la respuesta, es el
+contenido lo que importa"*. **Decide el modelo**, con el campo `opens` del turno
+(`'correction' | 'meal' | null`). Se le puede dejar porque es la **Regla 2**: un
+enum de tres valores no tiene dónde escribir "6 U". El `.refine` además exige que
+`opens` solo acompañe a un rechazo — si respondiera Y abriera, la frase del
+modelo competiría con el número de la app. Los regex quedan como camino rápido
+local (instantáneo, sin red) y como red si el turno viene sin `opens`, pero ya no
+son el portón. ⚠️ **Exige redesplegar el backend** para que el modelo vea el
+prompt v2; hasta entonces funciona por el camino local y por la red de rechazo.
+
+### ✅ Y antes, lo que la hacía sentir tonta: cableado ausente (2026-09-11)
+1. **La foto se descartaba**: `void imageBase64`, y el botón de cámara no hacía
+   nada. Ahora va a `/v1/ai/meal-analysis` y vuelve como borrador.
+2. **No había memoria**: no se mandaba `history`. Verificado en vivo: "¿y cuántas
+   fueron las bajas?" se entiende como seguimiento, y **dice que no tiene el dato
+   en vez de inventarlo**.
+3. **Pedir una dosis era un callejón.** Ahora abre la calculadora. La
+   prohibición no se tocó — el modelo sigue sin dar números; lo que cambió es
+   que tras negarse **hace algo**.
 
 Además, el error de red **mentía**: decía "lo que escribiste sigue acá" con el
-cuadro ya vaciado por `setInput('')`. Ahora devuelve el texto de verdad.
+cuadro ya vaciado. Ahora devuelve el texto de verdad.
 
 **Al cablear eso introduje un riesgo clínico real, y lo cazó la revisión.** Un
 `return` temprano se comía el resto del mensaje: "me puse 4 de rápida, ¿cuánto me
 pincho?" navegaba **tirando las 4 U**, y la calculadora afirmaba "no hay eventos
-registrados" sobre una dosis activa → propondría **más** corrección de la que
-corresponde. Hoy se parsea y se muestra el borrador **antes**, y con algo que
-guardar o con foto **no se navega**: aparece un botón y decide ella. Los otros
-cinco: el encuadre se pintaba en una pantalla que se cerraba en el mismo render
-(viaja como aviso); decía "tu glucosa del sensor" cuando `latestLiveReading`
-incluye manuales y sintéticas; sin parámetros mandaba a tres campos en blanco
-(ahora a Ajustes); el texto sin precarga negaba la lectura aunque ella la hubiera
+registrados" sobre una dosis activa → propondría **más** corrección. Hoy se
+muestra el borrador **antes**, y con algo que guardar o con foto **no se navega**:
+aparece un botón. Los otros cinco: el encuadre se pintaba en una pantalla que se
+cerraba en el mismo render (viaja como aviso); decía "tu glucosa del sensor" con
+`latestLiveReading`, que incluye manuales y sintéticas; sin parámetros mandaba a
+tres campos en blanco (ahora a Ajustes); el texto sin precarga negaba la lectura
 borrado; y se saltaba `openQuickRoute`. **Además el gatillo se estrechó**:
 `requestsInsulinAdvice` acepta falsos positivos porque "el costo es un mensaje",
 y navegar cuesta más — ancho para negarse, estrecho para navegar.
-
-### ✅ Cerrado: el dictado ya no escribe en el log de Android (2026-09-10)
-Detalle entero en `docs/adr/0009`. Resumen: `expo-speech-recognition` llamaba
-`Log.d` con la transcripción y con los nombres de sus insulinas; Android lo
-clasifica como vulnerabilidad y Play Store exige tratar la salud como sensible.
-**Primer intento fallido y la lección:** se encendió la minificación con la regla
-que Android recomienda, se construyó el APK y **no borró nada**. Una regla de
-ProGuard no se puede verificar desde acá; un parche de la dependencia sí — y
-además no cambia cómo se arma la app. `speechLogPatchIsDeclared()` lo vigila.
-
-### ✅ Cerrado: el backend ya está en git (2026-09-10)
-DeepAgent empujó su merge tras pedírselo; `apps/api/src/` ya trae cuentas,
-catálogo personal y fotos, y `pnpm verify` pasa con eso adentro. Antes lo que
-corría en producción vivía **solo** en su instancia.
 
 Sin verificar (exigiría una cuenta real): que el 401 de login sea idéntico ante
 contraseña mala y correo inexistente.

@@ -875,10 +875,36 @@ const AgentTurnShape = z.object({
    * que se inventó.
    */
   cites: z.array(z.string().trim().max(80)).max(6),
+  /**
+   * Qué pantalla de la app pide abrir, si es que pide alguna.
+   *
+   * ## Por qué el modelo decide esto, y por qué puede hacerlo sin riesgo
+   *
+   * Verónica lo pidió con estas palabras: *"no puede ser que palabras clave
+   * determinen la respuesta, es el contenido lo que importa"*. Tenía razón. El
+   * primer intento ruteaba con expresiones regulares y se le escapó su propia
+   * frase —"Quiero corregirme, dime cuánto"—, así que el asistente se negó con
+   * palabras, ofreció abrir algo que no podía, y después se contradijo.
+   *
+   * Entender la intención es justo lo que un modelo hace bien. Y dejarle
+   * **esta** decisión no cruza ninguna frontera, porque es la Regla 2 de
+   * `systemPatterns.md` aplicada: **si un dato no debe salir, el tipo no tiene
+   * dónde ponerlo.** Esto es un enum de tres valores. No hay forma de escribir
+   * "6 U" acá. Lo único que puede decir es *a qué pantalla llevarla*; la
+   * aritmética la sigue haciendo el dominio con los parámetros que ella cargó,
+   * y el desglose se muestra entero.
+   *
+   * `'correction'` es la calculadora de corrección; `'meal'`, la de comida.
+   */
+  opens: z.enum(['correction', 'meal']).nullable(),
 });
 
 /** `true` si el turno es coherente con su propio `kind`. */
 function turnIsCoherent(turn: z.infer<typeof AgentTurnShape>): boolean {
+  // Un turno que pide abrir una calculadora de dosis tiene que ser un rechazo:
+  // si respondiera la pregunta Y abriera la calculadora, la frase y el número
+  // competirían, y la frase la escribió un modelo.
+  if (turn.opens !== null && turn.kind !== 'refusal') return false;
   if (turn.kind === 'entry_draft') return turn.draft !== null;
   if (turn.kind === 'clarify') return turn.question !== null && turn.question.length > 0;
   // Un rechazo o una respuesta no escriben nada, así que no llevan borrador.

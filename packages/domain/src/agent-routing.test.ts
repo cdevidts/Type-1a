@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { insulinQuestionOpensCalculator } from './agent-routing';
+import { requestsInsulinAdvice } from './ai-safety';
 
 describe('insulinQuestionOpensCalculator', () => {
   it('abre la corrección con la frase exacta que ella reportó', () => {
@@ -87,5 +88,22 @@ describe('insulinQuestionOpensCalculator — lo que NO debe mover la pantalla', 
     ]) {
       expect(insulinQuestionOpensCalculator(frase), frase).not.toBeNull();
     }
+  });
+});
+
+describe('las frases que ella escribió en el teléfono (2026-09-11)', () => {
+  it('abre la calculadora, que es lo que no pasaba', () => {
+    // Captura de pantalla: el asistente se negó con palabras, ofreció "puedo
+    // abrirla" y después dijo "no puedo abrir pantallas". Ninguna de las dos
+    // caía en `requestsInsulinAdvice`, así que ni siquiera llegaba acá.
+    expect(insulinQuestionOpensCalculator('Quiero corregirme, dime cuánto.')).toBe('correction');
+    expect(insulinQuestionOpensCalculator('Me quiero corregir dime cuanto')).toBe('correction');
+  });
+
+  it('el guardia del servidor también las ve ahora', () => {
+    // Lo grave no era la comodidad: la pregunta llegaba al modelo. El guardia
+    // existe para no depender de que el modelo se porte bien.
+    expect(requestsInsulinAdvice('Quiero corregirme, dime cuánto.')).toBe(true);
+    expect(requestsInsulinAdvice('Me quiero corregir dime cuanto')).toBe(true);
   });
 });

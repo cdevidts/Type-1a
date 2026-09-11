@@ -265,7 +265,7 @@ describe('el agente conversacional', () => {
       async respond(input) {
         state.calls += 1;
         state.lastContext = input.context;
-        return { kind: 'answer', say: 'Tu promedio fue 154 mg/dL.', draft: null, question: null, cites: ['154'] };
+        return { kind: 'answer', say: 'Tu promedio fue 154 mg/dL.', draft: null, question: null, cites: ['154'], opens: null };
       },
     };
     return { service, get calls() { return state.calls; }, get lastContext() { return state.lastContext; } };

@@ -1200,6 +1200,9 @@ function Type1AApp() {
         },
         question: null,
         cites: [],
+        // Una foto de comida no abre ninguna calculadora: el borrador lleva
+        // `needsBolus`, y la dosis la calcula el maestro cuando ella guarde.
+        opens: null,
       };
     }
     return askAgent({ message, context, ...(history.length === 0 ? {} : { history }) });

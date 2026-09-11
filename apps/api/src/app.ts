@@ -17,7 +17,7 @@ import {
   MockCGMProvider,
   type CGMProvider,
 } from '@type1a/cgm';
-import { assessFreshness, requestsInsulinAdvice } from '@type1a/domain';
+import { assessFreshness, insulinQuestionOpensCalculator, requestsInsulinAdvice } from '@type1a/domain';
 import {
   KnownFoodNamesSchema,
   MealEditInputSchema,
@@ -407,10 +407,14 @@ export async function buildApp(config: AppConfig, dependencies: AppDependencies 
     if (requestsInsulinAdvice(body.data.message)) {
       return {
         kind: 'refusal',
-        say: 'No puedo decirte cuánta insulina ponerte. La calculadora de la app lo hace con los parámetros que tú cargaste, y ahí ves de dónde sale cada unidad.',
+        say: 'No puedo decirte cuánta insulina ponerte. Te abro la calculadora: lo saca de los parámetros que tú cargaste y te muestra de dónde sale cada unidad.',
         draft: null,
         question: null,
         cites: [],
+        // El guardia atajó la pregunta sin gastar el modelo, así que decide él
+        // la pantalla. Un rechazo que no lleva a ninguna parte es lo que esta
+        // fase vino a eliminar.
+        opens: insulinQuestionOpensCalculator(body.data.message) ?? 'correction',
       };
     }
 
