@@ -316,6 +316,52 @@ function speechLogPatchIsDeclared() {
   return problems;
 }
 
+/**
+ * Que el micrófono siga declarado, y que nadie lo bloquee por detrás.
+ *
+ * Costó un build entero: `expo-image-picker` con `microphonePermission: false`
+ * llama a `withBlockedPermissions(['android.permission.RECORD_AUDIO'])` — su
+ * comentario dice, textual, "to ensure no package can add them" —, así que
+ * anulaba **tanto** la declaración explícita de `app.json` **como** la del
+ * plugin de dictado. La app se instaló sin la opción de micrófono en los
+ * ajustes del teléfono, sin un solo error en el build.
+ *
+ * Un permiso que está en `permissions` y a la vez bloqueado desaparece en
+ * silencio. Esto lo detiene antes del build.
+ */
+function microphonePermissionSurvives() {
+  const problems = [];
+  const appJsonPath = join(ROOT, 'apps/mobile/app.json');
+  if (!existsSync(appJsonPath)) return problems;
+
+  const expo = JSON.parse(readFileSync(appJsonPath, 'utf8')).expo ?? {};
+  const plugins = expo.plugins ?? [];
+  const usesDictation = plugins.some((p) => (Array.isArray(p) ? p[0] : p) === 'expo-speech-recognition');
+  if (!usesDictation) return problems;
+
+  const RECORD_AUDIO = 'android.permission.RECORD_AUDIO';
+  if (!(expo.android?.permissions ?? []).includes(RECORD_AUDIO)) {
+    problems.push(`El dictado necesita ${RECORD_AUDIO} en android.permissions (apps/mobile/app.json).`);
+  }
+  if ((expo.android?.blockedPermissions ?? []).includes(RECORD_AUDIO)) {
+    problems.push(
+      `${RECORD_AUDIO} está en blockedPermissions: el bloqueo gana y el micrófono `
+      + 'queda sin opción en los ajustes del teléfono, sin ningún error visible.',
+    );
+  }
+  // El bloqueo que de verdad pasó: viene de la config de otro plugin.
+  for (const plugin of plugins) {
+    if (!Array.isArray(plugin)) continue;
+    if (plugin[1]?.microphonePermission === false) {
+      problems.push(
+        `El plugin \`${plugin[0]}\` tiene \`microphonePermission: false\`, que BLOQUEA `
+        + `${RECORD_AUDIO} para toda la app y deja el dictado mudo. Quita esa clave.`,
+      );
+    }
+  }
+  return problems;
+}
+
 function check() {
   const problems = [];
 
@@ -353,13 +399,16 @@ function check() {
   // 6. El dictado no vuelve a escribir en el log de Android.
   problems.push(...speechLogPatchIsDeclared());
 
+  // 7. El permiso de micrófono sobrevive a los plugins.
+  problems.push(...microphonePermissionSurvives());
+
   if (problems.length > 0) {
     console.error('✗ verify:contracts falló\n');
     for (const problem of problems) console.error(`  · ${problem}`);
     console.error('');
     process.exit(1);
   }
-  console.log(`✓ verify:contracts — ${manifest.dependencies.length} dependencias declaradas, todas resueltas; presupuestos dentro de techo; capacidades del agente clasificadas; el dictado no escribe en el log`);
+  console.log(`✓ verify:contracts — ${manifest.dependencies.length} dependencias declaradas, todas resueltas; presupuestos dentro de techo; capacidades del agente clasificadas; el dictado no escribe en el log; micrófono declarado`);
 }
 
 function scan() {

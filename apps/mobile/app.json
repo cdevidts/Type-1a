@@ -44,8 +44,7 @@
       [
         "expo-image-picker",
         {
-          "cameraPermission": "Type 1A usa la cámara solo para estimar alimentos. Puedes registrar carbohidratos manualmente.",
-          "microphonePermission": false
+          "cameraPermission": "Type 1A usa la cámara solo para estimar alimentos. Puedes registrar carbohidratos manualmente."
         }
       ],
       "expo-notifications",
