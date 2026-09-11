@@ -6,12 +6,11 @@ _Última actualización: 2026-09-10 (Fase 0 del agente)._
 
 | | |
 |---|---|
-| `pnpm verify` | Verde (`verify:contracts`, lint, typecheck, test, `verify:bundle`). El wrapper de Windows conserva su fallo de rutas; CI Linux es la verificación integral |
-| Tests | **1.025** — domain 671, mobile 273, ai 34, schemas 21, cgm 10, api 16 |
-| Bundle de Metro | **1.379** hoy; el build `444a3ff3` salió con 1.373 |
-| CI | `.github/workflows/verify.yml` en cada push y PR |
+| `pnpm verify` | Verde. El wrapper de Windows conserva su fallo de rutas; CI Linux es la verificación integral |
+| Tests | **1.055** — domain 700, mobile 274, ai 34, schemas 21, cgm 10, api 16 |
+| Bundle de Metro | **1.388** (el dictado sumó 9); CI en cada push y PR |
 
-⚠️ `verify:contracts` ahora exige además que **toda** función exportada de `db.ts` esté clasificada para el agente.
+⚠️ `verify:contracts` exige además: toda función de `db.ts` clasificada para el agente, el parche del dictado declarado, y el permiso de micrófono sin bloquear.
 
 ## Entregado y en el dispositivo
 
@@ -58,14 +57,11 @@ declarados a propósito:
    de producto: relabelar pierde el origen, dejarlo miente. Va a Verónica.
 
 ### 🟡 Menores
-- **Ni la UI ni `db.ts` tienen test de ejecución**: React no se monta y `db.ts`
-  importa nativos de Expo; el cableado se lee del diff. Pesa más ahora: importar
-  un respaldo escribe quince tablas, y el dictado abre un micrófono.
-- `blockedPermissions` se borró entero (tenía solo `RECORD_AUDIO`): una
-  dependencia futura que traiga un permiso por su cuenta ya no tiene qué la
-  frene. Aceptado; la alternativa era dejar la clave con una lista vacía.
-- El dictado **no se probó en un teléfono**, y un micrófono no se da por
-  entregado sin oírlo. Tampoco el swipe hacia el chat.
+- 🔴 **Ni la UI ni `db.ts` tienen test de ejecución**, y el 2026-09-11 eso dejó
+  pasar un riesgo clínico: el `return` temprano del chat tiraba una dosis recién
+  declarada y la calculadora la daba por inexistente. Lo cazó una revisión leyendo
+  el diff, no la suite. Todo lo puro tiene test; **el cableado no tiene ninguno**.
+- El dictado y el swipe al chat **no se probaron en un teléfono**.
 - Una escritura **suelta** (`runAsync` fuera de transacción) puede caer dentro
   de la de otro y volver atrás con ella. Daño bajo: ajustes, no historial.
 - `README.md` sigue en pie (63 líneas). Se **reescribe a ~30**, no se elimina.
@@ -93,14 +89,13 @@ vivas, `/v1/catalog/mine` 401, **ninguna ruta de datos de salud** (404).
 
 ### 🔴→✅ El micrófono salió sin permiso, y el build no dijo nada (2026-09-11)
 Ella instaló y reportó que en los ajustes del teléfono **no existe la opción de
-micrófono**. Cierto: `RECORD_AUDIO` **no estaba en el manifiesto del APK** pese a
-estar en `app.json` y pese a que el plugin de dictado también lo declara. Causa:
-`expo-image-picker` con `microphonePermission: false` llama a
-`withBlockedPermissions(['RECORD_AUDIO'])` — su comentario dice *"to ensure no
-package can add them"* —, y el bloqueo gana sobre todo. Se quitó esa clave; el
-picker no la necesita porque cada `launchCameraAsync` pasa `mediaTypes:
-['images']`. **Verificado leyendo el manifiesto generado por `prebuild` ANTES de
-construir**, que es lo que faltó. `microphonePermissionSurvives()` lo detiene.
+micrófono**. Cierto: `RECORD_AUDIO` **no estaba en el manifiesto del APK**, pese a
+`app.json` y pese al plugin de dictado. Causa: `expo-image-picker` con
+`microphonePermission: false` llama a `withBlockedPermissions(['RECORD_AUDIO'])`
+—*"to ensure no package can add them"*— y el bloqueo gana sobre todo. Se quitó;
+el picker no la necesita (`mediaTypes: ['images']` en cada `launchCameraAsync`).
+**Verificado en el manifiesto generado por `prebuild` ANTES de construir**, que
+es lo que faltó. `microphonePermissionSurvives()` lo detiene.
 
 ### ✅ El chat dejaba de ser tonto por tres cosas concretas (2026-09-11)
 Ella: *"la IA está bastante tonta"*. Las tres causas, todas cableado ausente:
@@ -121,28 +116,33 @@ Ella: *"la IA está bastante tonta"*. Las tres causas, todas cableado ausente:
 Además, el error de red **mentía**: decía "lo que escribiste sigue acá" con el
 cuadro ya vaciado por `setInput('')`. Ahora devuelve el texto de verdad.
 
+**Al cablear eso introduje un riesgo clínico real, y lo cazó la revisión.** Un
+`return` temprano se comía el resto del mensaje: "me puse 4 de rápida, ¿cuánto me
+pincho?" navegaba **tirando las 4 U**, y la calculadora afirmaba "no hay eventos
+registrados" sobre una dosis activa → propondría **más** corrección de la que
+corresponde. Hoy se parsea y se muestra el borrador **antes**, y con algo que
+guardar o con foto **no se navega**: aparece un botón y decide ella. Los otros
+cinco: el encuadre se pintaba en una pantalla que se cerraba en el mismo render
+(viaja como aviso); decía "tu glucosa del sensor" cuando `latestLiveReading`
+incluye manuales y sintéticas; sin parámetros mandaba a tres campos en blanco
+(ahora a Ajustes); el texto sin precarga negaba la lectura aunque ella la hubiera
+borrado; y se saltaba `openQuickRoute`. **Además el gatillo se estrechó**:
+`requestsInsulinAdvice` acepta falsos positivos porque "el costo es un mensaje",
+y navegar cuesta más — ancho para negarse, estrecho para navegar.
+
 ### ✅ Cerrado: el dictado ya no escribe en el log de Android (2026-09-10)
-`expo-speech-recognition` llamaba `Log.d` sin condición con la transcripción y
-con las pistas —insulinas de ella y su catálogo—. Ella pidió averiguar si era
-ilegal antes de aceptarlo y lo era: **Android lo clasifica como vulnerabilidad**
-(MASVS-STORAGE) y Play Store exige tratar los datos de salud como sensibles. La
-evaluación previa era **demasiado benigna**: Android advierte que en muchos
-aparatos vienen apps de fábrica con `READ_LOGS`, así que no hace falta un cable.
+Detalle entero en `docs/adr/0009`. Resumen: `expo-speech-recognition` llamaba
+`Log.d` con la transcripción y con los nombres de sus insulinas; Android lo
+clasifica como vulnerabilidad y Play Store exige tratar la salud como sensible.
+**Primer intento fallido y la lección:** se encendió la minificación con la regla
+que Android recomienda, se construyó el APK y **no borró nada**. Una regla de
+ProGuard no se puede verificar desde acá; un parche de la dependencia sí — y
+además no cambia cómo se arma la app. `speechLogPatchIsDeclared()` lo vigila.
 
-**Primer intento fallido, y la lección:** se encendió la minificación con la
-regla que Android recomienda, **se construyó el APK y no borró nada** — los
-textos seguían adentro, con la configuración generada correcta. Una regla de
-ProGuard **no se puede verificar desde acá**. Se reemplazó por un parche de la
-dependencia (`patches/`, vía `pnpm.patchedDependencies`) que vacía `log()`: se
-comprueba mirando el APK, y **desaparece el riesgo** de que comprimir rompa una
-pantalla suelta días después. `speechLogPatchIsDeclared()` verifica que el
-parche siga declarado y siga neutralizando; las dos formas de romperlo, probadas.
-
-### ✅ Cerrado: el código del backend ya está en git (2026-09-10)
-DeepAgent empujó su merge tras pedírselo. `apps/api/src/` ya tiene
-`accounts-store.ts`, `personal-catalog-store.ts` y `catalog-photo-store.ts`, y
-`pnpm verify` pasa con eso adentro. Lo que corre en producción vuelve a estar
-versionado; antes vivía **solo** en su instancia.
+### ✅ Cerrado: el backend ya está en git (2026-09-10)
+DeepAgent empujó su merge tras pedírselo; `apps/api/src/` ya trae cuentas,
+catálogo personal y fotos, y `pnpm verify` pasa con eso adentro. Antes lo que
+corría en producción vivía **solo** en su instancia.
 
 Sin verificar (exigiría una cuenta real): que el 401 de login sea idéntico ante
 contraseña mala y correo inexistente.

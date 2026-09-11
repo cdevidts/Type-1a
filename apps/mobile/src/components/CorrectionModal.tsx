@@ -278,9 +278,12 @@ export function CorrectionModal({
       </View>
 
       {prefilled === null ? (
+        // Este bloque también se pinta cuando ella BORRA una precarga válida,
+        // así que no puede afirmar nada sobre el estado del sensor: diría "no
+        // hay lectura vigente" con el sensor conectado.
         <Text style={styles.staleText}>
-          No hay lectura vigente del sensor. Mídete con el capilar y escribe el valor
-          acá abajo; después toca Calcular.
+          Nada precargado. Escribe tu medición actual —con el capilar si no tienes
+          lectura vigente— y toca Calcular.
         </Text>
       ) : prefilled.isSynthetic ? (
         <Text style={styles.syntheticText}>

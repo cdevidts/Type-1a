@@ -61,3 +61,31 @@ describe('insulinQuestionOpensCalculator', () => {
     expect(insulinQuestionOpensCalculator('cuánto me pincho ahora')).toBe('correction');
   });
 });
+
+describe('insulinQuestionOpensCalculator — lo que NO debe mover la pantalla', () => {
+  it('no navega por preguntas informativas sobre insulina', () => {
+    // Los tres casos que encontró la revisión de seguridad. `requestsInsulinAdvice`
+    // los detecta y el backend los rechaza con palabras, que es lo correcto;
+    // lo que no corresponde es dejarla en una calculadora de dosis que no pidió.
+    for (const frase of [
+      '¿qué pasa si me salto la basal?',
+      'no sé qué pasó con la dosis de ayer',
+      '¿cuántas horas dura mi insulina basal?',
+      '¿cuántos días dura una pluma?',
+      '¿qué insulina estoy usando?',
+    ]) {
+      expect(insulinQuestionOpensCalculator(frase), frase).toBeNull();
+    }
+  });
+
+  it('sigue navegando cuando de verdad pregunta cuánto ponerse', () => {
+    for (const frase of [
+      'me quiero corregir, cuánto me pincho',
+      '¿cuántas unidades me pongo?',
+      'calcula mi dosis',
+      'how many units should I take',
+    ]) {
+      expect(insulinQuestionOpensCalculator(frase), frase).not.toBeNull();
+    }
+  });
+});

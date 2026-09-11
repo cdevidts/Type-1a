@@ -60,6 +60,15 @@ export interface AgentChatMessage {
   cites?: readonly string[];
   /** `true` mientras la tarjeta sigue sin resolverse. */
   pending?: boolean;
+  /**
+   * La calculadora que este turno ofrece abrir.
+   *
+   * Existe como botón, y no como navegación automática, cuando el mismo
+   * mensaje traía algo que registrar: navegar de inmediato le borraba la
+   * dosis que acababa de declarar, y la calculadora se abría afirmando que no
+   * había insulina activa.
+   */
+  opensCalculator?: CalculatorRoute;
 }
 
 export function AgentChatModal({
@@ -174,28 +183,11 @@ export function AgentChatModal({
     setInput('');
     setError(null);
 
-    // 1. Si está pidiendo una dosis, se abre la calculadora en vez de
-    //    contestarle con palabras. La prohibición no se toca —ningún modelo
-    //    calcula insulina— pero negarse y no hacer nada la dejaba en un
-    //    callejón: lo reportó ella. Corre acá, antes de la red, porque este es
-    //    justo el momento en que la app tiene que ser instantánea.
-    const calculator = insulinQuestionOpensCalculator(trimmed);
-    if (calculator !== null) {
-      push({
-        id: newId(),
-        role: 'assistant',
-        text: calculator === 'meal'
-          ? 'La dosis no te la digo yo. Te abro la calculadora de comida: pone los carbohidratos y calcula con tus parámetros.'
-          : 'La dosis no te la digo yo. Te abro la calculadora, con tu glucosa del sensor si hay una vigente.',
-      });
-      onOpenCalculator(calculator);
-      return;
-    }
-
-    // 2. Lo que se entiende acá se muestra YA, sin esperar al servidor.
+    // 1. Lo que se entiende acá se muestra YA, sin esperar al servidor.
     const local = parseLocalIntent(trimmed, glucoseUnit);
     const localPrefill = toPrefill(local.intents);
-    if (hasPrefill(localPrefill)) {
+    const hasSomethingToLog = hasPrefill(localPrefill);
+    if (hasSomethingToLog) {
       push({
         id: newId(),
         role: 'assistant',
@@ -205,6 +197,37 @@ export function AgentChatModal({
         prefill: localPrefill,
         pending: true,
       });
+    }
+
+    // 2. ¿Está pidiendo una dosis? Se abre la calculadora en vez de contestarle
+    //    con palabras. La prohibición no se toca —ningún modelo calcula
+    //    insulina— pero negarse y no hacer nada la dejaba en un callejón.
+    //
+    //    **Se navega solo si no hay nada que perder.** Este fue el hallazgo
+    //    grave de la revisión: "me puse 4 de rápida, ¿cuánto me pincho ahora?"
+    //    llevaba a la calculadora tirando las 4 U, y la calculadora afirmaba
+    //    "no hay eventos registrados" sobre una dosis que seguía activa — o sea
+    //    proponía MÁS corrección de la que corresponde. Con algo registrado o
+    //    con foto, primero se guarda: el botón queda ahí y lo aprieta ella.
+    const calculator = insulinQuestionOpensCalculator(trimmed);
+    if (calculator !== null) {
+      const blocked = hasSomethingToLog || imageBase64 !== undefined;
+      push({
+        id: newId(),
+        role: 'assistant',
+        text: blocked
+          ? 'La dosis no te la digo yo, la calcula la app con tus parámetros. Guarda primero lo de arriba para que entre en el cálculo, y después abre la calculadora.'
+          // No se nombra la fuente de la glucosa: `latestLiveReading` incluye
+          // lecturas manuales y sintéticas, y decir "del sensor" sería
+          // presentarlas como lo que no son. La calculadora ya rotula la
+          // procedencia de lo que precarga, que es donde corresponde.
+          : 'La dosis no te la digo yo, la calcula la app con tus parámetros y te muestra de dónde sale cada unidad.',
+        opensCalculator: calculator,
+      });
+      if (!blocked) { onOpenCalculator(calculator); return; }
+      // Con foto pendiente se sigue al análisis; sin foto no hay nada más que
+      // preguntar, porque la dosis no la contesta el modelo.
+      if (imageBase64 === undefined) return;
     }
 
     // 3. Si todo se entendió y no hay foto, no hace falta el modelo.
@@ -286,6 +309,7 @@ export function AgentChatModal({
                 await onConfirmDraft(message.prefill);
                 resolve(message.id);
               }}
+              onOpenCalculator={onOpenCalculator}
               onEdit={() => {
                 if (message.prefill === undefined) return;
                 onOpenMaster(message.prefill);
@@ -436,14 +460,36 @@ function EmptyState(): React.JSX.Element {
   );
 }
 
+function CalculatorButton({
+  route,
+  onPress,
+}: {
+  route: CalculatorRoute;
+  onPress: () => void;
+}): React.JSX.Element {
+  return (
+    <Pressable
+      style={styles.calcButton}
+      accessibilityRole="button"
+      onPress={onPress}
+    >
+      <Text style={styles.calcButtonText}>
+        {route === 'meal' ? 'Abrir la calculadora de comida' : 'Abrir la calculadora de corrección'}
+      </Text>
+    </Pressable>
+  );
+}
+
 function Bubble({
   message,
   onConfirm,
   onEdit,
+  onOpenCalculator,
 }: {
   message: AgentChatMessage;
   onConfirm: () => Promise<void>;
   onEdit: () => void;
+  onOpenCalculator: (route: CalculatorRoute) => void;
 }): React.JSX.Element {
   const [saving, setSaving] = useState(false);
   const mine = message.role === 'user';
@@ -455,6 +501,13 @@ function Bubble({
 
       {message.cites === undefined ? null : (
         <Text style={styles.cites}>Cifras citadas: {message.cites.join(' · ')}</Text>
+      )}
+
+      {message.opensCalculator === undefined ? null : (
+        <CalculatorButton
+          route={message.opensCalculator}
+          onPress={() => { onOpenCalculator(message.opensCalculator!); }}
+        />
       )}
 
       {rows.length === 0 ? null : (
@@ -577,6 +630,11 @@ const styles = StyleSheet.create({
     gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
     backgroundColor: colors.redSoft,
   },
+  calcButton: {
+    marginTop: spacing.sm, minHeight: 44, justifyContent: 'center', alignItems: 'center',
+    borderRadius: radius.sm, backgroundColor: colors.teal, paddingHorizontal: spacing.md,
+  },
+  calcButtonText: { fontSize: 14, fontWeight: '600', color: '#FFFFFF' },
   consent: {
     gap: spacing.sm, padding: spacing.md,
     backgroundColor: colors.warningSoft, borderTopColor: colors.line, borderTopWidth: 1,

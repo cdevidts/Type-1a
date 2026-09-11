@@ -1883,7 +1883,20 @@ function Type1AApp() {
         // palabras y dejarla ahí era el error que reportó.
         onOpenCalculator={(route) => {
           setChatOpen(false);
-          if (route === 'correction') setQuickRoute('correction');
+          // Sin parámetros cargados, la calculadora son tres campos en blanco
+          // justo después de preguntar por una dosis: el momento exacto en que
+          // alguien escribe un número plausible para que la pantalla funcione.
+          // AGENTS.md prohíbe inferirlos, así que se manda a cargarlos.
+          if (!therapyConfigured) {
+            setSettingsOpen(true);
+            setNotice('Para calcular una dosis faltan tus parámetros: objetivo, factor de corrección e incremento. Los pones tú, la app no los deduce.');
+            return;
+          }
+          // El mensaje del chat queda en una pantalla que se acaba de cerrar,
+          // así que el encuadre viaja acá: sin esto, lo único que ella ve es
+          // una calculadora de dosis apareciendo sola.
+          setNotice('La dosis la calcula la app con TUS parámetros, no el asistente. Revisa el desglose antes de registrar nada.');
+          if (route === 'correction') openQuickRoute('correction');
           else openMasterCreate('meal');
         }}
         onOpenMaster={(prefill) => {
