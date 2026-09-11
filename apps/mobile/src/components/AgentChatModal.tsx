@@ -3,7 +3,14 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { hasPrefill, parseLocalIntent, toPrefill, type EntryPrefill } from '@type1a/domain';
+import {
+  hasPrefill,
+  insulinQuestionOpensCalculator,
+  parseLocalIntent,
+  toPrefill,
+  type CalculatorRoute,
+  type EntryPrefill,
+} from '@type1a/domain';
 import type { AgentTurn, GlucoseUnit } from '@type1a/schemas';
 import Camera from 'lucide-react-native/icons/camera';
 import CircleStop from 'lucide-react-native/icons/circle-stop';
@@ -62,6 +69,7 @@ export function AgentChatModal({
   onAsk,
   onConfirmDraft,
   onOpenMaster,
+  onOpenCalculator,
   insulinNames = [],
   foodNames = [],
   cloudDictationAllowed = false,
@@ -72,11 +80,23 @@ export function AgentChatModal({
   /** La unidad que ella configuró. Decide cómo se lee un número suelto. */
   glucoseUnit: GlucoseUnit;
   /** Manda la pregunta al backend. Devuelve el turno ya validado. */
-  onAsk: (message: string, imageBase64?: string) => Promise<AgentTurn>;
+  onAsk: (
+    message: string,
+    imageBase64?: string,
+    history?: readonly { role: 'user' | 'assistant'; content: string }[],
+  ) => Promise<AgentTurn>;
   /** Escribe lo confirmado. La pantalla nunca escribe por su cuenta. */
   onConfirmDraft: (prefill: EntryPrefill) => Promise<void>;
   /** Abre el Modal Maestro con lo entendido, para completar a mano. */
   onOpenMaster: (prefill: EntryPrefill) => void;
+  /**
+   * Abre la calculadora de la app cuando ella pregunta por una dosis.
+   *
+   * El modelo nunca da un número; la calculadora sí, con los parámetros que
+   * ella cargó y el desglose a la vista. Eso siempre estuvo permitido — lo que
+   * faltaba era llegar hasta ahí desde el chat.
+   */
+  onOpenCalculator: (route: CalculatorRoute) => void;
   /**
    * Nombres de sus insulinas y de su catálogo, como pistas para el
    * reconocedor de voz. **Solo se usan si transcribe en el teléfono**
@@ -92,6 +112,12 @@ export function AgentChatModal({
   onAllowCloudDictation?: () => void;
 }): React.JSX.Element {
   const [messages, setMessages] = useState<AgentChatMessage[]>([]);
+  /**
+   * Espejo de `messages` para leerlo dentro de `send` sin volverlo dependencia
+   * del `useCallback`: si lo fuera, la función se recrearía en cada mensaje.
+   */
+  const messagesRef = useRef<AgentChatMessage[]>([]);
+  messagesRef.current = messages;
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -118,6 +144,22 @@ export function AgentChatModal({
     return `m${nextId.current}`;
   }, []);
 
+  /**
+   * Los últimos turnos de la conversación, para que una pregunta de
+   * seguimiento tenga a qué referirse.
+   *
+   * Se mandan **los textos que ya se vieron en pantalla**, nada más: ni
+   * borradores, ni citas, ni el contexto clínico, que viaja aparte y filtrado
+   * por `agent-context.ts`.
+   */
+  const recentHistory = useCallback(
+    (): readonly { role: 'user' | 'assistant'; content: string }[] =>
+      messagesRef.current
+        .slice(-6)
+        .map((message) => ({ role: message.role, content: message.text.slice(0, 2000) })),
+    [],
+  );
+
   const push = useCallback((message: AgentChatMessage): void => {
     setMessages((current) => [...current, message]);
     // El scroll va después del render, o cae en la altura vieja.
@@ -132,7 +174,25 @@ export function AgentChatModal({
     setInput('');
     setError(null);
 
-    // 1. Lo que se entiende acá se muestra YA, sin esperar al servidor.
+    // 1. Si está pidiendo una dosis, se abre la calculadora en vez de
+    //    contestarle con palabras. La prohibición no se toca —ningún modelo
+    //    calcula insulina— pero negarse y no hacer nada la dejaba en un
+    //    callejón: lo reportó ella. Corre acá, antes de la red, porque este es
+    //    justo el momento en que la app tiene que ser instantánea.
+    const calculator = insulinQuestionOpensCalculator(trimmed);
+    if (calculator !== null) {
+      push({
+        id: newId(),
+        role: 'assistant',
+        text: calculator === 'meal'
+          ? 'La dosis no te la digo yo. Te abro la calculadora de comida: pone los carbohidratos y calcula con tus parámetros.'
+          : 'La dosis no te la digo yo. Te abro la calculadora, con tu glucosa del sensor si hay una vigente.',
+      });
+      onOpenCalculator(calculator);
+      return;
+    }
+
+    // 2. Lo que se entiende acá se muestra YA, sin esperar al servidor.
     const local = parseLocalIntent(trimmed, glucoseUnit);
     const localPrefill = toPrefill(local.intents);
     if (hasPrefill(localPrefill)) {
@@ -147,12 +207,19 @@ export function AgentChatModal({
       });
     }
 
-    // 2. Si todo se entendió y no hay foto, no hace falta el modelo.
+    // 3. Si todo se entendió y no hay foto, no hace falta el modelo.
     if (local.complete && imageBase64 === undefined) return;
 
     setBusy(true);
     try {
-      const turn = await onAsk(local.leftover.length > 0 ? local.leftover : trimmed, imageBase64);
+      // Sin historial, "¿y la semana pasada?" llegaba al modelo sin nada a qué
+      // referirse y la respuesta salía genérica. Se mandan los últimos turnos,
+      // que es el tope que acepta el contrato.
+      const turn = await onAsk(
+        local.leftover.length > 0 ? local.leftover : trimmed,
+        imageBase64,
+        recentHistory(),
+      );
       const remotePrefill = turn.draft === null
         ? undefined
         : {
@@ -169,13 +236,18 @@ export function AgentChatModal({
       });
     } catch (caught) {
       // Degradar a manual, nunca a un callejón sin salida (`AGENTS.md`).
+      //
+      // El texto se devuelve al cuadro. El mensaje decía "lo que escribiste
+      // sigue acá" cuando `setInput('')` ya lo había borrado: era falso, y la
+      // dejaba retecleando la frase entera para reintentar.
+      if (trimmed.length > 0) setInput(trimmed);
       setError(caught instanceof Error
-        ? `${caught.message} Lo que escribiste sigue acá, y puedes registrarlo a mano.`
-        : 'No se pudo consultar al asistente. Lo que escribiste sigue acá, y puedes registrarlo a mano.');
+        ? `${caught.message} Te devolví el texto al cuadro para que lo reintentes o lo registres a mano.`
+        : 'No se pudo consultar al asistente. Te devolví el texto al cuadro para que lo reintentes o lo registres a mano.');
     } finally {
       setBusy(false);
     }
-  }, [glucoseUnit, newId, onAsk, push]);
+  }, [glucoseUnit, newId, onAsk, onOpenCalculator, push, recentHistory]);
 
   const attachPhoto = useCallback(async (): Promise<void> => {
     const permission = await ImagePicker.requestCameraPermissionsAsync();

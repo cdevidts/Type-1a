@@ -91,6 +91,36 @@ con citas, y **borrador de comida**, que DeepAgent no probó—; tres formas
 indirectas de pedir insulina rechazadas, dos por el modelo mismo. `/v1/auth/*`
 vivas, `/v1/catalog/mine` 401, **ninguna ruta de datos de salud** (404).
 
+### 🔴→✅ El micrófono salió sin permiso, y el build no dijo nada (2026-09-11)
+Ella instaló y reportó que en los ajustes del teléfono **no existe la opción de
+micrófono**. Cierto: `RECORD_AUDIO` **no estaba en el manifiesto del APK** pese a
+estar en `app.json` y pese a que el plugin de dictado también lo declara. Causa:
+`expo-image-picker` con `microphonePermission: false` llama a
+`withBlockedPermissions(['RECORD_AUDIO'])` — su comentario dice *"to ensure no
+package can add them"* —, y el bloqueo gana sobre todo. Se quitó esa clave; el
+picker no la necesita porque cada `launchCameraAsync` pasa `mediaTypes:
+['images']`. **Verificado leyendo el manifiesto generado por `prebuild` ANTES de
+construir**, que es lo que faltó. `microphonePermissionSurvives()` lo detiene.
+
+### ✅ El chat dejaba de ser tonto por tres cosas concretas (2026-09-11)
+Ella: *"la IA está bastante tonta"*. Las tres causas, todas cableado ausente:
+1. **La foto se descartaba**: `askAgentTurn` tenía `void imageBase64`. El botón
+   de cámara del chat no hacía nada. Ahora va a `/v1/ai/meal-analysis`, el mismo
+   endpoint probado que usa el resto de la app, y vuelve como borrador.
+2. **No había memoria de conversación**: no se mandaba `history` aunque el
+   contrato lo acepta. Verificado en vivo: "¿y cuántas fueron las bajas?" ahora
+   se entiende como seguimiento, y **dice que no tiene el dato en vez de
+   inventarlo**.
+3. **Pedir una dosis era un callejón.** Se negaba con palabras y ya. Ahora abre
+   la calculadora (`agent-routing.ts`): corrección por defecto, comida si la
+   frase habla de comer. La prohibición no se tocó — el modelo sigue sin dar
+   números; lo que cambió es que después de negarse **hace algo**.
+   `insulinQuestionOpensCalculator` reusa `requestsInsulinAdvice` a propósito:
+   un detector paralelo habría divergido del guardia del servidor.
+
+Además, el error de red **mentía**: decía "lo que escribiste sigue acá" con el
+cuadro ya vaciado por `setInput('')`. Ahora devuelve el texto de verdad.
+
 ### ✅ Cerrado: el dictado ya no escribe en el log de Android (2026-09-10)
 `expo-speech-recognition` llamaba `Log.d` sin condición con la transcripción y
 con las pistas —insulinas de ella y su catálogo—. Ella pidió averiguar si era

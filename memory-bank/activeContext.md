@@ -1,6 +1,6 @@
 # Active Context
 
-_Última actualización: 2026-09-10 (el agente: turno, botón y dictado)._
+_Última actualización: 2026-09-11 (el agente en el teléfono: lo que falló de verdad)._
 
 ## El agente: el andamio y el turno (2026-09-10)
 
@@ -15,6 +15,16 @@ reemplaza: ese camino no se implementó.)
 motivo, y `verify:contracts` falla si una función de `db.ts` no está en ninguna
 lista: cazó una sin clasificar, y un test cazó ocho motivos de relleno míos.
 **El borrador es del mismo tipo que el payload del Modal Maestro**, y `saveTherapyProfile` no es alcanzable: nunca.
+
+**Lo que el teléfono enseñó y el repo no.** Ella instaló y encontró dos cosas
+que ninguna suite habría visto: el micrófono salió **sin permiso** (otro plugin
+lo bloqueaba con `microphonePermission: false`, que gana sobre toda declaración)
+y el asistente estaba "tonto" por **cableado ausente**, no por el modelo: la foto
+se descartaba (`void imageBase64`), no se mandaba `history`, y pedir una dosis
+terminaba en un rechazo sin salida. Las tres cableadas; la tercera abre la
+calculadora, que siempre estuvo permitida y no se alcanzaba desde el chat.
+**La lección: un permiso y un cableado se verifican en el artefacto, no en el
+código fuente** — el manifiesto generado, el APK, el endpoint en vivo.
 
 **El dictado no manda audio a ninguna parte** (`docs/adr/0009`). El plan del 0008
 —subir el archivo— murió contra un hecho que no miré: Android no graba en wav ni
@@ -101,27 +111,17 @@ que nació un registro no limita lo que se le suma después.
 - **`ingestedAt` y la hora de una lectura externa no se mueven nunca.** Un blanco
   no es un cero; el nombre de la insulina es configuración, no un campo suelto.
 
-## Las transacciones SQLite, cerradas (2026-08-28)
+## Cerrado y en el teléfono (2026-08-28 / 09-01)
 
-El fondo recibía la **misma conexión nativa** que la pantalla y le corría un
-`BEGIN` encima; el `ROLLBACK` de una cerraba la de la otra. Hoy abre con
-`useNewConnection` y **toda** transacción pasa por una cola FIFO.
-
-## Catálogo, porción, fibra y la hora del resumen (2026-09-01)
-
-**Cuánto pesa una porción** faltaba: sin eso el catálogo caía siempre a 100 g. La
-IA propone `servingGrams` y ella lo confirma —confirmarlo lo vuelve `'user'`—; lo
-rechazado se muestra con su razón. Los macros **se muestran por porción** y se
-guardan por 100 g. **La fibra tiene meta**: 14 g por cada 1000 kcal (IOM/ADA),
-piso y no techo.
-
-**El resumen citaba la hora en UTC** (17:30 salía "21:30"). Cada marca lleva
-desfase local explícito (`localizeEpisodeMetrics`, **por marca**, porque el
-horario de verano existe). Lo que crece con eso es lo que el modelo **puede
-decir**: una hora local significa algo sobre su vida, así que el mismo cambio le
-prohíbe juzgar a qué hora come.
-
-✅ En el teléfono (`03fb5c6d`, `e93ce4a2`).
+**Transacciones SQLite**: el fondo recibía la misma conexión nativa que la
+pantalla y el `ROLLBACK` de una cerraba la de la otra. Hoy `useNewConnection` y
+cola FIFO. **Porción**: la IA propone `servingGrams` y ella confirma
+(confirmarlo lo vuelve `'user'`); se muestra por porción, se guarda por 100 g.
+**Fibra**: meta de 14 g/1000 kcal (IOM/ADA), piso y no techo. **La hora del
+resumen salía en UTC**; cada marca lleva desfase local (`localizeEpisodeMetrics`,
+por marca, porque el horario de verano existe), y como una hora local dice algo
+de su vida, el mismo cambio le prohíbe al modelo juzgar a qué hora come.
+(`03fb5c6d`, `e93ce4a2`)
 
 ## Reglas de proceso que sobreviven
 

@@ -278,7 +278,10 @@ export function CorrectionModal({
       </View>
 
       {prefilled === null ? (
-        <Text style={styles.staleText}>No hay lectura vigente para precargar. Escribe una medición actual.</Text>
+        <Text style={styles.staleText}>
+          No hay lectura vigente del sensor. Mídete con el capilar y escribe el valor
+          acá abajo; después toca Calcular.
+        </Text>
       ) : prefilled.isSynthetic ? (
         <Text style={styles.syntheticText}>
           Glucosa precargada SINTÉTICA (modo demo) · {formatDayTime(prefilled.sourceTimestamp)}. No sirve para dosificar.

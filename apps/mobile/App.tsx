@@ -64,7 +64,7 @@ import type {
 // no UI on screen — see backgroundSync.ts.
 import { applyBackupImport, backupSnapshotIds, collectBackup } from './src/backupIO';
 import type { BackupExportOutcome, BackupImportOutcome } from './src/backupOutcome';
-import { askAgent } from './src/api';
+import { analyzeMealImage, askAgent } from './src/api';
 import { AgentChatModal } from './src/components/AgentChatModal';
 import { registerBackgroundSync } from './src/backgroundSync';
 import { CorrectionModal } from './src/components/CorrectionModal';
@@ -1133,7 +1133,11 @@ function Type1AApp() {
    * parte**, que es lo que ADR 0007 promete. Dónde termina lo decide ella.
    */
   /** Un turno del asistente. El contexto se arma acá, en el teléfono. */
-  async function askAgentTurn(message: string, imageBase64?: string): Promise<AgentTurn> {
+  async function askAgentTurn(
+    message: string,
+    imageBase64?: string,
+    history: readonly { role: 'user' | 'assistant'; content: string }[] = [],
+  ): Promise<AgentTurn> {
     const to = new Date();
     const from = new Date(to.getTime() - 14 * 24 * 60 * 60_000);
     const tally = createDecodeTally();
@@ -1167,8 +1171,38 @@ function Type1AApp() {
         origin: latest.origin === 'real' ? 'real' : latest.origin === 'imported' ? 'imported' : 'manual',
       },
     });
-    void imageBase64;
-    return askAgent({ message, context });
+    // La foto NO se descartaba por diseño: simplemente no estaba cableada, y
+    // el botón de cámara del chat no hacía nada. Va al mismo endpoint de
+    // análisis de comida que usa el resto de la app —desplegado y probado— en
+    // vez de inventar una segunda ruta de fotos.
+    if (imageBase64 !== undefined) {
+      const analysis = await analyzeMealImage({
+        imageBase64,
+        mimeType: 'image/jpeg',
+        ...(message.trim().length === 0 ? {} : { description: message }),
+        knownFoodNames: agentDictationFoods,
+      });
+      const foods = analysis.estimate.foods;
+      return {
+        kind: 'entry_draft',
+        say: foods.length === 0
+          ? 'No reconocí comida en la foto. Puedes escribir qué era.'
+          : `Estimé ${foods.map((food) => food.name).join(', ')}. Son estimaciones: revísalas antes de guardar.`,
+        draft: {
+          mealNote: null,
+          foods,
+          waterMl: null,
+          activityMinutes: null,
+          note: null,
+          // Bandera, nunca un número: la dosis la calcula el dominio con SUS
+          // parámetros, jamás el modelo (ADR 0008).
+          needsBolus: analysis.totals.carbsG > 0,
+        },
+        question: null,
+        cites: [],
+      };
+    }
+    return askAgent({ message, context, ...(history.length === 0 ? {} : { history }) });
   }
 
   /** Escribe lo que ella confirmó en la tarjeta. Nada se guarda antes. */
@@ -1843,6 +1877,14 @@ function Type1AApp() {
           setCloudDictationAllowed(true);
           void setSetting(db, CLOUD_DICTATION_KEY, new Date().toISOString())
             .catch(() => { /* Que no se recuerde vuelve a preguntar; no rompe nada. */ });
+        }}
+        // Ella preguntó por una dosis. El modelo no da números; la calculadora
+        // de la app sí, con SUS parámetros y el desglose visible. Negarse con
+        // palabras y dejarla ahí era el error que reportó.
+        onOpenCalculator={(route) => {
+          setChatOpen(false);
+          if (route === 'correction') setQuickRoute('correction');
+          else openMasterCreate('meal');
         }}
         onOpenMaster={(prefill) => {
           setChatOpen(false);
