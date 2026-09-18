@@ -6,9 +6,11 @@ import {
   HbA1cLabResultSchema,
   NutritionProfileSchema,
   InsulinEventSchema,
+  MealAnalysisSchema,
   MealEventSchema,
   TherapyProfileSchema,
   VitalsEventSchema,
+  WaterEventSchema,
 } from '../src/index.js';
 
 const BASE_PROFILE = {
@@ -125,5 +127,66 @@ describe('NutritionProfileSchema — puerta de edad', () => {
 
   it('rechaza edades imposibles por arriba', () => {
     expect(NutritionProfileSchema.safeParse({ ...base, ageYears: 111 }).success).toBe(false);
+  });
+});
+
+describe('WaterEventSchema — el agua es agua (2026-09-03)', () => {
+  const base = {
+    id: 'w1',
+    timestamp: '2026-09-03T10:00:00.000Z',
+    createdAt: '2026-09-03T10:00:00.000Z',
+    source: 'manual' as const,
+  };
+
+  it('acepta un vaso normal', () => {
+    expect(WaterEventSchema.parse({ ...base, ml: 250 }).ml).toBe(250);
+  });
+
+  it('rechaza cero y negativos: un registro de agua es agua bebida', () => {
+    expect(() => WaterEventSchema.parse({ ...base, ml: 0 })).toThrow();
+    expect(() => WaterEventSchema.parse({ ...base, ml: -250 })).toThrow();
+  });
+
+  it('rechaza un volumen imposible en vez de guardarlo', () => {
+    // 20000 es un dedo que se resbaló, no cinco litros de agua.
+    expect(() => WaterEventSchema.parse({ ...base, ml: 20_000 })).toThrow();
+  });
+
+  it('conserva la procedencia, incluida la que estimó la IA', () => {
+    for (const source of ['manual', 'quick', 'ai_photo', 'ai_text', 'imported'] as const) {
+      expect(WaterEventSchema.parse({ ...base, ml: 250, source }).source).toBe(source);
+    }
+    expect(() => WaterEventSchema.parse({ ...base, ml: 250, source: 'inventado' })).toThrow();
+  });
+
+  it('NO tiene campo de tipo de bebida, y eso es la decisión', () => {
+    // Un jugo tiene carbohidratos y es una comida, con su dosis. Si esto
+    // aceptara "tipo: jugo", esos carbohidratos entrarían al registro como
+    // agua y desaparecerían de la dosis propuesta.
+    const parsed = WaterEventSchema.parse({ ...base, ml: 250, beverage: 'jugo' } as never);
+    expect('beverage' in parsed).toBe(false);
+  });
+});
+
+describe('waterMl en el análisis de comida (2026-09-03)', () => {
+  const food = {
+    name: 'Arroz', estimatedGrams: 150, servingGrams: null, servingLabel: null,
+    carbsG: 40, proteinG: 3, fatG: 0, fiberG: 1, caloriesKcal: 180, confidence: 0.7,
+  };
+
+  it('sin agua en la foto queda null, nunca un default', () => {
+    // Un vaso inventado se suma a la meta del día sin que nadie lo bebiera.
+    const parsed = MealAnalysisSchema.parse({ foods: [food], uncertaintyNotes: [] });
+    expect(parsed.waterMl).toBeNull();
+  });
+
+  it('acepta el volumen que la IA vio', () => {
+    const parsed = MealAnalysisSchema.parse({ foods: [food], waterMl: 300, uncertaintyNotes: [] });
+    expect(parsed.waterMl).toBe(300);
+  });
+
+  it('rechaza un volumen imposible en vez de propagarlo a la meta del día', () => {
+    expect(() => MealAnalysisSchema.parse({ foods: [food], waterMl: 9000, uncertaintyNotes: [] })).toThrow();
+    expect(() => MealAnalysisSchema.parse({ foods: [food], waterMl: 0, uncertaintyNotes: [] })).toThrow();
   });
 });

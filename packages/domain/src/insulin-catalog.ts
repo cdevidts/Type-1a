@@ -10,18 +10,18 @@
  * cuánto dura la insulina que la persona realmente usa. Con Fiasp (~5 h) y
  * con insulina regular (~8 h) la ventana no es la misma.
  *
- * **Esto NO es insulina activa (IOB) y no puede convertirse en eso.**
- * `AGENTS.md` prohíbe IOB y dosificación automática en el MVP. La diferencia
- * no es de matiz:
+ * **Este módulo no calcula insulina activa (IOB)** — pero desde el 2026-09-02
+ * la app sí lo hace, en `iob.ts`, y este catálogo es de donde salen sus dos
+ * parámetros. Ver `docs/adr/0005`. La diferencia de responsabilidades sigue en
+ * pie y conviene no borrarla:
  *
- * - IOB estima **cuántas unidades siguen actuando** y se usa para decidir una
- *   dosis. Prohibido.
+ * - `iob.ts` estima **cuántas unidades siguen actuando** y eso sí entra a una
+ *   calculadora de dosis, bajo las cinco condiciones del ADR.
  * - Esto responde **sí/no: ¿había una dosis dentro de su ventana?**, y se usa
- *   solo para decidir si un episodio entra o no a un promedio descriptivo.
- *   Nunca se muestra, nunca se resta de nada, nunca toca una calculadora.
+ *   para decidir si un episodio entra o no a un promedio descriptivo.
  *
- * Si alguna vez alguien necesita multiplicar una duración por unas unidades,
- * eso ya es IOB y no va acá.
+ * Si alguien necesita multiplicar una duración por unas unidades, eso es IOB
+ * y va en `iob.ts`, no acá.
  *
  * ── Por qué la elige la usuaria y no la adivina la app ─────────────────────
  *
@@ -34,6 +34,8 @@
  * Fuentes de las duraciones (consultadas 2026-08-25) — ver
  * `memory-bank/reference/clinical-sources.md`.
  */
+
+import type { InsulinEvent } from '@type1a/schemas';
 
 export type InsulinCategory = 'rapid' | 'basal';
 
@@ -136,4 +138,128 @@ export function rapidInsulinLookbackMinutes(profile: {
   const hours = profile.rapidInsulinDurationHours;
   if (hours === undefined || !isPlausibleInsulinDuration(hours)) return undefined;
   return Math.round(hours * 60);
+}
+
+/**
+ * El nombre de insulina que corresponde estampar en un registro, según su
+ * tipo y lo que la usuaria tiene configurado en Ajustes → Terapia.
+ *
+ * ## Por qué es una función de dominio y no un campo de texto por registro
+ *
+ * Escribir "Fiasp" a mano en cada dosis es una invitación a que el historial
+ * quede con "fiasp", "Fiasp ", "fiap" y un blanco, y a que el reporte médico
+ * los cuente como cuatro insulinas. La insulina que usa una persona es
+ * **configuración**, no un dato del evento — la misma razón por la que el
+ * objetivo y el factor de corrección viven en el perfil.
+ *
+ * ## Lo que estampar NO significa
+ *
+ * Estampar el nombre **al crear** el registro es a propósito: si mañana ella
+ * cambia de tratamiento, lo que se inyectó en marzo sigue habiendo sido lo de
+ * marzo. El historial no se reescribe cuando cambia la configuración; solo un
+ * registro nuevo, o un cambio explícito de tipo (rápida ↔ basal) dentro de
+ * una edición, vuelve a pasar por acá.
+ *
+ * ## De dónde sale el nombre (arreglado el 2026-09-02)
+ *
+ * De dos sitios, en este orden: lo que ella **escribió a mano**, y si no, la
+ * marca de la insulina que **eligió del catálogo** (`rapidInsulinId`).
+ *
+ * Ese segundo camino faltaba, y era un bug con dos caras. Ajustes guarda el
+ * `id` del catálogo y su duración; `rapidInsulinName` es un campo aparte que
+ * **ninguna pantalla llenaba nunca**. Así que quien elegía "Fiasp" de la
+ * lista veía "sin configurar" en Nueva entrada, y —peor— sus dosis quedaban
+ * guardadas sin marca, con lo cual el reporte médico no decía qué insulina
+ * era. Derivarlo del `id` no es inferir nada: es leer lo que ella eligió.
+ *
+ * Devuelve `undefined` solo si de verdad no hay nada configurado. **No
+ * inventa un nombre**: `AGENTS.md` prohíbe inferir parámetros de terapia, y
+ * un "Insulina rápida" de relleno se lee como un dato que nadie escribió.
+ */
+export function insulinNameForType(
+  profile: {
+    rapidInsulinName?: string | undefined;
+    basalInsulinName?: string | undefined;
+    rapidInsulinId?: string | undefined;
+    basalInsulinId?: string | undefined;
+  },
+  type: InsulinCategory,
+): string | undefined {
+  const name = type === 'rapid' ? profile.rapidInsulinName : profile.basalInsulinName;
+  const trimmed = name?.trim() ?? '';
+  if (trimmed !== '') return trimmed;
+  // Lo elegido del catálogo. `brand` y no `generic`: es lo que dice la caja
+  // que ella tiene en la mano, y es lo que reconoce su equipo clínico.
+  const chosen = findCatalogInsulin(type === 'rapid' ? profile.rapidInsulinId : profile.basalInsulinId);
+  return chosen?.category === type ? chosen.brand : undefined;
+}
+
+/**
+ * Etiqueta descriptiva de una dosis dentro de una entrada.
+ *
+ * No participa en ningún cálculo. Centralizarla evita que una rápida
+ * reclasificada como basal conserve "comida/corrección", o que una basal
+ * convertida en rápida quede sin explicar qué registró la usuaria.
+ */
+export function insulinPurposeForEntry(
+  type: InsulinCategory,
+  hasMeal: boolean,
+  includesCorrection: boolean,
+): InsulinEvent['purpose'] {
+  if (type === 'basal') return undefined;
+  if (!hasMeal) return 'correction';
+  return includesCorrection ? 'combined' : 'meal';
+}
+
+/**
+ * Qué propósito descriptivo sobrevive a una edición de insulina.
+ *
+ * El formulario maestro no conoce el propósito histórico; por eso una
+ * edición que conserva el tipo debe conservar también la etiqueta exacta que
+ * ya estaba guardada. Solo una reclasificación explícita permite derivarla de
+ * la forma nueva de la entrada.
+ */
+export function resolveInsulinPurposeForEdit(input: {
+  existingPurpose?: InsulinEvent['purpose'] | undefined;
+  previousType: InsulinCategory;
+  nextType: InsulinCategory;
+  hasMeal: boolean;
+  includesCorrection: boolean;
+}): InsulinEvent['purpose'] {
+  if (input.previousType === input.nextType) return input.existingPurpose;
+  return insulinPurposeForEntry(input.nextType, input.hasMeal, input.includesCorrection);
+}
+
+/**
+ * Qué nombre debe quedar guardado tras una edición.
+ *
+ * Tres reglas, en este orden, y las tres salieron de una forma concreta de
+ * perder el dato:
+ *
+ * 1. **Un evento importado conserva estrictamente el nombre de su fuente.**
+ *    Lo que dice un CSV de MySugr es un registro de lo que pasó, no un campo
+ *    a normalizar contra la configuración de hoy.
+ * 2. **Si el tipo cambió, se reestampa** con el nombre del tipo nuevo: una
+ *    dosis reclasificada de rápida a basal con el nombre de la rápida encima
+ *    es peor que una sin nombre.
+ * 3. **Si el tipo no cambió, se conserva lo que ya había.** Una actualización
+ *    parcial no puede borrar en silencio un nombre existente — ese era el
+ *    agujero de `updateUnifiedEntryGroup`, que llamaba a `updateInsulinEvent`
+ *    sin `insulinName` y lo dejaba en `undefined` en cada guardado del grupo.
+ *    Solo si no había nombre se toma el del perfil.
+ */
+export function resolveInsulinNameForEdit(input: {
+  source: 'manual' | 'imported';
+  existingName?: string | undefined;
+  previousType: InsulinCategory;
+  nextType: InsulinCategory;
+  profile: { rapidInsulinName?: string | undefined; basalInsulinName?: string | undefined };
+}): string | undefined {
+  if (input.source === 'imported') return input.existingName;
+  if (input.previousType !== input.nextType) {
+    return insulinNameForType(input.profile, input.nextType);
+  }
+  const existing = input.existingName?.trim();
+  if (existing !== undefined && existing !== '') return existing;
+  return insulinNameForType(input.profile, input.nextType);
 }

@@ -14,8 +14,12 @@ Before reviewing anything, read these two files **in full**, every run:
 1. `AGENTS.md` — the safety boundaries and why they exist.
 2. `contracts/safety-acceptance.md` — the acceptance criteria, as a checklist of
    checkboxes.
+3. `contracts/agent-tools.md` — read it **only when the diff touches
+   `packages/domain/src/agent-tools.ts`, `db.ts` exports, or anything the AI
+   agent can reach**. It carries the checks a new tool has to pass, and the
+   boundaries that a prompt cannot enforce on its own.
 
-Those two files **are** your checklist. Don't rely on memory of what they said in
+Those files **are** your checklist. Don't rely on memory of what they said in
 a previous run, and don't review against a shortened version of them: walk every
 checkbox in `contracts/safety-acceptance.md` against the diff, one by one, and be
 able to say for each whether it holds, is violated, or doesn't apply to this

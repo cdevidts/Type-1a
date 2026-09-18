@@ -9,7 +9,8 @@ Lee estos seis, en este orden, **cada corrida** y no de memoria:
 1. `memory-bank/projectbrief.md` — qué es la app y qué no puede hacer nunca
 2. `memory-bank/techContext.md` — stack, prohibiciones, comandos, trampas
 3. `memory-bank/systemPatterns.md` — las tres Reglas de Oro del código
-4. `memory-bank/workflow.md` — commits, qué skill se dispara sola, auditoría
+4. `memory-bank/workflow.md` — commits, skills que se disparan solas, **cómo se
+   le escribe a Verónica al cerrar** (es una regla dura, no un estilo)
 5. `memory-bank/activeContext.md` — el foco de ahora
 6. `memory-bank/progress.md` — qué está hecho, qué está roto, qué deuda hay
 

@@ -17,6 +17,7 @@
     "expo-print": "~57.0.1",
     "expo-secure-store": "~57.0.1",
     "expo-sharing": "~57.0.13",
+    "expo-speech-recognition": "57.0.0",
     "expo-sqlite": "~57.0.1",
     "expo-status-bar": "~57.0.1",
     "expo-task-manager": "~57.0.11",
@@ -34,8 +35,8 @@
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "lint": "eslint App.tsx src",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",

@@ -1,2 +1,2 @@
-export * from './abacus.js';
-export * from './prompts.js';
+export * from './abacus';
+export * from './prompts';

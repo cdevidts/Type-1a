@@ -32,7 +32,7 @@ export interface FoodCatalogStore {
   upsertMany(entries: readonly SharedCatalogEntryInput[], seenAt: string): Promise<{ accepted: number; rejected: number }>;
 }
 
-interface FoodCatalogRow {
+export interface FoodCatalogRow {
   key: string;
   name: string;
   carbs_per_100g: number;
@@ -46,7 +46,7 @@ interface FoodCatalogRow {
   serving_label: string | null;
 }
 
-function rowToCatalogFood(row: FoodCatalogRow): CatalogFood {
+export function rowToCatalogFood(row: FoodCatalogRow): CatalogFood {
   return {
     key: row.key,
     name: row.name,
@@ -102,17 +102,51 @@ export class PostgresFoodCatalogStore implements FoodCatalogStore {
     await this.pool.query(`
       CREATE INDEX IF NOT EXISTS food_catalog_times_seen ON food_catalog (times_seen DESC, last_seen_at DESC);
     `);
+    // ── Catálogo con dueño (Fase de cuentas) ──────────────────────────────
+    // Una fila con `owner_user_id IS NULL` es de la comunidad (comportamiento
+    // histórico, servido a todos por /v1/food-catalog). Una fila con
+    // `owner_user_id = <id>` es del catálogo personal de esa usuaria. NUNCA se
+    // migra ni se borra una fila existente: solo se agrega la columna.
+    await this.pool.query(`
+      ALTER TABLE food_catalog ADD COLUMN IF NOT EXISTS owner_user_id UUID;
+    `);
+    // La PRIMARY KEY histórica era sobre (key) sola, lo que impediría que dos
+    // usuarias tuvieran cada una su "arroz". Se quita la restricción (NO las
+    // filas) y la unicidad pasa a un índice sobre (dueño-o-cero, key), donde
+    // el UUID cero representa a la comunidad. Postgres no admite PRIMARY KEY
+    // sobre una expresión, por eso es un índice único.
+    await this.pool.query(`
+      ALTER TABLE food_catalog DROP CONSTRAINT IF EXISTS food_catalog_pkey;
+    `);
+    await this.pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS food_catalog_owner_key_uniq
+        ON food_catalog (coalesce(owner_user_id, '00000000-0000-0000-0000-000000000000'::uuid), key);
+    `);
+    // La FK a users se agrega aparte y de forma idempotente. Requiere que la
+    // tabla `users` ya exista, por eso el arranque provee primero el esquema
+    // de cuentas y después este.
+    await this.pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'food_catalog_owner_fk') THEN
+          ALTER TABLE food_catalog
+            ADD CONSTRAINT food_catalog_owner_fk
+            FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE;
+        END IF;
+      END $$;
+    `);
   }
 
   public async search(term: string, limit: number, minTimesSeen: number): Promise<CatalogFood[]> {
     const normalized = foodKey(term);
+    // `owner_user_id IS NULL` explícito: el catálogo de la comunidad NUNCA
+    // debe filtrar filas personales de otra usuaria.
     const result: QueryResult<FoodCatalogRow> = normalized === ''
       ? await this.pool.query(
-          'SELECT * FROM food_catalog WHERE times_seen >= $1 ORDER BY times_seen DESC, last_seen_at DESC LIMIT $2',
+          'SELECT * FROM food_catalog WHERE owner_user_id IS NULL AND times_seen >= $1 ORDER BY times_seen DESC, last_seen_at DESC LIMIT $2',
           [minTimesSeen, limit],
         )
       : await this.pool.query(
-          'SELECT * FROM food_catalog WHERE times_seen >= $1 AND key LIKE $2 ORDER BY times_seen DESC, last_seen_at DESC LIMIT $3',
+          'SELECT * FROM food_catalog WHERE owner_user_id IS NULL AND times_seen >= $1 AND key LIKE $2 ORDER BY times_seen DESC, last_seen_at DESC LIMIT $3',
           [minTimesSeen, `%${normalized.replace(/[\\%_]/gu, (match) => `\\${match}`)}%`, limit],
         );
     return result.rows.map(rowToCatalogFood);
@@ -146,8 +180,10 @@ export class PostgresFoodCatalogStore implements FoodCatalogStore {
         continue;
       }
 
+      // Solo se fusiona contra la fila de la comunidad (dueño NULL); una fila
+      // personal con la misma `key` es de otra tabla lógica y no debe influir.
       const existingResult: QueryResult<FoodCatalogRow> = await this.pool.query(
-        'SELECT * FROM food_catalog WHERE key = $1',
+        'SELECT * FROM food_catalog WHERE key = $1 AND owner_user_id IS NULL',
         [key],
       );
       const existingRow = existingResult.rows[0];
@@ -157,9 +193,9 @@ export class PostgresFoodCatalogStore implements FoodCatalogStore {
 
       await this.pool.query(
         `INSERT INTO food_catalog
-           (key, name, carbs_per_100g, protein_per_100g, fat_per_100g, fiber_per_100g, kcal_per_100g, times_seen, last_seen_at, serving_grams, serving_label)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-         ON CONFLICT (key) DO UPDATE SET
+           (key, name, carbs_per_100g, protein_per_100g, fat_per_100g, fiber_per_100g, kcal_per_100g, times_seen, last_seen_at, serving_grams, serving_label, owner_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL)
+         ON CONFLICT (coalesce(owner_user_id, '00000000-0000-0000-0000-000000000000'::uuid), key) DO UPDATE SET
            name = EXCLUDED.name,
            carbs_per_100g = EXCLUDED.carbs_per_100g,
            protein_per_100g = EXCLUDED.protein_per_100g,

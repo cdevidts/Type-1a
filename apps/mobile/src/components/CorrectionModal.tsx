@@ -1,12 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { assessFreshness, calculateCorrection, convertGlucose, isSensorReading, type CorrectionResult } from '@type1a/domain';
+import { assessFreshness, calculateCorrection, convertGlucose, isSensorReading, type CorrectionResult,
+  activeInsulinUnits,
+  dosesExcluding,
+  recentMealOnlyDose,
+  rapidInsulinActionModel,
+} from '@type1a/domain';
 import type { CGMReading, InsulinEvent, TherapyProfile } from '@type1a/schemas';
 
 import { formatClock, formatDayTime, parsePositiveNumber } from '../format';
 import { logSaveError } from '../log';
 import { colors, radius, spacing } from '../theme';
+import { InsulinBreakdown } from './InsulinBreakdown';
 import { ModalShell } from './ModalShell';
 
 function Field({
@@ -44,6 +50,7 @@ export function CorrectionModal({
   therapyConfigured,
   recentRapid,
   recentRapidUnreadable,
+  recentRapidWindowHours,
   onClose,
   onSaveProfile,
   onRegister,
@@ -61,9 +68,25 @@ export function CorrectionModal({
    * dosis reciente que no pudo decodificar. Ver `DecodeTally` en `db.ts`.
    */
   recentRapidUnreadable: number;
+  /**
+   * Cuántas horas cubre `recentRapid`. Se muestra en vez de una constante
+   * escrita a mano: con una insulina larga `App` ensancha la ventana para que
+   * el IOB no salga de menos, y un rótulo fijo de "últimas 6 h" pasaría a ser
+   * falso justo en el panel que sostiene el descuento.
+   */
+  recentRapidWindowHours: number;
   onClose: () => void;
   onSaveProfile: (profile: TherapyProfile) => Promise<void>;
-  onRegister: (units: number) => Promise<void>;
+  /**
+   * Registra la dosis. Recibe el **desglose** además del total: sin él, una
+   * corrección de 2 U guardada no dice cuánta insulina activa se le descontó
+   * al proponerla, y después no hay forma de entender por qué fue esa cifra.
+   */
+  onRegister: (dose: {
+    units: number;
+    correctionUnits: number;
+    iobUnits: number | undefined;
+  }) => Promise<void>;
 }) {
   const [current, setCurrent] = useState('');
   // Empty until configured, matching Ajustes. Showing the shipped
@@ -85,6 +108,45 @@ export function CorrectionModal({
   const [calculatedAt, setCalculatedAt] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Cuántas dosis aportan al activo, para poder decirlo en el desglose. */
+  const [activeDoseCount, setActiveDoseCount] = useState(0);
+
+  const actionModel = rapidInsulinActionModel(profile);
+
+  /**
+   * ¿Acaba de pincharse **solo por comida**?
+   *
+   * Entonces esas unidades no son insulina "de sobra" que baje su glucosa: van
+   * a cubrir los carbohidratos. Restárselas le da 0 U cuando en realidad le
+   * falta la corrección — exactamente lo que ella reportó. La regla del ADR
+   * 0006 no cambia; lo que se hace es ofrecerle **sumar** a esa dosis, que es
+   * completar el mismo acto y no apilar uno nuevo.
+   */
+  const sameAct = useMemo(
+    () => recentMealOnlyDose(recentRapid, new Date().toISOString()),
+    [recentRapid],
+  );
+  /** El activo que sí corresponde descontar si suma a esa dosis. */
+  const activeBesidesSameAct = useMemo(() => {
+    if (sameAct === null || actionModel === undefined) return undefined;
+    return activeInsulinUnits(
+      dosesExcluding(recentRapid, sameAct.event.id),
+      new Date().toISOString(),
+      actionModel,
+    );
+  }, [sameAct, recentRapid, actionModel]);
+
+  /**
+   * Insulina rápida que sigue actuando ahora.
+   *
+   * `undefined` cuando no hay insulina configurada: la calculadora entonces
+   * no resta nada y el desglose lo dice. Es la regla de `iob.ts` — "no lo sé"
+   * y "no queda nada" son afirmaciones distintas.
+   */
+  function activeInsulin(at: string): { units: number; doseCount: number } | undefined {
+    if (actionModel === undefined) return undefined;
+    return activeInsulinUnits(recentRapid, at, actionModel);
+  }
 
   // Only re-initialize the form on the true "modal just opened" transition.
   // `latest` and `profile` are freshly parsed objects on every background
@@ -177,7 +239,19 @@ export function CorrectionModal({
     setError(null);
     try {
       await onSaveProfile(nextProfile);
-      setResult(calculateCorrection({ currentGlucose, targetGlucose, correctionFactor, doseIncrement }));
+      // La insulina activa se resuelve **en el momento de calcular**, no al
+      // abrir el modal: la hoja puede quedar abierta un rato y el activo cae
+      // con el reloj. Sin insulina configurada, `active` es `undefined` y la
+      // calculadora se comporta exactamente como antes.
+      const active = activeInsulin(new Date().toISOString());
+      setResult(calculateCorrection({
+        currentGlucose,
+        targetGlucose,
+        correctionFactor,
+        doseIncrement,
+        ...(active === undefined ? {} : { activeInsulinUnits: active.units }),
+      }));
+      setActiveDoseCount(active?.doseCount ?? 0);
       setCalculatedAt(new Date().toISOString());
     } catch (error) {
       logSaveError('CorrectionModal.calculate', error);
@@ -202,7 +276,14 @@ export function CorrectionModal({
     }
     setBusy(true);
     try {
-      await onRegister(result.roundedUnits);
+      await onRegister({
+        units: result.roundedUnits,
+        correctionUnits: result.roundedUnits,
+        // Lo que se guarda y lo que se imprime es lo que se RESTÓ, no lo
+        // disponible (`contracts/safety-acceptance.md`). Coincidían por
+        // casualidad porque el botón solo existe con dosis > 0.
+        iobUnits: result.activeInsulinAppliedUnits,
+      });
       onClose();
     } catch (error) {
       logSaveError('CorrectionModal.register', error);
@@ -216,11 +297,22 @@ export function CorrectionModal({
     <ModalShell visible={visible} title="Corrección experimental" onClose={onClose}>
       <View style={styles.warningBox}>
         <Text style={styles.warningTitle}>Cálculo matemático, no recomendación</Text>
-        <Text style={styles.warningText}>Usa solo los parámetros indicados por tu equipo clínico. Type 1A no calcula insulina activa (IOB) ni resta dosis anteriores.</Text>
+        <Text style={styles.warningText}>
+          Usa solo los parámetros indicados por tu equipo clínico.
+          {actionModel === undefined
+            ? ' No se descuenta insulina activa: elige tu insulina rápida en Ajustes → Terapia para que este número la tenga en cuenta.'
+            : ' Descuenta la insulina que sigue activa de tus dosis rápidas recientes, y te muestra el desglose antes de registrar.'}
+        </Text>
       </View>
 
       {prefilled === null ? (
-        <Text style={styles.staleText}>No hay lectura vigente para precargar. Escribe una medición actual.</Text>
+        // Este bloque también se pinta cuando ella BORRA una precarga válida,
+        // así que no puede afirmar nada sobre el estado del sensor: diría "no
+        // hay lectura vigente" con el sensor conectado.
+        <Text style={styles.staleText}>
+          Nada precargado. Escribe tu medición actual —con el capilar si no tienes
+          lectura vigente— y toca Calcular.
+        </Text>
       ) : prefilled.isSynthetic ? (
         <Text style={styles.syntheticText}>
           Glucosa precargada SINTÉTICA (modo demo) · {formatDayTime(prefilled.sourceTimestamp)}. No sirve para dosificar.
@@ -246,7 +338,7 @@ export function CorrectionModal({
       <Field label="Incremento de pluma" value={increment} unit="U" onChange={(value) => { setIncrement(value); setResult(null); }} />
 
       <View style={styles.recentBox}>
-        <Text style={styles.recentTitle}>Insulina rápida registrada · últimas 6 h</Text>
+        <Text style={styles.recentTitle}>Insulina rápida registrada · últimas {recentRapidWindowHours} h</Text>
         {recentRapid.length === 0 ? (
           <Text style={styles.recentText}>
             {recentRapidUnreadable > 0 ? 'Sin eventos legibles.' : 'No hay eventos registrados.'}
@@ -260,7 +352,11 @@ export function CorrectionModal({
             incompleta. Revisa tu registro antes de corregir.
           </Text>
         ) : null}
-        <Text style={styles.recentFoot}>Contexto informativo; no es una estimación de IOB.</Text>
+        <Text style={styles.recentFoot}>
+          {actionModel === undefined
+            ? 'Contexto informativo. Elige tu insulina rápida en Ajustes → Terapia para que la calculadora descuente lo que sigue actuando.'
+            : 'Estas dosis son las que alimentan el descuento de insulina activa del cálculo.'}
+        </Text>
       </View>
 
       {error === null ? null : <Text style={styles.error}>{error}</Text>}
@@ -270,10 +366,66 @@ export function CorrectionModal({
 
       {result === null ? null : (
         <View style={styles.resultBox}>
+          {sameAct === null ? null : (
+            /* El caso que ella reportó: acaba de pincharse SOLO por comida, y
+               esas unidades no son insulina de sobra — van a los
+               carbohidratos. La regla del ADR 0006 no cambia; lo que cambia es
+               que la pantalla lo dice y ofrece completar la misma dosis en vez
+               de que ella lea un 0 U sin explicación. */
+            <View style={styles.sameActBox}>
+              <Text style={styles.sameActTitle}>
+                Esas {sameAct.event.units} U de hace {sameAct.minutesAgo} min fueron solo por comida
+              </Text>
+              <Text style={styles.sameActBody}>
+                Van a cubrir tus carbohidratos, así que abajo se descuentan y la
+                corrección puede darte 0 U. Si tu glucosa llegó tarde y esto es
+                el mismo momento, lo correcto es <Text style={styles.sameActStrong}>sumar</Text> la
+                corrección a esa dosis, no ponerte otra encima: edítala desde la
+                línea de tiempo y súmale las unidades.
+              </Text>
+              {result === null ? null : (
+                // El número que ella necesita, calculado con SUS parámetros y
+                // descontando solo la insulina de OTRAS dosis: restar la que
+                // está por completar sería contarla dos veces.
+                <Text style={styles.sameActStrong}>
+                  Para sumar a esa dosis:{' '}
+                  {Number(Math.max(
+                    0,
+                    result.beforeActiveUnits - (activeBesidesSameAct?.units ?? 0),
+                  ).toFixed(2))} U
+                  {activeBesidesSameAct !== undefined && activeBesidesSameAct.units > 0
+                    ? ` (ya descontadas ${Number(activeBesidesSameAct.units.toFixed(2))} U de otras dosis)`
+                    : ''}
+                </Text>
+              )}
+            </View>
+          )}
           <Text style={styles.resultLabel}>RESULTADO DE LA FÓRMULA · {formatClock(calculatedAt)}</Text>
           <Text style={styles.resultValue}>{result.roundedUnits} U</Text>
           <Text style={styles.formula}>{result.formula} = {result.rawUnits.toFixed(2)} U, redondeado al incremento.</Text>
+
+          <InsulinBreakdown
+            correctionUnits={result.beforeActiveUnits}
+            activeInsulinUnits={result.activeInsulinUnits}
+            // Lo aplicado, no lo disponible: sin esto la fila afirmaba haber
+            // descontado 5,98 U cuando solo había 2,37 que descontar.
+            activeInsulinAppliedUnits={result.activeInsulinAppliedUnits}
+            activeDoseCount={activeDoseCount}
+            totalUnits={result.roundedUnits}
+            insulinConfigured={actionModel !== undefined}
+          />
+
           {result.isBelowTarget ? <Text style={styles.below}>Glucosa bajo el objetivo: el resultado se limita a 0 U.</Text> : null}
+          {/* Distinto de estar bajo objetivo: la glucosa está alta, pero ya
+              hay insulina suficiente en camino. Decirlo con las mismas
+              palabras que "estás bajo objetivo" confundiría dos situaciones
+              que se resuelven distinto. */}
+          {!result.isBelowTarget && result.roundedUnits === 0 && (result.activeInsulinUnits ?? 0) > 0 ? (
+            <Text style={styles.below}>
+              Estás sobre el objetivo, pero la insulina que ya tienes actuando cubre esa diferencia. Por eso el
+              resultado es 0 U: ponerte más ahora sería apilar dosis.
+            </Text>
+          ) : null}
           {result.isHypoglycemic ? (
             <View style={styles.hypoBox}>
               <Text style={styles.hypoText}>
@@ -314,6 +466,13 @@ const styles = StyleSheet.create({
   error: { color: colors.red, fontSize: 13, marginTop: spacing.md },
   calculateButton: { backgroundColor: colors.teal, borderRadius: radius.md, padding: spacing.lg, alignItems: 'center', marginTop: spacing.xl },
   calculateText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
+  sameActBox: {
+    gap: spacing.xs, marginBottom: spacing.md, padding: spacing.md,
+    borderRadius: radius.sm, backgroundColor: colors.warningSoft,
+  },
+  sameActTitle: { fontSize: 15, fontWeight: '700', color: colors.ink },
+  sameActBody: { fontSize: 13, lineHeight: 19, color: colors.ink },
+  sameActStrong: { fontWeight: '700' },
   resultBox: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.lg, marginTop: spacing.lg, borderWidth: 2, borderColor: colors.teal },
   resultLabel: { color: colors.teal, fontSize: 11, fontWeight: '900', letterSpacing: 0.8 },
   resultValue: { color: colors.ink, fontSize: 48, fontWeight: '900', marginTop: 2 },

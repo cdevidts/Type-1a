@@ -1,12 +1,9 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { MealEvent } from '@type1a/schemas';
-
 import { formatDayTime } from '../format';
 import { colors, radius, spacing } from '../theme';
-import type { TimelineEditPayload, TimelineItem } from '../types';
-import { MealEditModal, type MealEditResult } from './MealEditModal';
+import type { TimelineItem } from '../types';
 import { TimelineDetailModal } from './TimelineDetailModal';
 
 const toneColors = {
@@ -24,18 +21,22 @@ const toneColors = {
 
 export function Timeline({
   items,
-  onSaveItem,
+  onEditItem,
   onDeleteItem,
-  onSaveMealEdit,
 }: {
   items: readonly TimelineItem[];
-  onSaveItem: (item: TimelineItem, payload: TimelineEditPayload) => Promise<void>;
+  /**
+   * Abre el Modal Maestro sobre este registro.
+   *
+   * Sube hasta `App` en vez de resolverse acá porque el maestro es **el
+   * mismo componente** que monta "Nueva entrada", y montar dos instancias del
+   * mismo modal —una en el timeline, otra en la pantalla— es cómo se termina
+   * con dos formularios que divergen.
+   */
+  onEditItem: (item: TimelineItem) => void;
   onDeleteItem: (item: TimelineItem) => Promise<void>;
-  /** Guarda la edición completa de una comida (Fase 17). */
-  onSaveMealEdit: (mealId: string, result: MealEditResult) => Promise<void>;
 }) {
   const [selected, setSelected] = useState<TimelineItem | null>(null);
-  const [editingMeal, setEditingMeal] = useState<MealEvent | null>(null);
 
   return (
     <View style={styles.section}>
@@ -76,20 +77,14 @@ export function Timeline({
       <TimelineDetailModal
         item={selected}
         onClose={() => { setSelected(null); }}
-        onSave={onSaveItem}
         onDelete={onDeleteItem}
-        onEditMeal={(meal) => {
-          // Se cierra el detalle ANTES de abrir el editor. Dos `Modal` de
+        onEdit={(item) => {
+          // Se cierra el detalle ANTES de abrir el maestro. Dos `Modal` de
           // React Native abiertos a la vez en Android dejan el de abajo
           // capturando los toques: el editor se ve pero no responde.
           setSelected(null);
-          setEditingMeal(meal);
+          onEditItem(item);
         }}
-      />
-      <MealEditModal
-        meal={editingMeal}
-        onClose={() => { setEditingMeal(null); }}
-        onSave={onSaveMealEdit}
       />
     </View>
   );

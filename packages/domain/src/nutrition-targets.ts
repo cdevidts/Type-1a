@@ -3,7 +3,7 @@
  *
  * Puro y determinístico, como todo `packages/domain`. Traduce un perfil
  * antropométrico + una meta en un objetivo diario de calorías, carbohidratos,
- * proteína y grasa.
+ * proteína, grasa y fibra.
  *
  * ## Frontera de seguridad — leer antes de tocar nada acá
  *
@@ -70,6 +70,8 @@ export interface NutritionProfileInput {
   weightKg: number;
   activityLevel: ActivityLevel;
   goal: NutritionGoal;
+  /** Meta de agua escrita por la usuaria. Ausente = referencia poblacional. */
+  waterMlTarget?: number | undefined;
 }
 
 /** Límite deliberadamente conservador — ver la nota de seguridad de arriba. */
@@ -104,6 +106,155 @@ const KCAL_PER_G_CARB = 4;
 const KCAL_PER_G_PROTEIN = 4;
 const KCAL_PER_G_FAT = 9;
 
+/**
+ * Fibra: 14 g por cada 1000 kcal.
+ *
+ * Es la Ingesta Adecuada del IOM (Dietary Reference Intakes, 2005), la misma
+ * que la ADA recomienda explícitamente para personas con diabetes — el
+ * estándar de referencia dice "al menos lo de la población general", no un
+ * objetivo aparte. Se escala con la energía y no es un número fijo porque
+ * quien come 1400 kcal y quien come 2800 no tienen la misma capacidad de
+ * llegar a los mismos gramos.
+ *
+ * ## Es un piso, no un techo — y la interfaz tiene que tratarlo así
+ *
+ * A diferencia de las calorías o los carbohidratos, pasarse de fibra no es
+ * un problema que haya que señalar: la referencia marca desde dónde está
+ * bien, no hasta dónde se puede. Una barra que grite "te pasaste" acá estaría
+ * desaconsejando algo deseable.
+ *
+ * ## Lo que este número NO es
+ *
+ * No es un parámetro de terapia y de acá no sale ninguna dosis. Que la fibra
+ * module la absorción de los carbohidratos es cierto y es justo por eso que
+ * hay que decirlo: descontar fibra de los carbohidratos para calcular un bolo
+ * ("carbohidratos netos") es una decisión clínica que define el equipo
+ * tratante, no una meta de nutrición, y `AGENTS.md` prohíbe que la app la
+ * infiera. Esta constante alimenta una barra de progreso; nada más.
+ */
+export const FIBER_G_PER_1000_KCAL = 14;
+
+/**
+ * Techo de la meta de fibra.
+ *
+ * Solo muerde en energías muy altas (a 3600 kcal la fórmula ya pide 50 g).
+ * Existe porque una meta muy por encima de lo habitual, perseguida rápido,
+ * produce molestias digestivas reales; y porque un número que nadie alcanza
+ * deja de funcionar como referencia. Que el tope casi nunca actúe es la
+ * intención: es un tope de seguridad, no un reparto.
+ */
+export const MAX_FIBER_TARGET_G = 50;
+
+/**
+ * Ingesta adecuada de **agua total** del IOM (DRI 2004), en mL/día: todo lo
+ * que entra, bebidas y alimentos juntos.
+ *
+ * No es la meta que se muestra. Lo que la usuaria registra es agua **bebida**,
+ * y el propio informe dice que ~80 % del agua total viene de bebidas y el 20 %
+ * restante de la comida. Mostrar 2.700 mL como meta de vaso sería pedirle
+ * beber el agua de la fruta también.
+ */
+export const TOTAL_WATER_AI_ML: Readonly<Record<BiologicalSex, number>> = {
+  female: 2700,
+  male: 3700,
+};
+
+/** La fracción del agua total que el IOM atribuye a bebidas. */
+export const WATER_FROM_BEVERAGES_FRACTION = 0.8;
+
+/**
+ * Techo y piso de la meta de agua.
+ *
+ * El piso existe porque la meta no depende del peso ni de la energía —es una
+ * cifra por sexo— y no tiene sentido que baje. El techo es un freno a un
+ * override disparatado, no una recomendación.
+ */
+/**
+ * Piso de la **referencia calculada**, no del override.
+ *
+ * Ver `waterTargetMl`: lo que ella escribe no se sube nunca a este número.
+ */
+export const MIN_WATER_TARGET_ML = 1200;
+export const MAX_WATER_TARGET_ML = 6000;
+
+/**
+ * Los tamaños de vaso que la interfaz ofrece con un toque.
+ *
+ * Viven acá y no en cada modal porque estaban escritos **tres veces** y ya
+ * habían divergido: el maestro ofrecía 200/250/500, el modal de Comida
+ * 250/500 y el acceso rápido 200/250/500/750. Es la misma disciplina que la
+ * Regla 1 —una decisión, un sitio— aunque acá lo que se rompe sea la
+ * consistencia y no un número clínico.
+ *
+ * **No son una recomendación de cuánto beber**: son los recipientes que
+ * existen de verdad. Un campo vacío en el que hay que teclear "250" cada vez
+ * es cómo un registro deja de hacerse.
+ */
+export const WATER_PRESETS_ML: readonly { ml: number; label: string }[] = [
+  { ml: 200, label: '200 mL' },
+  { ml: 250, label: 'un vaso' },
+  { ml: 500, label: 'medio litro' },
+  { ml: 750, label: 'una botella' },
+];
+
+/**
+ * Meta diaria de agua bebida, en mL.
+ *
+ * Sale de una referencia **poblacional**, no de esta persona: el IOM la fijó
+ * para adultos sanos, sedentarios, en clima templado. Por eso `waterMlTarget`
+ * la sobrescribe y por eso la pantalla que la muestra tiene que decir de dónde
+ * viene — con ejercicio, calor o una restricción de líquidos indicada por su
+ * equipo, el número correcto es otro.
+ *
+ * Se redondea a 50 mL: la precisión al mililitro sería falsa sobre una
+ * referencia de este tipo.
+ */
+export function waterTargetMl(input: {
+  sex: BiologicalSex;
+  waterMlTarget?: number | undefined;
+}): number {
+  const override = input.waterMlTarget;
+  if (override !== undefined && Number.isFinite(override) && override > 0) {
+    // **Solo el techo.** El piso NO se aplica a lo que ella escribió: alguien
+    // con una restricción de 1.000 mL/día (insuficiencia cardíaca, enfermedad
+    // renal avanzada, diálisis) escribía 1000 y la app le seguía pidiendo
+    // 1.200 — un 20 % por encima de una indicación clínica, en silencio, y
+    // con "Te faltan 1200 mL" todos los días.
+    //
+    // Un tope que corta hacia ARRIBA es un freno a un dedo que se resbaló;
+    // uno que corta hacia abajo contradice a su equipo. No son simétricos.
+    return Math.min(MAX_WATER_TARGET_ML, Math.round(override));
+  }
+  const beverages = TOTAL_WATER_AI_ML[input.sex] * WATER_FROM_BEVERAGES_FRACTION;
+  const rounded = Math.round(beverages / 50) * 50;
+  return Math.min(MAX_WATER_TARGET_ML, Math.max(MIN_WATER_TARGET_ML, rounded));
+}
+
+/**
+ * Cuánta agua se bebió en un día y cómo va contra la meta.
+ *
+ * Vive en el dominio y no en el `.tsx` por la Regla 1: es un agregado que se
+ * lee como patrón. Se queda en 0-100 % **a propósito** — pasarse de agua no es
+ * un logro que la barra deba premiar creciendo, y en una app de diabetes la
+ * sed excesiva puede ser un síntoma de hiperglucemia, no una meta cumplida.
+ */
+export function summarizeWaterDay(input: {
+  events: readonly { ml: number }[];
+  targetMl: number;
+}): { totalMl: number; targetMl: number; progress: number; remainingMl: number } {
+  const totalMl = input.events.reduce(
+    (sum, event) => sum + (Number.isFinite(event.ml) && event.ml > 0 ? event.ml : 0),
+    0,
+  );
+  const targetMl = Math.max(1, input.targetMl);
+  return {
+    totalMl: Math.round(totalMl),
+    targetMl,
+    progress: Math.min(1, totalMl / targetMl),
+    remainingMl: Math.max(0, Math.round(targetMl - totalMl)),
+  };
+}
+
 /** Por qué la meta no es la que salía del cálculo puro. */
 export type TargetClamp = 'bmr' | 'absoluteFloor';
 
@@ -114,6 +265,17 @@ export interface NutritionTargets {
   carbsG: number;
   proteinG: number;
   fatG: number;
+  /**
+   * Meta de fibra, en gramos. **Es un piso**: llegar o pasarse está bien, y
+   * quedarse corto es lo único que la pantalla debería marcar.
+   */
+  fiberG: number;
+  /**
+   * Meta diaria de agua **bebida**, en mL. Ver `waterTargetMl`: sale de una
+   * referencia poblacional o de lo que ella escribió, nunca de su peso ni de
+   * su energía — el IOM la fija por sexo y no por talla.
+   */
+  waterMl: number;
   /**
    * Presente si un piso de seguridad modificó el resultado. La interfaz debe
    * decirlo: una meta corregida en silencio es una meta que la usuaria no
@@ -198,8 +360,18 @@ export function calculateNutritionTargets(input: NutritionProfileInput): Nutriti
     tdeeKcal: Math.round(tdeeKcal),
     caloriesKcal: Math.round(caloriesKcal),
     carbsG: Math.max(0, Math.round(carbKcal / KCAL_PER_G_CARB)),
+    waterMl: waterTargetMl(input),
     proteinG,
     fatG: Math.max(0, Math.round(fatKcal / KCAL_PER_G_FAT)),
+    // Se escala con la energía ya acotada por los pisos, no con el cálculo
+    // crudo: la meta de fibra tiene que corresponder a la comida que la
+    // pantalla efectivamente propone. Y no entra en el reparto 4/4/9 — la
+    // fibra ya está contada dentro de los carbohidratos, así que sumarla
+    // aparte descuadraría la energía.
+    fiberG: Math.min(
+      MAX_FIBER_TARGET_G,
+      Math.round((caloriesKcal / 1000) * FIBER_G_PER_1000_KCAL),
+    ),
     ...(clampedBy === undefined ? {} : { clampedBy }),
   };
 }

@@ -1,59 +1,60 @@
 # Contrato — criterios de aceptación de seguridad
 
 > **Capa 1 · consumido por** `domain-safety-reviewer`, `/safety-audit`
-> Imperativo, sin historia. El porqué de cada regla vive en `AGENTS.md`.
-> Contiene los ocho criterios del brief original (tag `archive/pre-memory-bank`,
-> §Safety acceptance criteria) verificados uno por uno, más los que salieron de
+> Imperativo, sin historia. El porqué vive en `AGENTS.md`. Contiene los ocho
+> criterios del brief original (tag `archive/pre-memory-bank`) más los de
 > revisiones posteriores. Violar cualquiera es un **hallazgo de seguridad del
 > paciente**, no una observación de estilo.
 
 ## Dosis y parámetros de terapia
-
 - [ ] Insulina y carbohidratos **rechazan valores negativos**.
 - [ ] Factor de corrección e incremento de pluma son **estrictamente positivos**.
 - [ ] Objetivo, factor de corrección e incremento vienen de **entrada explícita
       de la usuaria**: nunca calculados ni derivados de otros datos.
 - [ ] Ninguna pantalla que convierta esos valores en un número de insulina
-      calcula mientras `therapyConfigured` es falso. Mostrar una dosis derivada
-      de los placeholder de fábrica **es** inferir un parámetro de terapia.
-- [ ] **No hay insulina activa (IOB) ni dosificación automática.** Se muestra
-      contexto de insulina reciente; no se estima cuánta sigue actuando, no se
-      multiplica duración × unidades, no se resta de ninguna dosis.
+      calcula mientras `therapyConfigured` es falso: una dosis derivada de los
+      placeholder de fábrica **es** inferir un parámetro de terapia.
+- [ ] **La insulina activa (IOB) cumple las cinco condiciones de `AGENTS.md`**
+      (permitida desde el 2026-09-02; ADR 0005 y 0006): modelo publicado y
+      citado; parámetros que ella escribió; resta **solo de la mitad de
+      corrección y con tope en 0**; desglose entero en pantalla, con lo
+      aplicado y lo que sobró; y sin insulina configurada **no hay
+      estimación** —`undefined`, no cero.
+- [ ] **Lo que se guarda y lo que se imprime es lo que se restó**, no lo
+      disponible: ese registro va al reporte del equipo clínico.
+- [ ] **Sigue prohibida la dosificación automática.**
 - [ ] Un número calculado llega a un campo que la usuaria puede **revisar y
       sobrescribir antes de guardar**, y se invalida si cambian sus insumos.
 
 ## CGM
-
 - [ ] Un valor atrasado **nunca** se usa ni se muestra como actual sin marcarlo:
-      todo camino que lea un CGM pasa por `assessFreshness` / `sourceTimestamp`
-      (`packages/domain/src/freshness.ts`).
+      todo camino que lea un CGM pasa por `assessFreshness` / `sourceTimestamp`.
 - [ ] Los datos sintéticos, importados y manuales quedan **visiblemente
-      rotulados** y no pueden leerse como sensor en vivo.
+      rotulados**; ningún agregado clínico incluye sintéticos.
 
 ## IA
 
 - [ ] Los carbohidratos estimados por IA **nunca** se confirman en silencio:
       quedan separados de los confirmados por la usuaria.
 - [ ] Toda salida de IA que llegue a la usuaria pasa por
-      `containsTherapyRecommendation` (`packages/domain/src/ai-safety.ts`).
-      Una llamada nueva cuyo resultado esquive ese filtro es un hallazgo.
-- [ ] **Al agregar un campo al payload que va al modelo**, en el mismo cambio se
-      amplía la prohibición del prompt, se agregan patrones y tests al filtro, y
-      se mueve la versión del prompt. Al crecer lo que el modelo puede decir,
-      crece el filtro.
+      `containsTherapyRecommendation` (`ai-safety.ts`). Una llamada nueva que lo
+      esquive es un hallazgo.
+- [ ] **Al agregar un campo al payload o a la respuesta del modelo**, en el
+      mismo cambio se amplía la prohibición del prompt, se agrega **defensa
+      estructural con tests** en `ai-safety.ts` —el prompt nunca es la única— y
+      se mueve la versión del prompt.
 - [ ] Un fallo de IA o de CGM **degrada a registro manual** y lo dice.
 
 ## Secretos y privacidad
 
 - [ ] Ninguna clave `ABACUS_*`, `JUNCTION_*` ni material de firma aparece en
-      `apps/mobile`, en logs, ni en cuerpos de request. Tampoco se loguean
-      cuerpos con glucosa, insulina, comida, imágenes ni parámetros de terapia.
+      `apps/mobile`, en logs ni en cuerpos de request. Tampoco se loguean cuerpos
+      con glucosa, insulina, comida, imágenes ni parámetros de terapia.
 
 ## Cobertura
 
 - [ ] Un cambio a lógica sensible de `packages/domain` o `packages/ai` **sin
-      test nuevo o actualizado** es en sí mismo un hallazgo (`AGENTS.md`
-      §Completion).
+      test nuevo o actualizado** es en sí mismo un hallazgo.
 - [ ] Si el cálculo produce un número que se lee como patrón clínico, el test
-      **compara contra una verdad independiente**, no contra lo que la
-      implementación devuelve hoy.
+      **compara contra una verdad independiente**, no contra lo que devuelve la
+      implementación. Un invariante se barre sobre un rango, no se ejemplifica.

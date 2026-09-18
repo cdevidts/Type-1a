@@ -10,13 +10,14 @@ describe('nextSwipeDestination', () => {
   it('desde la pantalla principal llega a un destino real en ambas direcciones', () => {
     // El bug de la Fase 16: los vecinos de la pantalla principal eran `entry`
     // (un formulario) y `chat` (un aviso de "todavía no está"), así que
-    // deslizar no llevaba a ninguna sección de verdad.
+    // deslizar no llevaba a ninguna sección de verdad. `chat` ya es una
+    // pantalla real, así que ahora sí es un vecino legítimo.
     expect(nextSwipeDestination(null, RIGHT)).toBe('catalog');
-    expect(nextSwipeDestination(null, LEFT)).toBe('summary');
+    expect(nextSwipeDestination(null, LEFT)).toBe('chat');
   });
 
   it('vuelve a la pantalla principal deslizando hacia el centro', () => {
-    expect(nextSwipeDestination('summary', RIGHT)).toBe(null);
+    expect(nextSwipeDestination('chat', RIGHT)).toBe(null);
     expect(nextSwipeDestination('catalog', LEFT)).toBe(null);
   });
 
@@ -25,15 +26,21 @@ describe('nextSwipeDestination', () => {
     expect(nextSwipeDestination('nutrition', LEFT)).toBe('catalog');
   });
 
+  it('recorre las secciones de la derecha en orden', () => {
+    expect(nextSwipeDestination('chat', LEFT)).toBe('summary');
+    expect(nextSwipeDestination('summary', RIGHT)).toBe('chat');
+  });
+
   it('no sale por los extremos', () => {
     expect(nextSwipeDestination('nutrition', RIGHT)).toBeUndefined();
     expect(nextSwipeDestination('summary', LEFT)).toBeUndefined();
   });
 
   it('no navega desde un destino que no participa del recorrido', () => {
-    // `entry` es una acción, no un lugar; `chat` todavía no existe.
+    // `entry` es una acción, no un lugar: abrir un formulario por un gesto
+    // accidental es justo lo que no se quiere.
     expect(nextSwipeDestination('entry', LEFT)).toBeUndefined();
-    expect(nextSwipeDestination('chat', RIGHT)).toBeUndefined();
+    expect(nextSwipeDestination('entry', RIGHT)).toBeUndefined();
   });
 
   it('mantiene la pantalla principal al centro del recorrido', () => {
@@ -41,6 +48,6 @@ describe('nextSwipeDestination', () => {
     // test se lo recuerda en vez de dejar que el gesto y la barra se
     // contradigan en silencio.
     expect(SWIPE_ORDER.indexOf(null)).toBe(2);
-    expect(SWIPE_ORDER).toHaveLength(4);
+    expect(SWIPE_ORDER).toHaveLength(5);
   });
 });

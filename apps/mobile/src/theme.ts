@@ -62,6 +62,24 @@ export const macroColors = {
   carbs: '#D96B27',
   protein: '#19734B',
   fat: '#7C4DA0',
+  /**
+   * Fibra (2026-08-27). **Es el mismo hue que `carbs`, y eso es la decisión.**
+   *
+   * La fibra tiene que ser visible como métrica de primera clase, pero un
+   * cuarto hue categórico no se puede agregar a ojo: la nota de arriba dice
+   * que esta paleta se validó con `scripts/validate_palette.js` y que el par
+   * más justo está apenas sobre el umbral, así que un color nuevo elegido sin
+   * volver a correr el validador podría romper la separación para daltonismo
+   * de todo el conjunto.
+   *
+   * Y hay una razón de dominio que lo hace mejor que un hue nuevo: la fibra
+   * **es** un subconjunto de los carbohidratos (`isPlausibleCatalogEntry`
+   * rechaza más fibra que carbos). Compartir el hue lo dice; lo que distingue
+   * a la fibra es el **tratamiento**: su chip va en contorno y no en relleno,
+   * y —como todos— lleva siempre su etiqueta y sus gramos, así que la
+   * identidad nunca descansa en el color.
+   */
+  fiber: '#D96B27',
 } as const;
 
 export const glucoseBands = {

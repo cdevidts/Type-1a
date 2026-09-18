@@ -27,9 +27,7 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.CAMERA",
-        "android.permission.POST_NOTIFICATIONS"
-      ],
-      "blockedPermissions": [
+        "android.permission.POST_NOTIFICATIONS",
         "android.permission.RECORD_AUDIO"
       ]
     },
@@ -46,14 +44,20 @@
       [
         "expo-image-picker",
         {
-          "cameraPermission": "Type 1A usa la cámara solo para estimar alimentos. Puedes registrar carbohidratos manualmente.",
-          "microphonePermission": false
+          "cameraPermission": "Type 1A usa la cámara solo para estimar alimentos. Puedes registrar carbohidratos manualmente."
         }
       ],
       "expo-notifications",
       "expo-secure-store",
       "expo-file-system",
-      "expo-background-task"
+      "expo-background-task",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Type 1A usa el micrófono para que puedas dictar en vez de escribir. Si este teléfono no sabe pasar voz a texto por su cuenta, lo hace el servicio de dictado de Android y te lo avisa antes.",
+          "speechRecognitionPermission": "Type 1A convierte tu voz en texto para que lo revises y lo corrijas. Nada se guarda hasta que tú lo apruebes."
+        }
+      ]
     ],
     "extra": {
       "eas": {

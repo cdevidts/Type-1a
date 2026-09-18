@@ -1,14 +1,36 @@
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { EpisodeContextEvent, MealEvent } from '@type1a/schemas';
+import type { EpisodeContextEvent, WaterEvent } from '@type1a/schemas';
 
-import { formatDayTime, parseBlankAsUnset, parseBlankAsUnsetPositive, parseNonNegativeNumber, parsePositiveNumber, trendArrow } from '../format';
+import { formatDayTime, trendArrow } from '../format';
 import { colors, radius, spacing } from '../theme';
-import type { TimelineEditPayload, TimelineItem } from '../types';
-import { mealOf } from '../masterModal';
-import { MacroFields, type MacroField } from './MacroFields';
+import type { TimelineItem } from '../types';
+import { isMasterEditable, masterSeedFrom } from '../masterModal';
 import { ModalShell } from './ModalShell';
+
+/**
+ * El detalle de lectura de un registro del Timeline.
+ *
+ * ## Qué dejó de ser
+ *
+ * Hasta el 2026-08-27 este archivo tenía **dos formularios de edición
+ * completos** escritos a mano —uno para la glucosa, otro para la entrada
+ * empaquetada— con su propio parseo, su propia validación y su propio
+ * criterio de qué se podía anotar. Eran los "formularios primitivos" que
+ * `projectbrief.md` prohíbe: sabían menos que el de creación, y editar era
+ * más pobre que registrar.
+ *
+ * Ahora **solo lee**. El botón Editar abre el Modal Maestro, que es el mismo
+ * componente que monta "Nueva entrada": una sola implementación, una sola
+ * lista de campos, una sola validación. Lo que cambia entre los dos usos es
+ * qué sección arranca abierta, y eso lo decide `masterSectionsFor` por
+ * contenido.
+ *
+ * Un episodio de comida sigue siendo de lectura y borrado: sus métricas salen
+ * del CGM, nadie las tecleó, y un formulario para "corregirlas" sería
+ * inventar el dato.
+ */
 
 const originLabel: Record<string, string> = {
   real: 'Sensor en vivo',
@@ -44,17 +66,17 @@ function contextEventLabel(event: EpisodeContextEvent): string {
   const amount = event.amount;
   switch (event.kind) {
     case 'rapid_insulin':
-      return `Insulina rápida${amount === undefined ? '' : ` ${amount} U`} · ${when}`;
+      return amount === undefined ? `Insulina rápida, ${when}` : `${amount} U de rápida, ${when}`;
     case 'basal_insulin':
-      return `Insulina basal${amount === undefined ? '' : ` ${amount} U`} · ${when}`;
+      return amount === undefined ? `Insulina basal, ${when}` : `${amount} U de basal, ${when}`;
     case 'carbs':
-      return `Carbohidratos${amount === undefined ? '' : ` ${amount} g`} · ${when}`;
+      return amount === undefined ? `Carbohidratos, ${when}` : `${amount} g de carbohidratos, ${when}`;
     case 'meal':
-      return `Otra comida${amount === undefined ? '' : ` (${amount} g)`} · ${when}`;
+      return amount === undefined ? `Otra comida, ${when}` : `Otra comida de ${amount} g, ${when}`;
     case 'activity':
-      return `Actividad física${amount === undefined ? '' : ` ${amount} min`} · ${when}`;
+      return amount === undefined ? `Actividad física, ${when}` : `Actividad física de ${amount} min, ${when}`;
     case 'note':
-      return `Nota registrada · ${when}`;
+      return `Una nota, ${when}`;
   }
 }
 
@@ -67,6 +89,21 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * De dónde salió un registro de agua.
+ *
+ * "La IA lo vio en una foto" y "lo escribí yo" no son lo mismo, y la regla de
+ * `AGENTS.md` sobre carbohidratos estimados vs. confirmados vale igual acá:
+ * una estimación se muestra como estimación.
+ */
+const waterSourceLabel: Record<WaterEvent['source'], string> = {
+  manual: 'Ingresado a mano',
+  quick: 'Acceso rápido',
+  ai_photo: 'Estimado por la IA desde una foto',
+  ai_text: 'Estimado por la IA desde tu descripción',
+  imported: 'Importado',
+};
+
 function rowsFor(item: TimelineItem): { label: string; value: string }[] {
   switch (item.kind) {
     case 'insulin':
@@ -75,7 +112,21 @@ function rowsFor(item: TimelineItem): { label: string; value: string }[] {
         { label: 'Unidades', value: `${item.raw.units} U` },
         ...(item.raw.insulinName === undefined ? [] : [{ label: 'Insulina', value: item.raw.insulinName }]),
         ...(item.raw.purpose === undefined ? [] : [{ label: 'Propósito', value: { meal: 'Comida', correction: 'Corrección', combined: 'Combinado' }[item.raw.purpose] }]),
+        // El desglose de una dosis calculada. `purpose` decía para qué fue;
+        // esto dice de cuánto se compuso, que es otra pregunta y la que
+        // permite mirar después qué tan bien funcionaron las correcciones.
+        ...(item.raw.mealUnits === undefined ? [] : [{ label: 'De comida', value: `${item.raw.mealUnits} U` }]),
+        ...(item.raw.correctionUnits === undefined ? [] : [{ label: 'De corrección', value: `${item.raw.correctionUnits} U` }]),
+        ...(item.raw.iobUnits === undefined ? [] : [{ label: 'Insulina activa descontada', value: `− ${item.raw.iobUnits} U` }]),
         { label: 'Origen', value: item.raw.source === 'imported' ? 'Importado desde CSV' : 'Ingresado a mano' },
+        { label: 'Hora', value: formatDayTime(item.raw.timestamp) },
+      ];
+    case 'water':
+      return [
+        { label: 'Agua', value: `${item.raw.ml} mL` },
+        // La procedencia importa igual que en los macros: un vaso que vio la
+        // IA en una foto no es lo mismo que uno que ella escribió.
+        { label: 'Origen', value: waterSourceLabel[item.raw.source] },
         { label: 'Hora', value: formatDayTime(item.raw.timestamp) },
       ];
     case 'carbs':
@@ -90,7 +141,10 @@ function rowsFor(item: TimelineItem): { label: string; value: string }[] {
         ...(item.raw.aiEstimatedCarbsG === undefined ? [] : [{ label: 'Estimado por IA', value: `${item.raw.aiEstimatedCarbsG} g` }]),
         ...(item.raw.proteinG === undefined ? [] : [{ label: 'Proteína', value: `${item.raw.proteinG} g` }]),
         ...(item.raw.fatG === undefined ? [] : [{ label: 'Grasa', value: `${item.raw.fatG} g` }]),
-        ...(item.raw.fiberG === undefined ? [] : [{ label: 'Fibra', value: `${item.raw.fiberG} g` }]),
+        // La fibra se lista siempre, con "sin anotar" cuando falta: es un
+        // macro de primera clase, no una nota al pie que solo aparece si es
+        // mayor que cero.
+        { label: 'Fibra', value: item.raw.fiberG === undefined ? 'sin anotar' : `${item.raw.fiberG} g` },
         ...(item.raw.caloriesKcal === undefined ? [] : [{ label: 'Calorías', value: `${item.raw.caloriesKcal} kcal` }]),
         ...(item.raw.note === undefined || item.raw.note === '' ? [] : [{ label: 'Nota', value: item.raw.note }]),
         { label: 'Hora', value: formatDayTime(item.raw.timestamp) },
@@ -142,8 +196,28 @@ function rowsFor(item: TimelineItem): { label: string; value: string }[] {
         ...(item.raw.carbsG === undefined ? [] : [{ label: 'Carbohidratos', value: `${item.raw.carbsG} g` }]),
         ...(item.raw.aiEstimatedCarbsG === undefined ? [] : [{ label: 'Estimado por IA', value: `${item.raw.aiEstimatedCarbsG} g` }]),
         ...(item.raw.description === undefined || item.raw.description === '' ? [] : [{ label: 'Comida', value: item.raw.description }]),
+        ...(item.raw.proteinG === undefined ? [] : [{ label: 'Proteína', value: `${item.raw.proteinG} g` }]),
+        ...(item.raw.fatG === undefined ? [] : [{ label: 'Grasa', value: `${item.raw.fatG} g` }]),
+        ...(item.raw.meal === undefined && item.raw.fiberG === undefined
+          ? []
+          : [{ label: 'Fibra', value: item.raw.fiberG === undefined ? 'sin anotar' : `${item.raw.fiberG} g` }]),
+        ...(item.raw.caloriesKcal === undefined ? [] : [{ label: 'Calorías', value: `${item.raw.caloriesKcal} kcal` }]),
+        ...(item.raw.ketonesMmolL === undefined ? [] : [{ label: 'Cetonas', value: `${item.raw.ketonesMmolL} mmol/L` }]),
+        ...(item.raw.weightKg === undefined ? [] : [{ label: 'Peso', value: `${item.raw.weightKg} kg` }]),
+        ...(item.raw.systolicBP === undefined || item.raw.diastolicBP === undefined
+          ? []
+          : [{ label: 'Presión', value: `${item.raw.systolicBP}/${item.raw.diastolicBP} mmHg` }]),
         ...(item.raw.rapidUnits === undefined ? [] : [{ label: 'Insulina rápida', value: `${item.raw.rapidUnits} U` }]),
+        // Una entrada agrupada mostraba SOLO el total: no decía cuánto de esa
+        // rápida cubría los carbohidratos y cuánto corregía la glucosa, ni
+        // siquiera para qué fue. Con el IOB en juego eso importa el doble.
+        ...(item.raw.rapidPurpose === undefined ? [] : [{ label: 'Propósito', value: { meal: 'Comida', correction: 'Corrección', combined: 'Comida + corrección' }[item.raw.rapidPurpose] }]),
+        ...(item.raw.rapidMealUnits === undefined ? [] : [{ label: 'De comida', value: `${item.raw.rapidMealUnits} U` }]),
+        ...(item.raw.rapidCorrectionUnits === undefined ? [] : [{ label: 'De corrección', value: `${item.raw.rapidCorrectionUnits} U` }]),
+        ...(item.raw.rapidIobUnits === undefined ? [] : [{ label: 'Insulina activa descontada', value: `− ${item.raw.rapidIobUnits} U` }]),
+        ...(item.raw.rapidInsulinName === undefined ? [] : [{ label: 'Rápida usada', value: item.raw.rapidInsulinName }]),
         ...(item.raw.basalUnits === undefined ? [] : [{ label: 'Insulina basal', value: `${item.raw.basalUnits} U` }]),
+        ...(item.raw.basalInsulinName === undefined ? [] : [{ label: 'Basal usada', value: item.raw.basalInsulinName }]),
         ...(item.raw.note === undefined || item.raw.note === '' ? [] : [{ label: 'Nota', value: item.raw.note }]),
         { label: 'Hora', value: formatDayTime(item.timestamp) },
       ];
@@ -160,20 +234,15 @@ function hasReadOnlyGlucoseAnchor(item: TimelineItem): boolean {
   return false;
 }
 
-/** Whether this Timeline item has anything a user can edit. Episodes are a
- * computed aggregate (metrics/insight come from CGM readings, never typed
- * in), so they're delete-only. A glucose reading is always editable now: a
- * 'manual' one lets you correct the value, and any reading (sensor included)
- * lets you attach carbs/insulina/nota to it after the fact — the sensor value
- * itself stays read-only. */
-function isEditable(item: TimelineItem): boolean {
-  // La comida tampoco: tiene su propio editor completo (`MealEditModal`,
-  // Fase 17) con macros, foto y los tres modos de IA. El formulario de acá
-  // solo llegaba a la nota.
-  // Los vitales tampoco, todavía: este formulario solo llega a glucosa,
-  // carbos, insulina y nota, y no tiene campo de cetonas. Se ven y se pueden
-  // borrar; editarlos es trabajo del Modal Maestro (`projectbrief.md`).
-  return item.kind !== 'episode' && item.kind !== 'meal' && item.kind !== 'vitals';
+/**
+ * `true` cuando el momento de este registro lo fija una fuente externa.
+ *
+ * Se deriva de `masterSeedFrom`, que es quien lo decide de verdad, en vez de
+ * repetir la condición: dos lugares que respondan lo mismo por su cuenta es
+ * cómo el detalle terminó prometiendo algo que el editor no hacía.
+ */
+function fixedTimestamp(item: TimelineItem): boolean {
+  return !masterSeedFrom(item).timestampEditable;
 }
 
 function deleteLabel(item: TimelineItem): string {
@@ -189,6 +258,13 @@ function deleteConfirmMessage(item: TimelineItem): string {
   if (item.kind === 'meal') {
     return 'Se borra esta comida y el seguimiento post-comida asociado. Los carbohidratos confirmados también se borran.';
   }
+  if (item.kind === 'carbs') {
+    // Un espejo huérfano —cuya comida ya no existe— sigue siendo la única
+    // copia de esos gramos. Se dice, para que borrarlo sea una decisión.
+    return item.raw.source === 'meal_confirmed'
+      ? 'Estos carbohidratos venían de una comida que ya no está. Son la única copia que queda de ese dato.'
+      : 'Esta acción no se puede deshacer.';
+  }
   if (item.kind === 'vitals') {
     // Una sola fila puede traer cetonas, peso y presión juntos, y el borrado
     // se las lleva todas. El resto de los tipos con varias partes ya lo dicen.
@@ -197,7 +273,7 @@ function deleteConfirmMessage(item: TimelineItem): string {
       item.raw.weightKg === undefined ? null : 'el peso',
       item.raw.systolicBP === undefined ? null : 'la presión',
     ].filter((parte): parte is string => parte !== null);
-    return `Se borra ${partes.join(', ')} de este registro. Esta acción no se puede deshacer.`;
+    return `Se borra ${partes.join(', ')} de este registro. Esta acción no se puede deshacer. Para corregir solo uno, usa Editar.`;
   }
   if (item.kind === 'entry') {
     return hasReadOnlyGlucoseAnchor(item)
@@ -210,286 +286,24 @@ function deleteConfirmMessage(item: TimelineItem): string {
 export function TimelineDetailModal({
   item,
   onClose,
-  onSave,
+  onEdit,
   onDelete,
-  onEditMeal,
 }: {
   item: TimelineItem | null;
   onClose: () => void;
-  onSave: (item: TimelineItem, payload: TimelineEditPayload) => Promise<void>;
+  /**
+   * Abre el Modal Maestro sobre este registro. **No hay un `onSave` acá**: la
+   * edición dejó de vivir en este archivo.
+   */
+  onEdit: (item: TimelineItem) => void;
   onDelete: (item: TimelineItem) => Promise<void>;
-  /** Abre `MealEditModal` para una comida (Fase 17). */
-  onEditMeal: (meal: MealEvent) => void;
 }) {
-  const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [insulinType, setInsulinType] = useState<'rapid' | 'basal'>('rapid');
-  const [units, setUnits] = useState('');
-  const [insulinName, setInsulinName] = useState('');
-  const [carbsG, setCarbsG] = useState('');
-  const [note, setNote] = useState('');
-  const [glucose, setGlucose] = useState('');
-
-  // Only the packaged "entry" kind needs all five of these at once.
-  const [entryGlucose, setEntryGlucose] = useState('');
-  const [entryCarbsG, setEntryCarbsG] = useState('');
-  const [entryDescription, setEntryDescription] = useState('');
-  const [entryRapidUnits, setEntryRapidUnits] = useState('');
-  const [entryBasalUnits, setEntryBasalUnits] = useState('');
-  const [entryNote, setEntryNote] = useState('');
-  // Macros (Fase 21). Editar ofrecía menos campos que crear: `EntryModal` ya
-  // los tenía al registrar y este formulario no, así que una entrada con
-  // macros no se podía corregir sin rehacerla.
-  const [entryProteinG, setEntryProteinG] = useState('');
-  const [entryFatG, setEntryFatG] = useState('');
-  const [entryFiberG, setEntryFiberG] = useState('');
-
-  /** Un solo despachador, para que los dos bloques de macros no diverjan. */
-  function setEntryMacro(field: MacroField, next: string): void {
-    if (field === 'protein') setEntryProteinG(next);
-    else if (field === 'fat') setEntryFatG(next);
-    else if (field === 'fiber') setEntryFiberG(next);
-  }
-  const [entryKetones, setEntryKetones] = useState('');
-
-  // Re-seed the edit fields (and drop any in-progress edit/error) every time
-  // a different item is opened. Keyed on the item's identity, not on
-  // `editing`, so switching items always starts from view mode.
-  useEffect(() => {
-    setEditing(false);
-    setError(null);
-    if (item === null) return;
-    if (item.kind === 'insulin') {
-      setInsulinType(item.raw.type);
-      setUnits(String(item.raw.units));
-      setInsulinName(item.raw.insulinName ?? '');
-    } else if (item.kind === 'carbs') {
-      setCarbsG(String(item.raw.carbsG));
-    } else if (item.kind === 'glucose') {
-      setGlucose(String(item.raw.glucose));
-      // Attachment fields (reused from the packaged-entry form) start empty —
-      // a standalone reading has nothing attached yet.
-      setEntryCarbsG('');
-      setEntryDescription('');
-      setEntryRapidUnits('');
-      setEntryBasalUnits('');
-      setEntryNote('');
-      setEntryProteinG('');
-      setEntryFatG('');
-      setEntryFiberG('');
-      setEntryKetones('');
-    } else if (item.kind === 'note') {
-      setNote(item.raw.text);
-    } else if (item.kind === 'entry') {
-      setEntryGlucose(item.raw.glucose === undefined ? '' : String(item.raw.glucose));
-      setEntryCarbsG(item.raw.carbsG === undefined ? '' : String(item.raw.carbsG));
-      setEntryDescription(item.raw.description ?? '');
-      setEntryRapidUnits(item.raw.rapidUnits === undefined ? '' : String(item.raw.rapidUnits));
-      setEntryBasalUnits(item.raw.basalUnits === undefined ? '' : String(item.raw.basalUnits));
-      setEntryNote(item.raw.note ?? '');
-      setEntryProteinG(item.raw.proteinG === undefined ? '' : String(item.raw.proteinG));
-      setEntryFatG(item.raw.fatG === undefined ? '' : String(item.raw.fatG));
-      setEntryFiberG(item.raw.fiberG === undefined ? '' : String(item.raw.fiberG));
-      setEntryKetones(item.raw.ketonesMmolL === undefined ? '' : String(item.raw.ketonesMmolL));
-    }
-  }, [item]);
-
-  /**
-   * Los tres macros, o `null` si alguno no es un número válido.
-   *
-   * En blanco es `undefined` a propósito: significa "no lo anoté", que es una
-   * afirmación distinta de "0 g". Confundirlas hace que el reporte al médico
-   * muestre promedios de ceros que nadie midió.
-   */
-  function parseKetones(): { ketonesMmolL?: number; clearKetones?: true } | null {
-    // Vaciar el campo es **pedir** que se borren, y se dice explícitamente.
-    // Que la ausencia significara borrado hacía indistinguible "lo vació" de
-    // "el formulario nunca lo cargó", y por esa rendija se perdían cetonas al
-    // guardar cualquier otro cambio.
-    if (entryKetones.trim() === '') return { clearKetones: true };
-    const value = parseNonNegativeNumber(entryKetones);
-    if (value === null || value > 20) return null;
-    return { ketonesMmolL: value };
-  }
-
-  function parseMacros(): { proteinG?: number; fatG?: number; fiberG?: number } | null {
-    const proteinG = parseBlankAsUnset(entryProteinG);
-    const fatG = parseBlankAsUnset(entryFatG);
-    const fiberG = parseBlankAsUnset(entryFiberG);
-    if (proteinG === null || fatG === null || fiberG === null) return null;
-    if ([proteinG, fatG, fiberG].some((value) => value !== undefined && value > 500)) return null;
-    return {
-      ...(proteinG === undefined ? {} : { proteinG }),
-      ...(fatG === undefined ? {} : { fatG }),
-      ...(fiberG === undefined ? {} : { fiberG }),
-    };
-  }
-
-  async function handleSave(): Promise<void> {
-    if (item === null) return;
-    setError(null);
-
-    let payload: TimelineEditPayload;
-    if (item.kind === 'insulin') {
-      const parsedUnits = parsePositiveNumber(units);
-      if (parsedUnits === null || parsedUnits > 100) {
-        setError('Las unidades deben ser un número positivo, 100 U o menos.');
-        return;
-      }
-      payload = {
-        kind: 'insulin',
-        type: insulinType,
-        units: parsedUnits,
-        ...(insulinName.trim() === '' ? {} : { insulinName: insulinName.trim() }),
-      };
-    } else if (item.kind === 'carbs') {
-      const parsed = parseNonNegativeNumber(carbsG);
-      if (parsed === null || parsed > 500) {
-        setError('Los carbohidratos deben ser un número entre 0 y 500 g.');
-        return;
-      }
-      payload = { kind: 'carbs', carbsG: parsed };
-    } else if (item.kind === 'glucose') {
-      // A 'manual' reading's value is editable; any other origin is a record
-      // of what the source reported and stays read-only — you can still
-      // attach carbs/insulina/nota to it.
-      const isManual = item.raw.origin === 'manual';
-      let glucoseValue: number | undefined;
-      if (isManual) {
-        const parsed = parsePositiveNumber(glucose);
-        if (parsed === null) {
-          setError('La glucosa debe ser un número positivo.');
-          return;
-        }
-        glucoseValue = parsed;
-      }
-      const carbsValue = parseBlankAsUnset(entryCarbsG);
-      if (carbsValue === null || (carbsValue !== undefined && carbsValue > 500)) {
-        setError('Los carbohidratos deben ser un número entre 0 y 500 g.');
-        return;
-      }
-      const rapidValue = parseBlankAsUnsetPositive(entryRapidUnits);
-      if (rapidValue === null || (rapidValue !== undefined && rapidValue > 100)) {
-        setError('La insulina rápida debe ser un número positivo, 100 U o menos.');
-        return;
-      }
-      const basalValue = parseBlankAsUnsetPositive(entryBasalUnits);
-      if (basalValue === null || (basalValue !== undefined && basalValue > 100)) {
-        setError('La insulina basal debe ser un número positivo, 100 U o menos.');
-        return;
-      }
-      const hasAttachments = carbsValue !== undefined || entryDescription.trim() !== ''
-        || rapidValue !== undefined || basalValue !== undefined || entryNote.trim() !== ''
-        || entryProteinG.trim() !== '' || entryFatG.trim() !== '' || entryFiberG.trim() !== ''
-        || entryKetones.trim() !== '';
-      // For a read-only sensor value, editing only makes sense to attach
-      // something — there's no value change to save on its own.
-      if (!isManual && !hasAttachments) {
-        setError('Agrega carbohidratos, insulina o una nota para adjuntar a esta lectura.');
-        return;
-      }
-      const macros = parseMacros();
-      if (macros === null) {
-        setError('Revisa proteína, grasa y fibra: deben ser números entre 0 y 500 g, o quedar en blanco.');
-        return;
-      }
-      const ketones = parseKetones();
-      if (ketones === null) {
-        setError('Revisa las cetonas: deben estar entre 0 y 20 mmol/L, o quedar en blanco.');
-        return;
-      }
-      payload = {
-        kind: 'glucose',
-        ...(glucoseValue === undefined ? {} : { glucose: glucoseValue }),
-        ...(carbsValue === undefined ? {} : { carbsG: carbsValue }),
-        ...(entryDescription.trim() === '' ? {} : { description: entryDescription.trim() }),
-        ...macros,
-        ...ketones,
-        ...(rapidValue === undefined ? {} : { rapidUnits: rapidValue }),
-        ...(basalValue === undefined ? {} : { basalUnits: basalValue }),
-        ...(entryNote.trim() === '' ? {} : { note: entryNote.trim() }),
-      };
-    } else if (item.kind === 'note') {
-      const text = note.trim();
-      if (text === '') {
-        setError('La nota no puede quedar vacía. Para borrarla, usa Eliminar.');
-        return;
-      }
-      payload = { kind: 'note', text };
-    } else if (item.kind === 'entry') {
-      // A sensor-anchored entry's glucose is read-only (a real reading) — it's
-      // never sent back as a manual value, so it can't overwrite or delete the
-      // sensor reading. Only a 'manual' anchor (or none) is editable here.
-      const isSensorAnchor = hasReadOnlyGlucoseAnchor(item);
-      let glucoseValue: number | undefined;
-      if (!isSensorAnchor && entryGlucose.trim() !== '') {
-        const parsed = parsePositiveNumber(entryGlucose);
-        if (parsed === null) {
-          setError('La glicemia capilar debe ser un número positivo.');
-          return;
-        }
-        glucoseValue = parsed;
-      }
-      const carbsValue = parseBlankAsUnset(entryCarbsG);
-      if (carbsValue === null || (carbsValue !== undefined && carbsValue > 500)) {
-        setError('Los carbohidratos deben ser un número entre 0 y 500 g.');
-        return;
-      }
-      const rapidValue = parseBlankAsUnsetPositive(entryRapidUnits);
-      if (rapidValue === null || (rapidValue !== undefined && rapidValue > 100)) {
-        setError('La insulina rápida debe ser un número positivo, 100 U o menos.');
-        return;
-      }
-      const basalValue = parseBlankAsUnsetPositive(entryBasalUnits);
-      if (basalValue === null || (basalValue !== undefined && basalValue > 100)) {
-        setError('La insulina basal debe ser un número positivo, 100 U o menos.');
-        return;
-      }
-      const hasSomething = glucoseValue !== undefined || carbsValue !== undefined || entryDescription.trim() !== ''
-        || rapidValue !== undefined || basalValue !== undefined || entryNote.trim() !== ''
-        || entryProteinG.trim() !== '' || entryFatG.trim() !== '' || entryFiberG.trim() !== ''
-        || entryKetones.trim() !== '';
-      if (!hasSomething) {
-        setError('Completa al menos un campo, o usa el botón de eliminar de abajo.');
-        return;
-      }
-      const macros = parseMacros();
-      if (macros === null) {
-        setError('Revisa proteína, grasa y fibra: deben ser números entre 0 y 500 g, o quedar en blanco.');
-        return;
-      }
-      const ketones = parseKetones();
-      if (ketones === null) {
-        setError('Revisa las cetonas: deben estar entre 0 y 20 mmol/L, o quedar en blanco.');
-        return;
-      }
-      payload = {
-        kind: 'entry',
-        ...(glucoseValue === undefined ? {} : { manualGlucose: glucoseValue }),
-        ...(carbsValue === undefined ? {} : { carbsG: carbsValue }),
-        ...(entryDescription.trim() === '' ? {} : { description: entryDescription.trim() }),
-        ...macros,
-        ...ketones,
-        ...(rapidValue === undefined ? {} : { rapidUnits: rapidValue }),
-        ...(basalValue === undefined ? {} : { basalUnits: basalValue }),
-        ...(entryNote.trim() === '' ? {} : { note: entryNote.trim() }),
-      };
-    } else {
-      return;
-    }
-
-    setBusy(true);
-    try {
-      await onSave(item, payload);
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo guardar.');
-    } finally {
-      setBusy(false);
-    }
-  }
+  // Limpiar el error al cambiar de ítem: un "no se pudo eliminar" del anterior
+  // colgado sobre un registro distinto es peor que no decir nada.
+  useEffect(() => { setError(null); }, [item]);
 
   function confirmDelete(): void {
     if (item === null) return;
@@ -502,7 +316,7 @@ export function TimelineDetailModal({
           setBusy(true);
           onDelete(item)
             .then(onClose)
-            .catch(() => { setError('No se pudo eliminar.'); })
+            .catch(() => { setError('No se pudo eliminar. Tus datos siguen guardados como estaban.'); })
             .finally(() => { setBusy(false); });
         },
       },
@@ -511,239 +325,7 @@ export function TimelineDetailModal({
 
   return (
     <ModalShell visible={item !== null} title={item?.title ?? 'Detalle'} onClose={onClose}>
-      {item === null ? null : editing ? (
-        <>
-          {item.kind === 'insulin' ? (
-            <>
-              <Text style={styles.fieldLabel}>Tipo</Text>
-              <View style={styles.segmented}>
-                <Pressable
-                  style={[styles.segment, insulinType === 'rapid' && styles.segmentActive]}
-                  onPress={() => { setInsulinType('rapid'); }}
-                >
-                  <Text style={[styles.segmentText, insulinType === 'rapid' && styles.segmentTextActive]}>Rápida</Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.segment, insulinType === 'basal' && styles.segmentActive]}
-                  onPress={() => { setInsulinType('basal'); }}
-                >
-                  <Text style={[styles.segmentText, insulinType === 'basal' && styles.segmentTextActive]}>Basal</Text>
-                </Pressable>
-              </View>
-              <Text style={styles.fieldLabel}>Unidades</Text>
-              <View style={styles.inputWrap}>
-                <TextInput value={units} onChangeText={setUnits} keyboardType="decimal-pad" style={styles.input} selectTextOnFocus />
-                <Text style={styles.inputUnit}>U</Text>
-              </View>
-              <Text style={styles.fieldLabel}>Insulina (opcional)</Text>
-              <TextInput value={insulinName} onChangeText={setInsulinName} style={styles.textInput} placeholder="Nombre de la insulina" placeholderTextColor={colors.muted} />
-            </>
-          ) : null}
-          {item.kind === 'carbs' ? (
-            <>
-              <Text style={styles.fieldLabel}>Carbohidratos</Text>
-              <View style={styles.inputWrap}>
-                <TextInput value={carbsG} onChangeText={setCarbsG} keyboardType="decimal-pad" style={styles.input} selectTextOnFocus />
-                <Text style={styles.inputUnit}>g</Text>
-              </View>
-            </>
-          ) : null}
-          {item.kind === 'glucose' ? (
-            <>
-              {item.raw.origin === 'manual' ? (
-                <>
-                  <Text style={styles.fieldLabel}>Glucosa</Text>
-                  <View style={styles.inputWrap}>
-                    <TextInput value={glucose} onChangeText={setGlucose} keyboardType="decimal-pad" style={styles.input} selectTextOnFocus />
-                    <Text style={styles.inputUnit}>{item.raw.unit}</Text>
-                  </View>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.fieldLabel}>Glucosa (del sensor)</Text>
-                  <Text style={styles.readonlyValue}>{item.raw.glucose} {item.raw.unit}</Text>
-                  <Text style={styles.hint}>
-                    Este valor viene del sensor y no se edita. Puedes adjuntarle lo que comiste, la insulina o una nota de ese momento.
-                  </Text>
-                </>
-              )}
-              <Text style={styles.fieldLabel}>Carbohidratos</Text>
-              <View style={styles.inputWrap}>
-                <TextInput value={entryCarbsG} onChangeText={setEntryCarbsG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
-                <Text style={styles.inputUnit}>g</Text>
-              </View>
-              <Text style={styles.fieldLabel}>Comida</Text>
-              <TextInput
-                value={entryDescription}
-                onChangeText={setEntryDescription}
-                style={[styles.textInput, styles.textArea]}
-                placeholder="¿Qué comiste?"
-                placeholderTextColor={colors.muted}
-                multiline
-              />
-              {/*
-                Fase 21: los macros también al editar. Antes solo se podían
-                cargar al crear la entrada, así que corregir una proteína
-                obligaba a borrar la entrada y rehacerla.
-              */}
-              <MacroFields
-                protein={entryProteinG}
-                fat={entryFatG}
-                fiber={entryFiberG}
-                onChange={(field, next) => { setEntryMacro(field, next); }}
-                hint="Déjalos en blanco si no los anotaste. En blanco no es lo mismo que 0 g."
-              />
-              {/*
-                Cetonas (2026-08-25). El editor tiene que poder guardar lo
-                mismo que "Nueva entrada" — pedido repetido de Verónica. Se
-                guardan agrupadas con la entrada (`entry_group_id`), no
-                emparejadas por hora: emparejar por timestamp es justo lo que
-                rompió la asociación insulina↔comida en la Fase 21.
-              */}
-              <Text style={styles.fieldLabel}>Cetonas en sangre</Text>
-              <View style={styles.inputWrap}>
-                <TextInput value={entryKetones} onChangeText={setEntryKetones} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
-                <Text style={styles.inputUnit}>mmol/L</Text>
-              </View>
-              <View style={styles.fieldRow}>
-                <View style={styles.fieldRowItem}>
-                  <Text style={styles.fieldLabel}>Rápida</Text>
-                  <View style={styles.inputWrap}>
-                    <TextInput value={entryRapidUnits} onChangeText={setEntryRapidUnits} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
-                    <Text style={styles.inputUnit}>U</Text>
-                  </View>
-                </View>
-                <View style={styles.fieldRowItem}>
-                  <Text style={styles.fieldLabel}>Basal</Text>
-                  <View style={styles.inputWrap}>
-                    <TextInput value={entryBasalUnits} onChangeText={setEntryBasalUnits} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
-                    <Text style={styles.inputUnit}>U</Text>
-                  </View>
-                </View>
-              </View>
-              <Text style={styles.fieldLabel}>Nota</Text>
-              <TextInput
-                value={entryNote}
-                onChangeText={setEntryNote}
-                style={[styles.textInput, styles.textArea]}
-                placeholder="Contexto, ejercicio, cómo te sentías…"
-                placeholderTextColor={colors.muted}
-                multiline
-              />
-            </>
-          ) : null}
-          {item.kind === 'note' ? (
-            <>
-              <Text style={styles.fieldLabel}>Nota</Text>
-              <TextInput
-                value={note}
-                onChangeText={setNote}
-                style={[styles.textInput, styles.textArea]}
-                placeholderTextColor={colors.muted}
-                multiline
-              />
-            </>
-          ) : null}
-          {item.kind === 'entry' ? (
-            <>
-              <Text style={styles.hint}>
-                Esta entrada se guardó junto: edita lo que corresponda y guarda — lo que dejes vacío se borra de la entrada.
-              </Text>
-              {item.raw.glucoseOrigin !== undefined && item.raw.glucoseOrigin !== 'manual' ? (
-                <>
-                  <Text style={styles.fieldLabel}>Glucosa (del sensor)</Text>
-                  <Text style={styles.readonlyValue}>{item.raw.glucose} mg/dL</Text>
-                  <Text style={styles.hint}>Viene del sensor y no se edita; el resto de la entrada sí.</Text>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.fieldLabel}>Glicemia capilar</Text>
-                  <View style={styles.inputWrap}>
-                    <TextInput value={entryGlucose} onChangeText={setEntryGlucose} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
-                    <Text style={styles.inputUnit}>mg/dL</Text>
-                  </View>
-                </>
-              )}
-              <Text style={styles.fieldLabel}>Carbohidratos</Text>
-              <View style={styles.inputWrap}>
-                <TextInput value={entryCarbsG} onChangeText={setEntryCarbsG} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
-                <Text style={styles.inputUnit}>g</Text>
-              </View>
-              {item.raw.aiEstimatedCarbsG === undefined ? null : (
-                <Text style={styles.hint}>Estimado por IA al crear la entrada: {item.raw.aiEstimatedCarbsG} g (no editable).</Text>
-              )}
-              <Text style={styles.fieldLabel}>Comida</Text>
-              <TextInput
-                value={entryDescription}
-                onChangeText={setEntryDescription}
-                style={[styles.textInput, styles.textArea]}
-                placeholder="¿Qué comiste?"
-                placeholderTextColor={colors.muted}
-                multiline
-              />
-              {/*
-                Fase 21: los macros también al editar. Antes solo se podían
-                cargar al crear la entrada, así que corregir una proteína
-                obligaba a borrar la entrada y rehacerla.
-              */}
-              <MacroFields
-                protein={entryProteinG}
-                fat={entryFatG}
-                fiber={entryFiberG}
-                onChange={(field, next) => { setEntryMacro(field, next); }}
-                hint="Déjalos en blanco si no los anotaste. En blanco no es lo mismo que 0 g."
-              />
-              {/*
-                Cetonas (2026-08-25). El editor tiene que poder guardar lo
-                mismo que "Nueva entrada" — pedido repetido de Verónica. Se
-                guardan agrupadas con la entrada (`entry_group_id`), no
-                emparejadas por hora: emparejar por timestamp es justo lo que
-                rompió la asociación insulina↔comida en la Fase 21.
-              */}
-              <Text style={styles.fieldLabel}>Cetonas en sangre</Text>
-              <View style={styles.inputWrap}>
-                <TextInput value={entryKetones} onChangeText={setEntryKetones} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
-                <Text style={styles.inputUnit}>mmol/L</Text>
-              </View>
-              <View style={styles.fieldRow}>
-                <View style={styles.fieldRowItem}>
-                  <Text style={styles.fieldLabel}>Rápida</Text>
-                  <View style={styles.inputWrap}>
-                    <TextInput value={entryRapidUnits} onChangeText={setEntryRapidUnits} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
-                    <Text style={styles.inputUnit}>U</Text>
-                  </View>
-                </View>
-                <View style={styles.fieldRowItem}>
-                  <Text style={styles.fieldLabel}>Basal</Text>
-                  <View style={styles.inputWrap}>
-                    <TextInput value={entryBasalUnits} onChangeText={setEntryBasalUnits} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.muted} selectTextOnFocus />
-                    <Text style={styles.inputUnit}>U</Text>
-                  </View>
-                </View>
-              </View>
-              <Text style={styles.fieldLabel}>Nota</Text>
-              <TextInput
-                value={entryNote}
-                onChangeText={setEntryNote}
-                style={[styles.textInput, styles.textArea]}
-                placeholder="Contexto, ejercicio, cómo te sentías…"
-                placeholderTextColor={colors.muted}
-                multiline
-              />
-            </>
-          ) : null}
-
-          {error === null ? null : <Text style={styles.error}>{error}</Text>}
-          <View style={styles.actionRow}>
-            <Pressable style={[styles.button, styles.secondaryButton]} onPress={() => { setEditing(false); setError(null); }}>
-              <Text style={styles.secondaryButtonText}>Cancelar</Text>
-            </Pressable>
-            <Pressable style={[styles.button, styles.primaryButton, busy && styles.disabled]} disabled={busy} onPress={() => { void handleSave(); }}>
-              <Text style={styles.primaryButtonText}>{busy ? 'Guardando…' : 'Guardar cambios'}</Text>
-            </Pressable>
-          </View>
-        </>
-      ) : (
+      {item === null ? null : (
         <>
           {rowsFor(item).map((row) => (
             <Row key={row.label} label={row.label} value={row.value} />
@@ -777,27 +359,37 @@ export function TimelineDetailModal({
             </View>
           ) : null}
 
+          {item.kind === 'episode' ? (
+            <Text style={styles.hint}>
+              Este resumen lo calcula la app con tus lecturas de CGM: no es un dato que se teclee, así que no se
+              edita. Para corregir la comida que lo originó, abre esa comida.
+            </Text>
+          ) : (
+            <Text style={styles.hint}>
+              {/*
+                La promesa se ajusta al ítem. Decir "puedes corregir la fecha y
+                la hora" sobre una lectura de sensor o importada era falso: su
+                momento lo fija la fuente y el maestro lo muestra de solo
+                lectura. El comportamiento estaba bien; la frase no.
+              */}
+              {fixedTimestamp(item)
+                ? 'Editar abre el formulario completo: puedes agregarle lo que falte — una comida con foto, la '
+                  + 'insulina, las cetonas o una nota. La hora la fija la fuente del dato y no se edita.'
+                : 'Editar abre el formulario completo: puedes corregir la fecha y la hora, y agregarle lo que falte '
+                  + '— una comida con foto, la insulina, las cetonas o una nota — aunque el registro no haya nacido así.'}
+            </Text>
+          )}
+
           {error === null ? null : <Text style={styles.error}>{error}</Text>}
           <View style={styles.actionRow}>
-            {/*
-              Por contenido, no por tipo. Si el ítem tiene una comida —suelta
-              o dentro de una entrada empaquetada— llega a su editor con IA.
-              Antes la condición era `kind === 'meal'`, así que la misma comida
-              guardada desde "Nueva entrada" quedaba fuera de su propio editor:
-              tenía foto y macros y no había forma de re-analizarla.
-            */}
-            {mealOf(item) === null ? null : (
+            {isMasterEditable(item) ? (
               <Pressable
-                style={[styles.button, styles.secondaryButton]}
-                onPress={() => { onEditMeal(mealOf(item)!); }}
+                style={[styles.button, styles.primaryButton]}
+                onPress={() => { onEdit(item); }}
                 accessibilityRole="button"
+                accessibilityLabel="Editar este registro"
               >
-                <Text style={styles.secondaryButtonText}>Editar comida con IA</Text>
-              </Pressable>
-            )}
-            {isEditable(item) ? (
-              <Pressable style={[styles.button, styles.secondaryButton]} onPress={() => { setEditing(true); }}>
-                <Text style={styles.secondaryButtonText}>Editar</Text>
+                <Text style={styles.primaryButtonText}>Editar</Text>
               </Pressable>
             ) : null}
             <Pressable style={[styles.button, styles.dangerButton, busy && styles.disabled]} disabled={busy} onPress={confirmDelete}>
@@ -839,28 +431,12 @@ const styles = StyleSheet.create({
   insightText: { color: colors.navy, fontSize: 13, lineHeight: 18 },
   insightBullet: { color: colors.navy, fontSize: 12, lineHeight: 17, marginTop: 6 },
   insightLimitations: { color: colors.muted, fontSize: 11, lineHeight: 16, marginTop: 8 },
-  fieldLabel: { color: colors.navy, fontSize: 12, fontWeight: '800', marginTop: spacing.lg },
-  fieldRow: { flexDirection: 'row', gap: spacing.md },
-  fieldRowItem: { flex: 1 },
-  hint: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: spacing.md },
-  readonlyValue: { color: colors.ink, fontSize: 20, fontWeight: '700', marginTop: 6 },
-  inputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.sm, borderColor: colors.line, borderWidth: 1, marginTop: 6, paddingHorizontal: spacing.md },
-  input: { color: colors.ink, fontSize: 20, fontWeight: '700', flex: 1, paddingVertical: spacing.md, minHeight: 44 },
-  inputUnit: { color: colors.muted, fontSize: 12, marginLeft: 4 },
-  textInput: { backgroundColor: colors.surface, color: colors.ink, borderColor: colors.line, borderWidth: 1, borderRadius: radius.sm, padding: spacing.md, marginTop: 6, fontSize: 15, minHeight: 44 },
-  textArea: { minHeight: 70, textAlignVertical: 'top' },
-  segmented: { flexDirection: 'row', backgroundColor: colors.surface, borderRadius: radius.sm, borderColor: colors.line, borderWidth: 1, marginTop: 6, overflow: 'hidden' },
-  segment: { flex: 1, paddingVertical: spacing.md, alignItems: 'center', minHeight: 44, justifyContent: 'center' },
-  segmentActive: { backgroundColor: colors.teal },
-  segmentText: { color: colors.navy, fontSize: 14, fontWeight: '700' },
-  segmentTextActive: { color: '#FFFFFF' },
+  hint: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: spacing.lg },
   error: { color: colors.red, fontSize: 13, marginTop: spacing.md },
   actionRow: { flexDirection: 'row', gap: spacing.md, marginTop: spacing.xl },
   button: { flex: 1, borderRadius: radius.sm, paddingVertical: spacing.md, alignItems: 'center', justifyContent: 'center', minHeight: 44 },
   primaryButton: { backgroundColor: colors.teal },
   primaryButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
-  secondaryButton: { borderColor: colors.line, borderWidth: 1 },
-  secondaryButtonText: { color: colors.navy, fontSize: 14, fontWeight: '800' },
   dangerButton: { borderColor: colors.red, borderWidth: 1 },
   dangerButtonText: { color: colors.red, fontSize: 14, fontWeight: '800' },
   disabled: { opacity: 0.55 },

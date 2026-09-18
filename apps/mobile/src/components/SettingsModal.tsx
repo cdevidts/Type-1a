@@ -13,6 +13,7 @@ import {
 import type { CGMProviderStatus, TherapyProfile } from '@type1a/schemas';
 
 import { API_BASE_URL } from '../api';
+import type { BackupExportOutcome, BackupImportOutcome } from '../backupOutcome';
 import type { CapillaryReminderSettings, CorrectionReminderSettings, MySugrImportOutcome } from '../db';
 import { capillaryReminderTimes, formatMinutesAsClock, parseMinuteOffsets, parsePositiveNumber } from '../format';
 import { logSaveError } from '../log';
@@ -25,8 +26,12 @@ import {
   saveSensorCredentials,
   testSensorCredentials,
 } from '../sensorConnection';
+import ChevronDown from 'lucide-react-native/icons/chevron-down';
+import ChevronUp from 'lucide-react-native/icons/chevron-up';
+
 import { colors, radius, spacing } from '../theme';
 import { InsulinPicker, InsulinPickerSafetyNote, insulinProfileFields, type InsulinSelection } from './InsulinPicker';
+import { DAY_SEGMENTS, type DaySegmentKey } from '@type1a/domain';
 import type { ReminderAlertStyle, ReportExport } from '../types';
 import { ModalShell } from './ModalShell';
 
@@ -164,6 +169,7 @@ export function SettingsModal({
   onImportMySugrCsv,
   onSaveProfile,
   onSaveInsulins,
+  onClearSegmentDuration,
   onEnableQuickEntry,
   mealAlarmOffsets,
   onSaveMealAlarmOffsets,
@@ -174,6 +180,8 @@ export function SettingsModal({
   capillaryReminder,
   onSaveCapillaryReminder,
   onExportReport,
+  onExportBackup,
+  onImportBackup,
   onSensorConnectionChange,
 }: {
   visible: boolean;
@@ -185,6 +193,10 @@ export function SettingsModal({
   showGlucoseOnLockScreen: boolean;
   onPrivacyChange: (show: boolean) => Promise<void>;
   onImportMySugrCsv: (csvText: string) => Promise<MySugrImportOutcome>;
+  /** Arma el `.t1a.json` y lo comparte. Devuelve qué se pudo guardar. */
+  onExportBackup: () => Promise<BackupExportOutcome>;
+  /** Lee un `.t1a.json` ya elegido y lo aplica. Devuelve qué entró. */
+  onImportBackup: (text: string) => Promise<BackupImportOutcome>;
   onSaveProfile: (profile: TherapyProfile) => Promise<void>;
   /**
    * Guarda el perfil **sin** marcarlo como configurado.
@@ -196,6 +208,12 @@ export function SettingsModal({
    * inferencia de parámetros que `AGENTS.md` prohíbe.
    */
   onSaveInsulins: (profile: TherapyProfile) => Promise<void>;
+  /**
+   * Quitar la duración propia de un tramo y volver a la general. Adoptar una
+   * se hace en Resumen → Insulina, junto a los datos que la justifican; poder
+   * deshacerla tiene que estar donde ella mira su configuración.
+   */
+  onClearSegmentDuration: (segment: DaySegmentKey) => Promise<void>;
   /** Requests notification permission, posts the sticky notification, and — on success — persists it as enabled and starts the background refresh. */
   onEnableQuickEntry: () => Promise<boolean>;
   mealAlarmOffsets: number[];
@@ -219,6 +237,9 @@ export function SettingsModal({
   const [sensorBusy, setSensorBusy] = useState(false);
   const [sensorMessage, setSensorMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // El menú arranca cerrado: importar es raro, y una lista siempre abierta le
+  // roba el sitio a "Exportar respaldo", que es lo que de verdad hay que hacer.
+  const [importMenuOpen, setImportMenuOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   // Until the profile has actually been configured, these fields start
@@ -232,6 +253,11 @@ export function SettingsModal({
   const [factorInput, setFactorInput] = useState(therapyConfigured ? String(profile.correctionFactor) : '');
   const [incrementInput, setIncrementInput] = useState(therapyConfigured ? String(profile.doseIncrement) : '');
   const [carbRatioInput, setCarbRatioInput] = useState(profile.carbRatio === undefined ? '' : String(profile.carbRatio));
+  /** Los tramos con duración propia, ordenados como el día. */
+  const segmentOverrides = DAY_SEGMENTS
+    .map((segment) => [segment.key, profile.segmentDurationHours?.[segment.key]] as const)
+    .filter((entry): entry is readonly [DaySegmentKey, number] => entry[1] !== undefined);
+
   const [rapidInsulin, setRapidInsulin] = useState<InsulinSelection>({
     id: profile.rapidInsulinId,
     durationHours: profile.rapidInsulinDurationHours,
@@ -520,6 +546,38 @@ export function SettingsModal({
     }
   }
 
+  async function importBackupFile(): Promise<void> {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const picked = await File.pickFileAsync({ mimeTypes: ['application/json', 'text/plain', '*/*'] });
+      if (picked.canceled) return;
+      const outcome = await onImportBackup(await picked.result.text());
+      setMessage(outcome.message);
+    } catch (error) {
+      setMessage(error instanceof Error
+        ? `No se pudo importar: ${error.message}. Tus datos actuales están intactos.`
+        : 'No se pudo importar el archivo. Tus datos actuales están intactos.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportBackupFile(): Promise<void> {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const outcome = await onExportBackup();
+      setMessage(outcome.message);
+    } catch (error) {
+      setMessage(error instanceof Error
+        ? `No se pudo exportar: ${error.message}. No se modificó nada.`
+        : 'No se pudo exportar. No se modificó nada.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function notifications(): Promise<void> {
     setBusy(true);
     try {
@@ -727,10 +785,56 @@ export function SettingsModal({
           {sensorMessage === null ? null : <Text style={styles.message}>{sensorMessage}</Text>}
 
           <Text style={styles.sectionTitle}>Importar historial</Text>
-          <Text style={styles.copy}>Carga un CSV exportado desde MySugr (glucosa, insulina, carbohidratos, comidas, actividad, vitales, HbA1c). Se guarda como historial local; importar el mismo archivo dos veces no duplica datos.</Text>
-          <Pressable style={[styles.connectButton, busy && styles.disabled]} disabled={busy} onPress={() => { void importCsv(); }}>
-            <Text style={styles.connectText}>Elegir archivo CSV de MySugr</Text>
+          <Text style={styles.copy}>Importar el mismo archivo dos veces no duplica nada, así que puedes repetirlo sin miedo.</Text>
+          <Pressable
+            style={styles.importToggle}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: importMenuOpen }}
+            accessibilityLabel={importMenuOpen ? 'Cerrar las opciones de importación' : 'Abrir las opciones de importación'}
+            onPress={() => { setImportMenuOpen((open) => !open); }}
+          >
+            <Text style={styles.importToggleText}>Elegir de dónde importar</Text>
+            {importMenuOpen
+              ? <ChevronUp size={18} color={colors.teal} />
+              : <ChevronDown size={18} color={colors.teal} />}
           </Pressable>
+          {importMenuOpen ? (
+            <View style={styles.importMenu}>
+              <Pressable
+                style={[styles.importOption, busy && styles.disabled]}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel="Importar desde un respaldo de Type 1A"
+                onPress={() => { void importBackupFile(); }}
+              >
+                <Text style={styles.importOptionTitle}>Respaldo de Type 1A (.t1a.json)</Text>
+                <Text style={styles.importOptionFoot}>Todo tu historial, tal como salió de otro teléfono: registros, catálogo, recetas, notas, ajustes y fotos.</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.importOption, busy && styles.disabled]}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel="Importar un archivo CSV de MySugr"
+                onPress={() => { void importCsv(); }}
+              >
+                <Text style={styles.importOptionTitle}>CSV de MySugr</Text>
+                <Text style={styles.importOptionFoot}>Glucosa, insulina, carbohidratos, comidas, actividad, vitales y HbA1c. Queda marcado como importado.</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          <Text style={styles.sectionTitle}>Respaldar todo</Text>
+          <Text style={styles.copy}>Guarda un archivo con absolutamente todo lo tuyo, para que puedas reinstalar la app o cambiar de teléfono sin perder nada. Cada glucosa conserva si vino del sensor o de tu glucómetro, y lo registrado junto sigue junto.</Text>
+          <Pressable
+            style={[styles.connectButton, busy && styles.disabled]}
+            disabled={busy}
+            accessibilityRole="button"
+            accessibilityLabel="Exportar un respaldo completo de Type 1A"
+            onPress={() => { void exportBackupFile(); }}
+          >
+            <Text style={styles.connectText}>{busy ? 'Preparando…' : 'Exportar respaldo completo'}</Text>
+          </Pressable>
+          <Text style={styles.copyFoot}>El archivo queda en tus manos: guárdalo donde tú quieras. No se sube a ninguna parte.</Text>
 
           </>
         ) : null}
@@ -935,11 +1039,48 @@ export function SettingsModal({
           <Text style={styles.hint}>"Carbs por unidad" es opcional — déjalo vacío si aún no lo tienes definido con tu equipo clínico. Se usa para el registro combinado de comida + corrección.</Text>
           <Text style={styles.sectionTitle}>Tus insulinas</Text>
           <Text style={styles.copy}>
-            Cuál usas y cuánto dura. Sirve para leer mejor tus patrones — no para calcular dosis.
+            Cuál usas y cuánto dura. Desde el 2026-09-02 la duración hace **dos** trabajos: leer mejor tus
+            patrones y, ahora también, calcular cuánta insulina sigue actuando para descontarla de tus
+            correcciones. Un número mal puesto acá cambia una dosis que la app te propone.
           </Text>
           <InsulinPicker category="rapid" selection={rapidInsulin} onChange={setRapidInsulin} />
           <InsulinPicker category="basal" selection={basalInsulin} onChange={setBasalInsulin} />
           <InsulinPickerSafetyNote />
+
+          {/*
+            Los overrides por tramo se ADOPTAN en Resumen → Insulina, donde
+            están los datos que los justifican. Pero tienen que verse acá
+            también: es la pantalla donde ella viene a mirar "qué tengo
+            configurado", y un parámetro que cambia una dosis y solo existe en
+            otra pantalla es un dato escondido. Acá se ven y se pueden quitar;
+            adoptarlos sigue siendo allá, junto a la evidencia.
+          */}
+          {segmentOverrides.length === 0 ? null : (
+            <View style={styles.segmentBox}>
+              <Text style={styles.segmentTitle}>Duración por tramo del día</Text>
+              {segmentOverrides.map(([key, hours]) => (
+                <View key={key} style={styles.segmentRow}>
+                  <Text style={styles.segmentRowLabel}>
+                    {DAY_SEGMENTS.find((segment) => segment.key === key)?.label ?? key}
+                  </Text>
+                  <Text style={styles.segmentRowValue}>{hours} h</Text>
+                  <Pressable
+                    style={styles.segmentRemove}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Quitar la duración propia de ${key}`}
+                    onPress={() => { void onClearSegmentDuration(key as DaySegmentKey); }}
+                    hitSlop={8}
+                  >
+                    <Text style={styles.segmentRemoveText}>Quitar</Text>
+                  </Pressable>
+                </View>
+              ))}
+              <Text style={styles.copy}>
+                En esos tramos se usa esa duración en vez de la general. Los mides y los adoptas en Resumen →
+                Insulina, donde se ve de cuántos episodios sale cada uno.
+              </Text>
+            </View>
+          )}
           {/*
             Botón propio, separado del de parámetros de terapia (2026-08-25,
             tras la revisión de seguridad). Guardar las insulinas por
@@ -1019,6 +1160,13 @@ export function SettingsModal({
 }
 
 const styles = StyleSheet.create({
+  segmentBox: { backgroundColor: colors.background, borderRadius: radius.md, borderWidth: 1, borderColor: colors.line, padding: spacing.md, marginTop: spacing.md },
+  segmentTitle: { color: colors.ink, fontSize: 14, fontWeight: '800', marginBottom: spacing.xs },
+  segmentRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 44 },
+  segmentRowLabel: { flex: 1, color: colors.ink, fontSize: 13, fontWeight: '700' },
+  segmentRowValue: { color: colors.navy, fontSize: 14, fontWeight: '800' },
+  segmentRemove: { minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.sm },
+  segmentRemoveText: { color: colors.red, fontSize: 12, fontWeight: '800' },
   // Mismos tokens y medidas que la barra de pestañas de `SummaryModal`: las
   // dos pantallas con sub-páginas de la app tienen que leerse igual.
   tabBar: {
@@ -1065,6 +1213,20 @@ const styles = StyleSheet.create({
   diagnostic: { color: colors.muted, fontSize: 12, marginTop: 5 },
   message: { color: colors.warning, backgroundColor: colors.warningSoft, borderRadius: radius.sm, padding: spacing.md, fontSize: 13, lineHeight: 19, marginTop: spacing.xl },
   disabled: { opacity: 0.55 },
+  importToggle: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderColor: colors.teal, borderWidth: 1, borderRadius: radius.sm,
+    paddingHorizontal: spacing.md, minHeight: 48, marginTop: spacing.sm,
+  },
+  importToggleText: { color: colors.teal, fontSize: 14, fontWeight: '800' },
+  importMenu: { marginTop: spacing.sm, gap: spacing.sm },
+  importOption: {
+    borderColor: colors.line, borderWidth: 1, borderRadius: radius.sm,
+    padding: spacing.md, minHeight: 44,
+  },
+  importOptionTitle: { color: colors.ink, fontSize: 14, fontWeight: '700' },
+  importOptionFoot: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: 2 },
+  copyFoot: { color: colors.muted, fontSize: 12, lineHeight: 17, marginTop: spacing.sm },
   row: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
   therapyField: { flex: 1 },
   therapyFieldLabel: { color: colors.muted, fontSize: 12, fontWeight: '700', marginBottom: 4 },
