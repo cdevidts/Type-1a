@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { assessFreshness, calculateCorrection, convertGlucose, isSensorReading, type CorrectionResult,
   activeInsulinUnits,
+  dosesExcluding,
+  recentMealOnlyDose,
   rapidInsulinActionModel,
 } from '@type1a/domain';
 import type { CGMReading, InsulinEvent, TherapyProfile } from '@type1a/schemas';
@@ -110,6 +112,29 @@ export function CorrectionModal({
   const [activeDoseCount, setActiveDoseCount] = useState(0);
 
   const actionModel = rapidInsulinActionModel(profile);
+
+  /**
+   * ¿Acaba de pincharse **solo por comida**?
+   *
+   * Entonces esas unidades no son insulina "de sobra" que baje su glucosa: van
+   * a cubrir los carbohidratos. Restárselas le da 0 U cuando en realidad le
+   * falta la corrección — exactamente lo que ella reportó. La regla del ADR
+   * 0006 no cambia; lo que se hace es ofrecerle **sumar** a esa dosis, que es
+   * completar el mismo acto y no apilar uno nuevo.
+   */
+  const sameAct = useMemo(
+    () => recentMealOnlyDose(recentRapid, new Date().toISOString()),
+    [recentRapid],
+  );
+  /** El activo que sí corresponde descontar si suma a esa dosis. */
+  const activeBesidesSameAct = useMemo(() => {
+    if (sameAct === null || actionModel === undefined) return undefined;
+    return activeInsulinUnits(
+      dosesExcluding(recentRapid, sameAct.event.id),
+      new Date().toISOString(),
+      actionModel,
+    );
+  }, [sameAct, recentRapid, actionModel]);
 
   /**
    * Insulina rápida que sigue actuando ahora.
@@ -341,6 +366,40 @@ export function CorrectionModal({
 
       {result === null ? null : (
         <View style={styles.resultBox}>
+          {sameAct === null ? null : (
+            /* El caso que ella reportó: acaba de pincharse SOLO por comida, y
+               esas unidades no son insulina de sobra — van a los
+               carbohidratos. La regla del ADR 0006 no cambia; lo que cambia es
+               que la pantalla lo dice y ofrece completar la misma dosis en vez
+               de que ella lea un 0 U sin explicación. */
+            <View style={styles.sameActBox}>
+              <Text style={styles.sameActTitle}>
+                Esas {sameAct.event.units} U de hace {sameAct.minutesAgo} min fueron solo por comida
+              </Text>
+              <Text style={styles.sameActBody}>
+                Van a cubrir tus carbohidratos, así que abajo se descuentan y la
+                corrección puede darte 0 U. Si tu glucosa llegó tarde y esto es
+                el mismo momento, lo correcto es <Text style={styles.sameActStrong}>sumar</Text> la
+                corrección a esa dosis, no ponerte otra encima: edítala desde la
+                línea de tiempo y súmale las unidades.
+              </Text>
+              {result === null ? null : (
+                // El número que ella necesita, calculado con SUS parámetros y
+                // descontando solo la insulina de OTRAS dosis: restar la que
+                // está por completar sería contarla dos veces.
+                <Text style={styles.sameActStrong}>
+                  Para sumar a esa dosis:{' '}
+                  {Number(Math.max(
+                    0,
+                    result.beforeActiveUnits - (activeBesidesSameAct?.units ?? 0),
+                  ).toFixed(2))} U
+                  {activeBesidesSameAct !== undefined && activeBesidesSameAct.units > 0
+                    ? ` (ya descontadas ${Number(activeBesidesSameAct.units.toFixed(2))} U de otras dosis)`
+                    : ''}
+                </Text>
+              )}
+            </View>
+          )}
           <Text style={styles.resultLabel}>RESULTADO DE LA FÓRMULA · {formatClock(calculatedAt)}</Text>
           <Text style={styles.resultValue}>{result.roundedUnits} U</Text>
           <Text style={styles.formula}>{result.formula} = {result.rawUnits.toFixed(2)} U, redondeado al incremento.</Text>
@@ -407,6 +466,13 @@ const styles = StyleSheet.create({
   error: { color: colors.red, fontSize: 13, marginTop: spacing.md },
   calculateButton: { backgroundColor: colors.teal, borderRadius: radius.md, padding: spacing.lg, alignItems: 'center', marginTop: spacing.xl },
   calculateText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
+  sameActBox: {
+    gap: spacing.xs, marginBottom: spacing.md, padding: spacing.md,
+    borderRadius: radius.sm, backgroundColor: colors.warningSoft,
+  },
+  sameActTitle: { fontSize: 15, fontWeight: '700', color: colors.ink },
+  sameActBody: { fontSize: 13, lineHeight: 19, color: colors.ink },
+  sameActStrong: { fontWeight: '700' },
   resultBox: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.lg, marginTop: spacing.lg, borderWidth: 2, borderColor: colors.teal },
   resultLabel: { color: colors.teal, fontSize: 11, fontWeight: '900', letterSpacing: 0.8 },
   resultValue: { color: colors.ink, fontSize: 48, fontWeight: '900', marginTop: 2 },

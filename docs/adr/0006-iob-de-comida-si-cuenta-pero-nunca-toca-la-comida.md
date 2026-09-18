@@ -88,3 +88,36 @@ corrección a cero y ahí se detiene.
   glucosa esté en objetivo o por encima.
 - Si algún día se agrega COB, este ADR se revisa entero: el argumento de arriba
   depende de no tenerlo.
+
+## Addendum (2026-09-18): se reafirma, y se agrega el caso que faltaba
+
+Verónica lo cuestionó con un caso real: subió una foto al Modal Maestro, **su
+glucosa no alcanzó a cargar**, así que calculó 6 U **solo por los
+carbohidratos**; un minuto después abrió la corrección y esas 6 U aparecieron
+como activas, dándole **0 U con 171 mg/dL**. Su argumento: *"era solo por la
+comida, no había NADA que descontar."*
+
+**Tenía razón sobre el hecho y la decisión no cambia.** Se le presentaron las
+dos opciones con su costo y eligió mantener la regla: contar la insulina de
+comida de más da una corrección menor, reevaluable en una hora; no contarla da
+una corrección de más, y eso se descubre en una hipoglucemia.
+
+Lo que el ADR no había previsto es que **el acto quedara partido en dos**. Con
+la glucosa cargada, un solo cálculo le habría dado 8 U (6 de comida + 2,37 de
+corrección) — verificado con `calculateMealBolus`. El error no fue la resta:
+fue que una calculadora de comida y una de corrección, separadas por un minuto,
+se leen como dos dosis cuando son una.
+
+Se agrega `meal-only-dose.ts`: si la dosis reciente tenía `correctionUnits === 0`
+y `mealUnits > 0` —el desglose está guardado por dosis desde la Fase 24— la
+corrección **lo dice en pantalla** y le ofrece el número para **sumar a esa
+dosis**, descontando solo la insulina de *otras* dosis. Sumar a una dosis que
+aún no terminó de definirse no es apilar: es completar el mismo acto.
+
+**Ausente sigue significando "no se sabe", nunca cero**: una dosis escrita a
+mano o importada no califica, porque sin desglose no se puede afirmar que no
+traía corrección.
+
+La causa de raíz —que su glucosa llegara tarde— se atacó aparte:
+`syncWindowFrom` reemplaza la ventana fija de 4 h, que dejaba sin pedir todo lo
+ocurrido durante un sueño más largo que eso.

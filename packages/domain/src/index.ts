@@ -28,6 +28,7 @@ export * from './macros-source';
 export * from './nutrition-targets';
 export * from './meal';
 export * from './meal-cart';
+export * from './meal-only-dose';
 export * from './mysugr-import';
 export * from './nutrition-insights';
 export * from './regression';
