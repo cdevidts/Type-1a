@@ -101,7 +101,18 @@ export function InsulinBreakdown({
             emphasis
           />
           {!activeWasSubtracted ? (
-            <Row label="No se descontó (este conteo no calcula corrección)" value="0 U" />
+            // Paralela a la otra rama: la etiqueta "No se descontó" lleva
+            // SIEMPRE cuánto no se descontó. Ponerle un 0 acá repetía el
+            // defecto que este panel vino a cerrar — una etiqueta con dos
+            // significados —, y "No se descontó · 0 U" se lee como "no queda
+            // nada actuando", que es lo contrario de lo que pasa.
+            <>
+              <Row label="Descontado de la corrección" value="0 U" emphasis />
+              <Row
+                label="No se descontó (este conteo no calcula corrección)"
+                value={`${round(activeInsulinUnits)} U`}
+              />
+            </>
           ) : (
             <>
               <Row label="Descontado de la corrección" value={`− ${round(applied)} U`} emphasis />

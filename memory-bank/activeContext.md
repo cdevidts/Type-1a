@@ -1,30 +1,35 @@
 # Active Context
 
-_Última actualización: 2026-09-11 (el agente en el teléfono: lo que falló de verdad)._
+_Última actualización: 2026-09-18 (insulina activa: etiquetas, horas y asociación)._
 
 ## El agente: el andamio y el turno (2026-09-10)
 
 `docs/adr/0008`. **Salida estructurada, no tool calling**: RouteLLM devuelve las
 llamadas a herramienta como **texto plano**, y una escritura que degrada a prosa
 significa que el modelo dice "listo, registré tu comida" y no se escribió nada.
-`json_schema` ya está en producción acá y sobrevivió al incidente de
-`exclusiveMinimum`. (Lo que se midió del audio quedó en el 0008; el 0009 lo
-reemplaza: ese camino no se implementó.)
+(El audio medido quedó en el 0008; el 0009 lo reemplaza.)
 
 **El registro es código**: `agent-tools.ts` declara qué alcanza y qué no con su
 motivo, y `verify:contracts` falla si una función de `db.ts` no está en ninguna
 lista: cazó una sin clasificar, y un test cazó ocho motivos de relleno míos.
 **El borrador es del mismo tipo que el payload del Modal Maestro**, y `saveTherapyProfile` no es alcanzable: nunca.
 
-**Lo que el teléfono enseñó y el repo no.** Ella instaló y encontró dos cosas
-que ninguna suite habría visto: el micrófono salió **sin permiso** (otro plugin
-lo bloqueaba con `microphonePermission: false`, que gana sobre toda declaración)
-y el asistente estaba "tonto" por **cableado ausente**, no por el modelo: la foto
-se descartaba (`void imageBase64`), no se mandaba `history`, y pedir una dosis
-terminaba en un rechazo sin salida. Las tres cableadas; la tercera abre la
-calculadora, que siempre estuvo permitida y no se alcanzaba desde el chat.
-**La lección: un permiso y un cableado se verifican en el artefacto, no en el
-código fuente** — el manifiesto generado, el APK, el endpoint en vivo.
+**La insulina activa, revisada entera (2026-09-18).** Ella vio 5,98 U en una
+pantalla y 2 U en otra, en el mismo minuto: no era el cálculo, era **la etiqueta
+valiendo dos cantidades**. De ahí salió una auditoría con doce hallazgos, y el
+peor lo había introducido yo ese mismo día: un "hace 3 horas" retrofechaba una
+dosis recién puesta y la corrección siguiente proponía **de más**. Quedó cerrado
+por adyacencia, con test. También: la app **preguntaba por asociaciones que ya
+sabía** (comida e insulina comparten `entry_group_id` y nadie lo consultaba —
+Regla 3b donde faltaba), y la sincronización pedía **4 h fijas**, así que un
+hueco más largo no se pedía nunca. ⚠️ **Abierto y de ella**: si la insulina de
+comida debe contar como activa contra una corrección nueva (`docs/adr/0006`).
+
+**Lo que el teléfono enseñó y el repo no.** El micrófono salió **sin permiso**
+(otro plugin lo bloqueaba) y el asistente estaba "tonto" por **cableado
+ausente**, no por el modelo. **La lección: un permiso y un cableado se verifican
+en el artefacto —el manifiesto generado, el APK, el endpoint en vivo—, no en el
+código fuente.**
 
 **El dictado no manda audio a ninguna parte** (`docs/adr/0009`). El plan del 0008
 —subir el archivo— murió contra un hecho que no miré: Android no graba en wav ni
@@ -33,17 +38,13 @@ se transcribe **en el teléfono** cuando el aparato puede (si no, se pide permis
 antes de grabar), las pistas de vocabulario **no salen** si no es local, y **el
 micrófono es un teclado, no un botón de enviar.**
 
-**El dictado ya no escribe en el log del sistema**, y el cómo importa: se
-intentó primero comprimiendo la app con la regla que Android recomienda, **se
-construyó el APK y no borró nada**. Una regla de ProGuard no se puede verificar
-desde acá; un parche de la dependencia sí, y además no cambia cómo se arma la
-app. Lo que yo había dicho —que ese log "solo se ve con un cable"— era falso.
+**El dictado ya no escribe en el log del sistema**: se intentó comprimiendo la
+app con la regla que Android recomienda, **se construyó el APK y no borró nada**.
+Una regla de ProGuard no se verifica desde acá; un parche de la dependencia sí.
 
-**El botón ya existía y yo agregué otro.** La posición 4 de la barra era del
-chat desde siempre; la dejé diciendo "todavía no está" y metí un acceso rápido
-redundante. Lo cazó ella. Hoy la posición 4 abre la pantalla y `chat` entró al
-swipe — pero su modal **no** lleva `swipeHandlers`: adentro hay un cuadro de
-texto, y eso es un formulario.
+**El botón del chat ya existía y yo agregué otro** (posición 4 de la barra, con
+el logo). Hoy `chat` entró al swipe, pero su modal **no** lleva `swipeHandlers`:
+adentro hay un cuadro de texto, y eso es un formulario.
 
 ## Ni sincronización ni datos de salud en un servidor (2026-09-04)
 

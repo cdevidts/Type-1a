@@ -128,3 +128,14 @@ parámetros mandaba a tres campos en blanco (ahora a Ajustes); el texto sin
 precarga negaba la lectura aunque ella la hubiera borrado; y se saltaba
 `openQuickRoute`. El error de red además **mentía** ("lo que escribiste sigue
 acá" con el cuadro vacío).
+
+## Los otros nueve hallazgos de la auditoría del 2026-09-18
+
+Los otros: "Corregir" tiraba la hora (el bug original vivo en la otra rama del
+botón); la corrección suelta imprimía "− 5,98 U descontadas" con solo 2,37 que
+descontar, y guardaba lo **disponible** en vez de lo **aplicado**; la fórmula no
+cuadraba con su propio resultado; el maestro no advertía de dosis ilegibles
+(activo de menos → dosis de más); los carbohidratos de la IA se guardaban como
+**confirmados por ella** y así iban al PDF del médico; "hace una hora y media"
+valía 60 min; `\bmes` matcheaba "mesa"; y **la cámara del chat mandaba una ruta
+de archivo donde el backend espera la imagen**, así que nunca funcionó.

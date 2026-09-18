@@ -30,3 +30,27 @@ describe('parseElapsedMinutes — el tiempo no es relleno', () => {
     expect(prefill.minutesAgo).toBe(120);
   });
 });
+
+describe('el tiempo NO puede retrofechar una dosis que no le corresponde', () => {
+  const prefill = (text: string) => toPrefill(parseLocalIntent(text, 'mg/dL').intents);
+
+  it('el caso grave: el tiempo es de la comida, no de la insulina', () => {
+    // Retrofechar las 6 U hundía el activo de ~5,4 U a ~1 U, y la corrección
+    // siguiente proponía ~4 U APILADAS sobre una dosis actuando entera. Es la
+    // inversión del bug original, y del lado grave.
+    expect(prefill('me puse 6 de rápida, comí hace 3 horas')).toEqual({ rapidUnits: 6 });
+    expect(prefill('me puse 6 de rápida y comí un plato hace 2 horas').minutesAgo).toBeUndefined();
+  });
+
+  it('con dos cosas registradas no se retrofecha ninguna', () => {
+    expect(prefill('comí 40 g hace 3 horas y me puse 6 de rápida').minutesAgo).toBeUndefined();
+  });
+
+  it('pero sí cuando el tiempo va pegado a la dosis', () => {
+    expect(prefill('me puse 6 de rápida hace 2 horas')).toEqual({ rapidUnits: 6, minutesAgo: 120 });
+  });
+
+  it('"hace una hora y media" son 90 minutos, no 60', () => {
+    expect(parseElapsedMinutes('hace una hora y media')).toBe(90);
+  });
+});

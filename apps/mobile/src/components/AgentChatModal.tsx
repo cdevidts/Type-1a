@@ -257,7 +257,11 @@ export function AgentChatModal({
         : {
             ...localPrefill,
             ...(turn.draft.waterMl === null ? {} : { waterMl: turn.draft.waterMl }),
-            ...(turn.draft.foods === null ? {} : { carbsG: sumCarbs(turn.draft.foods) }),
+            // Son del modelo mirando una foto: se marcan como tales para que
+            // no aterricen como "confirmados por ella" en el reporte clínico.
+            ...(turn.draft.foods === null
+              ? {}
+              : { carbsG: sumCarbs(turn.draft.foods), carbsFromAi: true }),
           };
       // Red de seguridad: si el turno vuelve como RECHAZO, lleva el botón de la
       // calculadora aunque el detector local no haya visto la frase.
@@ -331,11 +335,25 @@ export function AgentChatModal({
     if (picked.canceled) return;
     const asset = picked.assets[0];
     if (asset === undefined) return;
+    // **`base64: true` y `resize`, como el camino que sí funciona.**
+    // Esto mandaba `compressed.uri` —una ruta `file:///…`— al parámetro
+    // `imageBase64`, así que el backend nunca recibía una imagen: la cámara
+    // del chat no podía funcionar. Y la foto guardada se descartaba, así que
+    // la comida registrada desde el chat quedaba sin foto.
     const context = ImageManipulator.ImageManipulator.manipulate(asset.uri);
+    context.resize({ width: 1280, height: null });
     const rendered = await context.renderAsync();
-    const compressed = await rendered.saveAsync({ compress: 0.72, format: ImageManipulator.SaveFormat.JPEG });
+    const compressed = await rendered.saveAsync({
+      base64: true,
+      compress: 0.72,
+      format: ImageManipulator.SaveFormat.JPEG,
+    });
+    if (compressed.base64 === undefined) {
+      setError('No pude preparar la foto. Puedes describir la comida escribiendo.');
+      return;
+    }
     await persistPhoto(compressed.uri);
-    await send(input, compressed.uri);
+    await send(input, compressed.base64);
   }, [input, send]);
 
   const resolve = useCallback((id: string): void => {

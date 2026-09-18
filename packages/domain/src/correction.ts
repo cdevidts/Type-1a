@@ -20,8 +20,14 @@ export interface CorrectionResult {
   roundedUnits: number;
   /** La corrección antes de descontar el IOB, para poder mostrar el desglose. */
   beforeActiveUnits: number;
-  /** Lo descontado, o `undefined` si no se sabía cuánta insulina hay activa. */
+  /** La insulina que sigue actuando, o `undefined` si no se sabe. */
   activeInsulinUnits: number | undefined;
+  /**
+   * Cuánto de eso **bajó la dosis de verdad**. Puede ser menos: la resta se
+   * detiene en 0. Es lo que se imprime y lo que se guarda — nunca lo
+   * disponible (`contracts/safety-acceptance.md`).
+   */
+  activeInsulinAppliedUnits: number | undefined;
   isBelowTarget: boolean;
   /**
    * Glucose is in hypoglycemic range — a different situation from merely
@@ -62,18 +68,38 @@ export function calculateCorrection(input: z.input<typeof CorrectionInputSchema>
   // tienes suficiente insulina actuando.
   const raw = beforeActive - (parsed.activeInsulinUnits ?? 0);
   const nonNegativeRaw = Math.max(0, raw);
+  /**
+   * Cuánto del activo **bajó la dosis de verdad**.
+   *
+   * No es lo mismo que el activo disponible: la resta se detiene en 0. Con 2,37
+   * U de corrección y 5,98 U actuando, se aplicaron 2,37 y sobraron 3,61 — pero
+   * la pantalla imprimía "− 5,98 U" y la fórmula escribía una resta que daba
+   * −3,61 sobre un resultado de 0,00. `bolus.ts` ya lo hacía bien para comida;
+   * esto se había quedado atrás. Lo cazó la revisión de seguridad.
+   */
+  const appliedActive = parsed.activeInsulinUnits === undefined
+    ? undefined
+    : Math.min(parsed.activeInsulinUnits, Math.max(0, beforeActive));
 
   return {
     rawUnits: nonNegativeRaw,
     roundedUnits: roundToIncrement(nonNegativeRaw, parsed.doseIncrement),
     beforeActiveUnits: beforeActive,
     activeInsulinUnits: parsed.activeInsulinUnits,
+    activeInsulinAppliedUnits: appliedActive,
     // Describe la GLUCOSA, no el resultado de la resta: "estás bajo objetivo"
     // y "ya tienes insulina de sobra" son dos cosas distintas y la pantalla
     // las dice distinto.
     isBelowTarget: beforeActive < 0,
     isHypoglycemic: isHypoglycemic(parsed.currentGlucose),
+    // **La resta que se imprime es la que se hizo.** Antes escribía el activo
+    // entero y el resultado no cuadraba con la aritmética a la vista.
     formula: `(${parsed.currentGlucose} − ${parsed.targetGlucose}) ÷ ${parsed.correctionFactor}`
-      + (parsed.activeInsulinUnits === undefined ? '' : ` − ${parsed.activeInsulinUnits} U activas`),
+      + (appliedActive === undefined
+        ? ''
+        : ` − ${Number(appliedActive.toFixed(2))} U activas`
+          + (parsed.activeInsulinUnits !== undefined && parsed.activeInsulinUnits - appliedActive > 0.005
+            ? ` (de ${Number(parsed.activeInsulinUnits.toFixed(2))} actuando)`
+            : '')),
   };
 }

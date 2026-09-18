@@ -201,17 +201,19 @@ export function isPlausibleGlucose(value: number, unit: GlucoseUnit): boolean {
  * con ella la corrección que la app propone.
  */
 const ELAPSED_PATTERN =
-  /\bhace\s+(?:(\d{1,3})|una?|medi[ao])\s*(?:(y\s+medi[ao])\s*)?(h|hr|hrs|hora|horas|min|mins|minuto|minutos)\b/iu;
+  /\bhace\s+(?:(\d{1,3})|una?|medi[ao])\s*(h|hr|hrs|hora|horas|min|mins|minuto|minutos)\b(\s+y\s+medi[ao])?/iu;
 
 /** Minutos que dice la frase, o `null` si no dice un tiempo concreto. */
 export function parseElapsedMinutes(text: string): number | null {
   const match = ELAPSED_PATTERN.exec(text);
   if (match === null) return null;
-  const [, digits, andHalf, rawUnit] = match;
+  const [, digits, rawUnit, andHalf] = match;
   const isHours = /^h/iu.test(rawUnit ?? '');
   let amount: number;
   if (digits !== undefined) amount = Number(digits);
-  else if (/medi/iu.test(match[0])) amount = 0.5;
+  // Solo el trozo ANTES de la unidad decide el monto: mirar `match[0]` entero
+  // hacía que "hace una hora y media" valiera 0,5 h por el "media" del final.
+  else if (/\bhace\s+medi[ao]\b/iu.test(match[0])) amount = 0.5;
   else amount = 1; // "hace una hora"
   if (andHalf !== undefined) amount += 0.5;
   const minutes = Math.round(isHours ? amount * 60 : amount);
@@ -219,6 +221,24 @@ export function parseElapsedMinutes(text: string): number | null {
   // no es algo que se cuente de pasada en un chat.
   if (!Number.isFinite(minutes) || minutes <= 0 || minutes > 3 * 24 * 60) return null;
   return minutes;
+}
+
+/**
+ * ¿El "hace N" va pegado a la mención de la insulina?
+ *
+ * Entre el final de la dosis y el "hace" no puede haber más que espacios o
+ * puntuación. Si hay otro verbo en medio ("comí"), el tiempo es de esa otra
+ * cosa y aplicarlo a la insulina mueve el IOB en la dirección peligrosa.
+ */
+function elapsedIsAdjacentToInsulin(text: string): boolean {
+  const elapsed = ELAPSED_PATTERN.exec(text);
+  if (elapsed === null) return false;
+  const before = text.slice(0, elapsed.index);
+  // Entre la dosis y el "hace" solo puede haber separadores. Cualquier otra
+  // palabra —"comí", "y tomé"— significa que el tiempo es de otra cosa.
+  const doseTail =
+    /\d+(?:[.,]\d+)?\s*(?:u|unidades?|uds?)?(?:\s+de)?(?:\s+(?:r[aá]pida|basal|lenta|insulina))?[\s,.;:]*$/iu;
+  return doseTail.test(before);
 }
 
 export function parseLocalIntent(text: string, unit: GlucoseUnit): LocalParseResult {
@@ -243,8 +263,30 @@ export function parseLocalIntent(text: string, unit: GlucoseUnit): LocalParseRes
   // El tiempo se lee sobre el texto ORIGINAL, no sobre `rest`: los patrones de
   // arriba ya consumieron trozos, y "hace" estaba además en la lista de
   // relleno, así que buscarlo en el sobrante lo perdería.
+  // El tiempo se aplica **solo si el mensaje registra UNA sola cosa**.
+  //
+  // Con dos, no se sabe a cuál se refiere, y equivocarse es grave en una
+  // dirección: "me puse 6 de rápida, comí hace 3 horas" retrofechaba la dosis
+  // recién puesta, el activo caía de ~5,4 U a ~1 U, y la corrección siguiente
+  // proponía ~4 U **apiladas sobre una dosis actuando entera**. Lo cazó la
+  // revisión de seguridad, y es la inversión exacta del bug que este cambio
+  // vino a arreglar: aquel proponía de menos, este de más.
+  //
+  // Con más de una cosa se registra con la hora actual y la tarjeta lo dice;
+  // "Corregir" abre el maestro, donde la hora se edita campo por campo.
   const minutesAgo = parseElapsedMinutes(text);
-  if (minutesAgo !== null && intents.length > 0) {
+  const touchesInsulin = intents.some((i) => i.kind === 'insulin');
+  // Con insulina en juego se exige que el tiempo vaya **pegado** a ella.
+  //
+  // "me puse 6 de rápida, comí hace 3 horas" dice que la COMIDA fue hace 3 h;
+  // las 6 U son de ahora. Retrofecharlas hundía el activo de ~5,4 U a ~1 U y la
+  // corrección siguiente proponía ~4 U apiladas sobre una dosis actuando
+  // entera. Lo cazó la revisión: es la inversión del bug que esto vino a
+  // arreglar, y del lado grave.
+  const applies = minutesAgo !== null
+    && intents.length === 1
+    && (!touchesInsulin || elapsedIsAdjacentToInsulin(text));
+  if (applies && minutesAgo !== null) {
     intents.push({ kind: 'elapsed', minutesAgo });
     rest = rest.replace(ELAPSED_PATTERN, ' ');
   }
@@ -311,6 +353,14 @@ export interface EntryPrefill {
    * mg/dL. Descartar el tiempo no era neutro.
    */
   minutesAgo?: number;
+  /**
+   * `true` si los carbohidratos son una **estimación del modelo**, no algo que
+   * ella confirmó.
+   *
+   * Sin esto aterrizaban en `confirmedCarbsG` y el PDF del médico los imprimía
+   * como "confirmados". `AGENTS.md` exige que sigan separados.
+   */
+  carbsFromAi?: boolean;
   glucose?: { value: number; unit: GlucoseUnit };
   carbsG?: number;
   rapidUnits?: number;

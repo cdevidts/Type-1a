@@ -4,9 +4,9 @@ import * as TaskManager from 'expo-task-manager';
 import * as SQLite from 'expo-sqlite';
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-import { latestLiveReading } from '@type1a/domain';
+import { latestLiveReading, syncWindowFrom } from '@type1a/domain';
 
-import { getSetting, initializeDatabase, upsertCGMReadings } from './db';
+import { getSetting, initializeDatabase, latestStoredReadingTimestamp, upsertCGMReadings } from './db';
 import {
   fetchSensorReadings,
   fetchSensorStatus,
@@ -29,7 +29,13 @@ const DATABASE_NAME = 'type1a.db';
  */
 const MINIMUM_INTERVAL_MINUTES = 15;
 
-const SYNC_WINDOW_MS = 4 * 60 * 60_000;
+/**
+ * La ventana ya **no** es fija.
+ *
+ * Pedir siempre las últimas 4 h dejaba fuera todo lo anterior cuando Android
+ * mantenía la app dormida más que eso — y esos datos no llegaban tarde: no se
+ * pedían nunca. `syncWindowFrom` arranca en la última lectura guardada.
+ */
 
 /**
  * `useNewConnection` no es una optimización: es la mitad del arreglo del bug
@@ -128,7 +134,7 @@ async function runCgmSync(db: SQLiteDatabase): Promise<void> {
   if (source === 'none') return;
 
   const to = new Date();
-  const from = new Date(to.getTime() - SYNC_WINDOW_MS);
+  const from = syncWindowFrom(await latestStoredReadingTimestamp(db), to);
   const [status, readings] = await Promise.all([
     fetchSensorStatus(source),
     fetchSensorReadings(source, from, to),

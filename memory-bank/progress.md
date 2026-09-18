@@ -96,36 +96,55 @@ el picker no la necesita (`mediaTypes: ['images']` en cada `launchCameraAsync`).
 **Verificado en el manifiesto generado por `prebuild` ANTES de construir**, que
 es lo que faltó. `microphonePermissionSurvives()` lo detiene.
 
-### 🔴→✅ Dos pantallas decían distinta insulina activa, y la hora se inventaba (2026-09-18)
-Ella lo cazó en el teléfono: la corrección decía **5,98 U activas** y la edición
-de la comida **2 U**, con las mismas dosis y en el mismo minuto.
+### 🔴→✅ La auditoría de insulina activa: 12 hallazgos (2026-09-18)
+Pedida por ella tras la captura del 0 U. El peor **lo introduje ese mismo día**:
+un solo `minutesAgo` retrofechaba **todo** el registro, así que "me puse 6 de
+rápida, comí hace 3 horas" hundía el activo de ~5,4 U a ~1 U y la corrección
+siguiente proponía **~4 U apiladas** sobre una dosis actuando entera — la
+inversión del bug original, y del lado grave. Cerrado por **adyacencia**: con
+insulina en juego, el "hace N" solo aplica si va pegado a la dosis.
 
-**No era un error de cálculo: era la etiqueta.** `InsulinBreakdown` rotulaba
-"Insulina todavía activa" y mostraba `applied` —lo que se alcanzó a descontar,
-topado por la corrección—, así que la misma etiqueta valía dos cantidades. Ahora
-la insulina activa se muestra **siempre entera**, y el descuento va en su propia
-fila. En una pantalla de dosis esto es lo que menos puede pasar.
+Los otros nueve, con archivo y línea, en `reference/failure-history.md`.
 
-**Y una dosis de hace horas se registraba como recién puesta.** `confirmAgentDraft`
-estampaba `new Date()` siempre, y "hace", "rato", "horas" y "minutos" estaban en
-la lista de **palabras de relleno** del parser. "Me puse 6 de rápida hace un
-rato" → 6 U con la hora actual → insulina activa inflada → la calculadora resta
-de más y le propuso **0 U con 171 mg/dL**. Descartar el tiempo no era neutro.
-Ahora `parseElapsedMinutes` lo entiende cuando hay un número ("hace 2 horas",
-"hace media hora") y **no inventa nada** cuando no lo hay ("hace un rato"), la
-tarjeta muestra **siempre** con qué hora va a guardar, y `confirmAgentDraft` la
-respeta. ⚠️ `local-intent` **no tenía ningún test** hasta hoy.
+### 🔴→✅ La app preguntaba lo que ya sabía (2026-09-18)
+*"Siempre me pregunta si tal insulina era de tal comida. El 99% de los casos la
+guardo junto a la comida."* Cierto: "Nueva entrada" las escribe con el **mismo
+`entry_group_id`** y nadie lo consultaba — el candidato se buscaba por cercanía
+de timestamp (−90/+60), que es la causa raíz documentada del bug insulina↔comida
+de la Fase 21. `linkInsulinSavedWithItsMeal` lo resuelve al leer los pendientes,
+así que **repara también lo ya guardado**.
 
-**El ruteo ya no secuestra la pantalla.** *"Si se detecta en el mensaje una
-palabra clave, te abre un modal aunque no sea lo que quieres"*. Dos reglas:
-preguntar por correcciones **pasadas** no rutea (`ASKS_ABOUT_HISTORY`), y
-`calculatorOpensOnItsOwn` exige que el mensaje sea **eso y nada más** —corto, sin
-nada que registrar, sin foto, sin dos preguntas— para abrirse solo. Con cualquier
-otra cosa viene un botón y decide ella. Concilia sus dos quejas opuestas.
+### 🔴→✅ La sincronización pedía 4 h fijas y perdía los huecos (2026-09-18)
+*"A veces no guarda hasta que yo la abra, y ahí se pierden muchas cosas."* La
+ventana era fija: dormida 9 h, lo ocurrido entre la hora 9 y la 4 **no se pedía
+nunca**. `syncWindowFrom` arranca en la última lectura guardada, con piso de 4 h
+y tope de 24 h.
+
+### ⚠️ ABIERTO Y DE ELLA: ¿la insulina de comida cuenta como activa?
+Ella sostiene que no: *"era solo por la comida, no había NADA que descontar."*
+`docs/adr/0006` decidió que **sí**, y su objeción está ahí escrita como "la
+objeción legítima": los dos errores no cuestan lo mismo — contarla de más da una
+corrección menor, reevaluable en una hora; no contarla da una de más, y eso se
+descubre en una hipo. **Lo que cambió**: hoy cada dosis guarda su desglose
+comida/corrección, así que "sin COB, lo seguro es el IOB completo" ya no es la
+única opción técnica. **No se toca sin que ella decida**; si cambia, va con ADR.
+
+### 🔴→✅ Dos pantallas decían distinta insulina activa (2026-09-18)
+La corrección decía **5,98 U** y la comida **2 U**, mismas dosis y mismo minuto.
+No era el cálculo: la etiqueta "Insulina todavía activa" mostraba `applied` —lo
+descontado, topado por la corrección—, así que valía dos cantidades. Hoy el
+activo se muestra **entero** y el descuento va en su propia fila.
+
+Y una dosis de hace horas se registraba como recién puesta: `new Date()` siempre,
+y "hace/rato/horas" eran **palabras de relleno** del parser. Infla el activo → la
+calculadora resta de más → el **0 U con 171 mg/dL** de su captura. Hoy se entiende
+con número y **no se inventa** sin él, y la tarjeta muestra con qué hora guarda.
+⚠️ `local-intent` **no tenía ningún test** hasta ese día. El ruteo tampoco
+secuestra ya la pantalla: para abrirse solo, el mensaje tiene que ser eso y nada
+más.
 
 ### ✅ Cerradas el 2026-09-11 — detalle en `reference/failure-history.md`
-El micrófono sin permiso por otro plugin; el campo nuevo requerido que rompió la
-app contra el servidor viejo; el ruteo por frases que no cubría cómo habla; y la
-IA que parecía tonta y estaba sin cablear (foto descartada, sin memoria, dosis
-sin salida) — con el riesgo clínico que introduje al cablearla y que cazó la
-revisión.
+Micrófono sin permiso por otro plugin; campo nuevo requerido que rompió la app
+contra el servidor viejo; ruteo por frases que no cubría cómo habla; y la IA que
+parecía tonta y estaba sin cablear.
+

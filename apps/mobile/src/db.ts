@@ -2583,10 +2583,76 @@ export async function confirmEpisodeInsulinContext(
   );
 }
 
+/**
+ * Enlaza sola la insulina que se guardó **en el mismo acto** que la comida.
+ *
+ * ## Por qué existe
+ *
+ * Verónica: *"cuando me meto a la app después de un tiempo siempre me pregunta
+ * si tal insulina era de tal comida. El 99% de los casos guardo la insulina
+ * junto a la comida, porque subo la comida y ahí mismo calculo. La app ya lo
+ * debería saber, no me lo debería estar preguntando todo el tiempo."*
+ *
+ * Tenía razón, y el dato estaba ahí desde siempre: "Nueva entrada" escribe la
+ * comida y su bolo con el **mismo `entry_group_id`**. Nadie lo consultaba.
+ * `insulin_context_confirmed` solo se ponía en 1 cuando ella contestaba a mano,
+ * así que preguntaba por registros que la propia app había agrupado.
+ *
+ * Es además la **Regla 3b** de `systemPatterns.md` aplicada donde faltaba: el
+ * candidato se buscaba por **cercanía de timestamp** (−90/+60 min), que es la
+ * causa raíz documentada del bug insulina↔comida de la Fase 21. Un mismo
+ * `entry_group_id` no es una coincidencia de hora: es un hecho.
+ *
+ * Corre al leer los pendientes, así que **repara también lo ya guardado**: la
+ * cola de preguntas atrasadas se vacía sola.
+ */
+async function linkInsulinSavedWithItsMeal(db: SQLiteDatabase): Promise<void> {
+  await db.runAsync(
+    `UPDATE meal_episodes
+        SET rapid_insulin_event_id = (
+              SELECT i.id FROM insulin_events i
+                JOIN meal_events m ON m.id = meal_episodes.meal_id
+               WHERE i.type = 'rapid'
+                 AND i.entry_group_id IS NOT NULL
+                 AND i.entry_group_id = m.entry_group_id
+               ORDER BY i.timestamp ASC LIMIT 1
+            ),
+            insulin_context_confirmed = 1,
+            updated_at = ?
+      WHERE insulin_context_confirmed = 0
+        AND EXISTS (
+              SELECT 1 FROM insulin_events i
+                JOIN meal_events m ON m.id = meal_episodes.meal_id
+               WHERE i.type = 'rapid'
+                 AND i.entry_group_id IS NOT NULL
+                 AND i.entry_group_id = m.entry_group_id
+            )`,
+    new Date().toISOString(),
+  );
+}
+
+/**
+ * La lectura más nueva que ya está guardada, o `null` si no hay ninguna.
+ *
+ * La usa la sincronización para pedir **desde ahí**, y no desde una ventana
+ * fija: con un hueco más largo que la ventana, lo del medio no se pedía nunca.
+ * Ver `syncWindowFrom` en `packages/domain`.
+ */
+export async function latestStoredReadingTimestamp(
+  db: SQLiteDatabase,
+): Promise<string | null> {
+  const row = await db.getFirstAsync<{ timestamp: string }>(
+    'SELECT timestamp FROM cgm_readings ORDER BY timestamp DESC LIMIT 1',
+  );
+  return row?.timestamp ?? null;
+}
+
 export async function getPendingInsulinAssociations(
   db: SQLiteDatabase,
   now = new Date(),
 ): Promise<PendingInsulinAssociation[]> {
+  // Primero se resuelve lo que la app ya sabe; solo lo que queda se pregunta.
+  await linkInsulinSavedWithItsMeal(db);
   const collecting = await getCollectingEpisodes(db);
   const ready = collecting.filter(({ meal, episode }) =>
     !episode.insulinContextConfirmed

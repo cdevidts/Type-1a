@@ -235,6 +235,7 @@ export function UnifiedEntryModal({
   therapyConfigured,
   catalogFoods,
   recentRapid,
+  recentRapidUnreadable = 0,
   recipes,
   focus = 'all',
   onClose,
@@ -254,6 +255,15 @@ export function UnifiedEntryModal({
    * usan para calcular, solo para mostrar contexto.
    */
   recentRapid?: readonly InsulinEvent[] | undefined;
+  /**
+   * Cuántas dosis recientes no se pudieron leer.
+   *
+   * `CorrectionModal` ya lo recibía y advertía; esta pantalla calcula y
+   * registra la MISMA dosis y no lo sabía. Con una fila ilegible decía "no
+   * quedan dosis actuando" sobre una dosis real, y el activo de menos empuja
+   * la dosis propuesta hacia arriba.
+   */
+  recentRapidUnreadable?: number | undefined;
   /** Recetas, para que el carrito pueda reusarlas. */
   recipes?: readonly Recipe[] | undefined;
   /**
@@ -481,8 +491,15 @@ export function UnifiedEntryModal({
         setDiastolic('');
         setImageUri(null);
         setImageRemoved(false);
-        const base = preset ?? new Date();
-        const stamp = preset === null ? new Date().toISOString() : base.toISOString();
+        // La hora que ella dijo en el chat ("hace 2 horas") viaja en el
+        // prefill. Sin esto, tocar "Corregir" abría el formulario con la hora
+        // ACTUAL y guardaba la dosis como recién puesta: el mismo bug que el
+        // chat acababa de arreglar, vivo en la otra rama del mismo botón.
+        const seededMinutesAgo = seed?.minutesAgo;
+        const base = preset ?? (seededMinutesAgo === undefined
+          ? new Date()
+          : new Date(Date.now() - seededMinutesAgo * 60_000));
+        const stamp = preset === null ? base.toISOString() : base.toISOString();
         setOpenedAt(stamp);
         setDayText(dayOfMonthISO(stamp));
         // Con fecha heredada la hora arranca **vacía** y es obligatoria.
@@ -1574,6 +1591,16 @@ export function UnifiedEntryModal({
               {...suggestion.breakdown}
               insulinConfigured={actionModel !== undefined}
             />
+            {recentRapidUnreadable > 0 ? (
+              // Misma advertencia que la corrección suelta: una lista
+              // incompleta hace que el activo salga de menos, y el activo de
+              // menos empuja la dosis propuesta hacia arriba.
+              <Text style={styles.below}>
+                {recentRapidUnreadable === 1
+                  ? 'Hay 1 dosis reciente que no se pudo leer, así que no entró en la insulina activa. Revísala antes de ponerte esta.'
+                  : `Hay ${recentRapidUnreadable} dosis recientes que no se pudieron leer, así que no entraron en la insulina activa. Revísalas antes de ponerte esta.`}
+              </Text>
+            ) : null}
             <Text style={styles.parameterSummary}>Con: {suggestion.parameterSummary}</Text>
             {suggestion.belowTargetNote === null ? null : (
               <Text style={styles.below}>{suggestion.belowTargetNote}</Text>

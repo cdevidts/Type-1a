@@ -1218,7 +1218,16 @@ function Type1AApp() {
     await saveEntry({
       timestamp: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
       ...(prefill.glucose === undefined ? {} : { manualGlucose: prefill.glucose.value }),
-      ...(prefill.carbsG === undefined ? {} : { carbsG: prefill.carbsG }),
+      // **La procedencia no se pierde.** `carbsG` a secas aterriza en
+      // `confirmedCarbsG` y el PDF del médico lo imprime como "N g
+      // confirmados". Los del chat salen de una estimación del modelo sobre
+      // una foto: `AGENTS.md` exige que sigan separados de lo que ella
+      // confirmó. Los otros dos caminos ya lo hacían; este los perdía.
+      ...(prefill.carbsG === undefined
+        ? {}
+        : prefill.carbsFromAi === true
+          ? { aiEstimatedCarbsG: prefill.carbsG }
+          : { carbsG: prefill.carbsG }),
       ...(prefill.rapidUnits === undefined ? {} : { rapidUnits: prefill.rapidUnits }),
       ...(prefill.basalUnits === undefined ? {} : { basalUnits: prefill.basalUnits }),
       ...(prefill.waterMl === undefined || prefill.waterMl === null ? {} : { waterMl: prefill.waterMl }),
@@ -1810,6 +1819,12 @@ function Type1AApp() {
         therapyConfigured={therapyConfigured}
         catalogFoods={catalogFoods}
         recentRapid={recentRapid}
+        // El maestro calcula y registra la MISMA dosis que la corrección
+        // suelta, y era el único de los dos que no sabía si la lista venía
+        // incompleta: con una fila ilegible decía "no quedan dosis actuando"
+        // sobre una dosis real, y el activo de menos empuja la dosis hacia
+        // arriba.
+        recentRapidUnreadable={recentRapidUnreadable}
         {...(rapidInsulinActionModel(profile) === undefined ? {} : { actionModel: rapidInsulinActionModel(profile)! })}
         recipes={recipes}
         onClose={() => { setMasterMode(null); }}

@@ -76,15 +76,20 @@ const MEAL_CONTEXT =
  * hace nada.
  */
 const ASKS_ABOUT_HISTORY =
-  /\b(?:ayer|anoche|semana|mes|ultim|pasad|promedio|historial|estadistic|tendencia|como me fue|como estuve|cuantas veces|que tal)/u;
+  /\b(?:ayer|anoche|semana|mes|meses|ultimos?|ultima?s?|pasad[oa]s?|promedio|historial|estadistic\w*|tendencia|como me fue|como estuve|cuantas veces|que tal)\b/u;
 
 export function insulinQuestionOpensCalculator(text: string): CalculatorRoute | null {
   const t = normalize(text);
 
   // "¿cuántas horas dura la basal?" pregunta por insulina y no pide dosis.
   if (INFORMATIONAL.test(t)) return null;
-  // Preguntar por sus correcciones pasadas no es pedir una ahora.
-  if (ASKS_ABOUT_HISTORY.test(t)) return null;
+  // Preguntar por sus correcciones pasadas no es pedir una ahora — **salvo que
+  // además pida una**. "¿cuánto me pongo para la cena? ayer quedé alta" es un
+  // pedido con contexto, y descartarlo entero era el otro lado de su queja
+  // ("casi que no ayuda en nada"). Solo corta cuando NO hay un pedido claro.
+  const asksForAnAmountNow = /\b(?:cuant\w*)\b[^.?!]{0,40}\b(?:me pongo|me pincho|me inyecto|unidad|insulin|bolo|dosis)\b/u.test(t)
+    || /\b(?:calcul)/u.test(t);
+  if (ASKS_ABOUT_HISTORY.test(t) && !asksForAnAmountNow) return null;
 
   const wantsCorrection = CORRECTION_STEM.test(t);
   // Pedir una cantidad, o preguntar si corresponde pincharse ahora.

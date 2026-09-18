@@ -228,6 +228,7 @@ export const NOT_REACHABLE_BY_AGENT: Readonly<Record<string, string>> = {
   migrateCachedPhotos: 'Migración interna de una sola vez, al abrir la app.',
   isFutureTimestamp: 'Guarda pura, sin efecto.',
   resolveLegacyBackendSensor: 'Resuelve si esta instalación puede usar la cuenta global del backend. Tocarla desde el chat podría hacer que un teléfono muestre el sensor de otra persona.',
+  latestStoredReadingTimestamp: 'Detalle interno de la sincronización: desde cuándo pedirle lecturas al sensor. No es una pregunta sobre su salud y no responde nada que ella quiera saber.',
   getSetting: 'Acceso crudo a ajustes por clave. El agente usa las herramientas con nombre, que sí declaran qué tocan.',
   setSetting: 'Escritura cruda de cualquier ajuste, incluidos los que gobiernan el sensor. Demasiado ancha para un modelo.',
 

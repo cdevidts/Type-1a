@@ -99,3 +99,22 @@ describe('calculatorOpensOnItsOwn — cuándo se mueve la pantalla sola', () => 
     expect(insulinQuestionOpensCalculator('cuántas correcciones me puse ayer')).toBeNull();
   });
 });
+
+describe('un pedido con contexto sigue siendo un pedido', () => {
+  it('no se come una dosis legítima por nombrar el pasado', () => {
+    // El otro lado de su queja ("casi que no ayuda en nada"): el atajo de
+    // historial era incondicional y descartaba la frase entera.
+    expect(insulinQuestionOpensCalculator('¿cuánto me pongo para la cena? ayer quedé alta')).toBe('meal');
+    expect(insulinQuestionOpensCalculator('calcula mi dosis, ayer quedé alta')).toBe('correction');
+  });
+
+  it('pero una pregunta que solo mira atrás no rutea', () => {
+    expect(insulinQuestionOpensCalculator('¿cómo me fue con las correcciones esta semana?')).toBeNull();
+    expect(insulinQuestionOpensCalculator('cuántas correcciones me puse ayer')).toBeNull();
+  });
+
+  it('"mesa" no es "mes"', () => {
+    // `\bmes` sin frontera final matcheaba "mesa" y mataba el ruteo.
+    expect(insulinQuestionOpensCalculator('cuánto me pongo, ya puse la mesa')).toBe('correction');
+  });
+});

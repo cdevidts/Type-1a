@@ -32,5 +32,6 @@ export * from './mysugr-import';
 export * from './nutrition-insights';
 export * from './regression';
 export * from './report';
+export * from './sync-window';
 export * from './units';
 export * from './vitals-summary';

@@ -254,7 +254,10 @@ export function CorrectionModal({
       await onRegister({
         units: result.roundedUnits,
         correctionUnits: result.roundedUnits,
-        iobUnits: result.activeInsulinUnits,
+        // Lo que se guarda y lo que se imprime es lo que se RESTÓ, no lo
+        // disponible (`contracts/safety-acceptance.md`). Coincidían por
+        // casualidad porque el botón solo existe con dosis > 0.
+        iobUnits: result.activeInsulinAppliedUnits,
       });
       onClose();
     } catch (error) {
@@ -345,6 +348,9 @@ export function CorrectionModal({
           <InsulinBreakdown
             correctionUnits={result.beforeActiveUnits}
             activeInsulinUnits={result.activeInsulinUnits}
+            // Lo aplicado, no lo disponible: sin esto la fila afirmaba haber
+            // descontado 5,98 U cuando solo había 2,37 que descontar.
+            activeInsulinAppliedUnits={result.activeInsulinAppliedUnits}
             activeDoseCount={activeDoseCount}
             totalUnits={result.roundedUnits}
             insulinConfigured={actionModel !== undefined}
