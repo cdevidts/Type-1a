@@ -82,18 +82,38 @@ export function InsulinBreakdown({
 
       {activeInsulinUnits === undefined ? null : (
         <>
+          {/*
+            **La insulina activa se muestra SIEMPRE entera, y el descuento va en
+            su propia fila.**
+
+            Antes esta fila decía "Insulina todavía activa" y mostraba `applied`
+            —lo que se alcanzó a descontar, topado por la corrección—, así que
+            la misma etiqueta valía dos cantidades distintas: la corrección
+            suelta decía "5.98 U activas" y la de comida "2 U activas" con las
+            MISMAS dosis y en el mismo minuto. Verónica lo vio en el teléfono y
+            lo reportó como un error de cálculo. No lo era: era la etiqueta
+            mintiendo. En una pantalla de dosis eso es exactamente lo que no
+            puede pasar.
+          */}
           <Row
-            label={`Insulina todavía activa${activeDoseCount === 0 ? '' : ` · ${activeDoseCount} ${activeDoseCount === 1 ? 'dosis' : 'dosis'}`}${activeWasSubtracted ? '' : ' (informativo)'}`}
-            value={activeWasSubtracted ? `− ${round(applied)} U` : `${round(activeInsulinUnits)} U`}
+            label={`Insulina todavía activa${activeDoseCount === 0 ? '' : ` · ${activeDoseCount} ${activeDoseCount === 1 ? 'dosis' : 'dosis'}`}`}
+            value={`${round(activeInsulinUnits)} U`}
             emphasis
           />
-          {unused <= 0.005 ? null : (
-            // La línea que hace que la resta cuadre. Sin ella el panel muestra
-            // "− 9 U" sobre un total que solo bajó 3 y parece un error.
-            <Row
-              label="No se descontó (tu comida no se toca)"
-              value={`${round(unused)} U`}
-            />
+          {!activeWasSubtracted ? (
+            <Row label="No se descontó (este conteo no calcula corrección)" value="0 U" />
+          ) : (
+            <>
+              <Row label="Descontado de la corrección" value={`− ${round(applied)} U`} emphasis />
+              {unused <= 0.005 ? null : (
+                // La línea que hace que la resta cuadre. Sin ella el panel
+                // muestra "− 9 U" sobre un total que solo bajó 3.
+                <Row
+                  label="No se descontó (tu comida no se toca)"
+                  value={`${round(unused)} U`}
+                />
+              )}
+            </>
           )}
         </>
       )}

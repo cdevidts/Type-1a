@@ -1210,8 +1210,13 @@ function Type1AApp() {
 
   /** Escribe lo que ella confirmó en la tarjeta. Nada se guarda antes. */
   async function confirmAgentDraft(prefill: EntryPrefill): Promise<void> {
+    // **La hora que ella dijo, no la de ahora.** Guardar "me puse 6 de rápida
+    // hace un rato" con la hora actual infla la insulina activa, y la
+    // calculadora resta de más: con 171 mg/dL le propuso 0 U. El tiempo que
+    // dice una frase no es relleno.
+    const minutesAgo = prefill.minutesAgo ?? 0;
     await saveEntry({
-      timestamp: new Date().toISOString(),
+      timestamp: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
       ...(prefill.glucose === undefined ? {} : { manualGlucose: prefill.glucose.value }),
       ...(prefill.carbsG === undefined ? {} : { carbsG: prefill.carbsG }),
       ...(prefill.rapidUnits === undefined ? {} : { rapidUnits: prefill.rapidUnits }),

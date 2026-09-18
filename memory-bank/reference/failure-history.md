@@ -70,3 +70,61 @@ Cada uno costó un build o un número falso; detalle en `git log`.
 | Se escribieron reglas de ProGuard sin encender la minificación que las ejecuta, y se dieron por buenas | una mitad de un arreglo es peor que ninguna: parece hecho |
 | Encendida la minificación, la regla **tampoco borró nada del APK**, con la configuración generada correcta | un arreglo cuyo efecto no se puede mirar no es un arreglo: se parcheó el origen, que sí se comprueba en el archivo instalable |
 | Se le dijo a Verónica que el log del sistema "solo se ve con un cable", sin verificarlo | una evaluación de exposición se comprueba en la fuente; Android dice que hay apps de fábrica con `READ_LOGS` |
+
+## Las corridas del 2026-09-11, enteras
+
+> Salieron de `progress.md` el 2026-09-18 por el techo de 150 líneas. Son
+> cerradas: se leen cuando alguien va a tocar el chat, el ruteo o un contrato
+> entre la app y el backend.
+
+### 🔴→✅ Un campo nuevo requerido rompió la app contra el servidor viejo (2026-09-11)
+`opens` entró **requerido** en `AgentTurnSchema` y el servidor desplegado no lo
+manda, así que el teléfono rechazaba **todas** las respuestas y le mostraba el
+volcado de Zod donde esperaba una frase. **Regla: un campo nuevo que el cliente
+LEE entra siempre con `.default()`.** Una app instalada siempre habla con un
+servidor que puede ser más viejo que ella.
+
+Dos más de la misma captura: el error mostraba `caught.message` crudo (un error
+técnico no es una respuesta) y un `say` vacío no se veía. Y si el fallo es de red
+**y** pedía una dosis, igual aparece el botón: la calculadora no usa internet.
+
+### 🔴→✅ El ruteo por frases no cubría cómo habla (2026-09-11)
+"Quiero hacerme una corregida" no lo tocaba ninguna frase listada. Ella lo dijo
+completo: *"no puede ser que palabras clave determinen la respuesta, es el
+contenido lo que importa"*, y describió la arquitectura: **su texto → el agente
+determina qué palabras del ruteo corresponden → ruteo → respuesta, con la IA de
+fallback para que nunca falte una respuesta coherente.**
+
+Tres capas: (1) el teléfono normaliza —sin tildes, minúsculas— y reconoce
+**raíces** (`correg|correcc|corrij` cubre corregirme/corregida/corrección),
+instantáneo y sin red; (2) el modelo decide con `opens`; (3) todo rechazo lleva
+botón. El test usa **las frases reales de sus capturas** + una invariante: todo
+lo que abre una calculadora tiene que ser algo que el guardia rechazaría — cazó
+una divergencia ("me pincho?").
+
+### 🔴→✅ El guardia tampoco veía esas frases (2026-09-11)
+Mismo origen, y no era comodidad: la pregunta **llegaba al modelo** (3,2 s contra
+los 0,7 s del guardia), que existe para no depender de que el modelo se porte
+bien. Ahora también va por raíz.
+
+### ✅ Y antes: la IA no estaba tonta, estaba sin cablear (2026-09-11)
+1. **La foto se descartaba** (`void imageBase64`) y el botón de cámara no hacía
+   nada. Ahora va a `/v1/ai/meal-analysis` y vuelve como borrador.
+2. **No había memoria**: no se mandaba `history`. Verificado en vivo: una
+   pregunta de seguimiento se entiende, y **dice que no tiene el dato en vez de
+   inventarlo**.
+3. **Pedir una dosis era un callejón.** Ahora abre la calculadora; el modelo
+   sigue sin dar números.
+
+Al cablear (3) **introduje un riesgo clínico y lo cazó la revisión**: un `return`
+temprano se comía el resto del mensaje, así que "me puse 4 de rápida, ¿cuánto me
+pincho?" navegaba **tirando las 4 U** y la calculadora afirmaba "no hay eventos
+registrados" sobre una dosis activa → propondría **más** corrección. Hoy el
+borrador se muestra **antes**, y con algo que guardar o con foto **no se navega**:
+aparece un botón. Los otros cinco hallazgos: el encuadre se pintaba en una
+pantalla que se cerraba en el mismo render (viaja como aviso); decía "tu glucosa
+del sensor" con `latestLiveReading`, que incluye manuales y sintéticas; sin
+parámetros mandaba a tres campos en blanco (ahora a Ajustes); el texto sin
+precarga negaba la lectura aunque ella la hubiera borrado; y se saltaba
+`openQuickRoute`. El error de red además **mentía** ("lo que escribiste sigue
+acá" con el cuadro vacío).

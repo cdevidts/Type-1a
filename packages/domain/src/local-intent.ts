@@ -60,7 +60,12 @@ export type LocalIntent =
     }
   | { kind: 'glucose'; value: number; unit: GlucoseUnit }
   | { kind: 'carbs'; grams: number }
-  | { kind: 'insulin'; units: number; insulinType: 'rapid' | 'basal' };
+  | { kind: 'insulin'; units: number; insulinType: 'rapid' | 'basal' }
+  /**
+   * Hace cuánto ocurrió. **Solo cuando ella lo dice con un número**: "hace un
+   * rato" no se traduce a nada, igual que "un vaso" no se traduce a 250 ml.
+   */
+  | { kind: 'elapsed'; minutesAgo: number };
 
 export interface LocalParseResult {
   /**
@@ -188,6 +193,34 @@ export function isPlausibleGlucose(value: number, unit: GlucoseUnit): boolean {
  * pre-llenar**, así el formulario abre lleno al instante en vez de en blanco
  * mientras llega la respuesta.
  */
+/**
+ * "hace 2 horas", "hace 40 minutos", "hace una hora y media".
+ *
+ * Se exige un número: **"hace un rato" no se convierte en nada**, porque
+ * inventar 30 minutos sobre una dosis de insulina mueve la insulina activa y
+ * con ella la corrección que la app propone.
+ */
+const ELAPSED_PATTERN =
+  /\bhace\s+(?:(\d{1,3})|una?|medi[ao])\s*(?:(y\s+medi[ao])\s*)?(h|hr|hrs|hora|horas|min|mins|minuto|minutos)\b/iu;
+
+/** Minutos que dice la frase, o `null` si no dice un tiempo concreto. */
+export function parseElapsedMinutes(text: string): number | null {
+  const match = ELAPSED_PATTERN.exec(text);
+  if (match === null) return null;
+  const [, digits, andHalf, rawUnit] = match;
+  const isHours = /^h/iu.test(rawUnit ?? '');
+  let amount: number;
+  if (digits !== undefined) amount = Number(digits);
+  else if (/medi/iu.test(match[0])) amount = 0.5;
+  else amount = 1; // "hace una hora"
+  if (andHalf !== undefined) amount += 0.5;
+  const minutes = Math.round(isHours ? amount * 60 : amount);
+  // Un tiempo absurdo se ignora en vez de registrarse: más de tres días atrás
+  // no es algo que se cuente de pasada en un chat.
+  if (!Number.isFinite(minutes) || minutes <= 0 || minutes > 3 * 24 * 60) return null;
+  return minutes;
+}
+
 export function parseLocalIntent(text: string, unit: GlucoseUnit): LocalParseResult {
   const intents: LocalIntent[] = [];
   let rest = text;
@@ -205,6 +238,15 @@ export function parseLocalIntent(text: string, unit: GlucoseUnit): LocalParseRes
     if (intents.some((existing) => slotOf(existing) === slotOf(intent))) continue;
     intents.push(intent);
     rest = rest.replace(pattern.re, ' ');
+  }
+
+  // El tiempo se lee sobre el texto ORIGINAL, no sobre `rest`: los patrones de
+  // arriba ya consumieron trozos, y "hace" estaba además en la lista de
+  // relleno, así que buscarlo en el sobrante lo perdería.
+  const minutesAgo = parseElapsedMinutes(text);
+  if (minutesAgo !== null && intents.length > 0) {
+    intents.push({ kind: 'elapsed', minutesAgo });
+    rest = rest.replace(ELAPSED_PATTERN, ' ');
   }
 
   const leftover = hasSubstance(rest) ? tidy(rest) : '';
@@ -255,6 +297,20 @@ function hasSubstance(rest: string): boolean {
  * dice "habló de agua pero no de cuánta", que no es lo mismo que no mencionarla.
  */
 export interface EntryPrefill {
+  /**
+   * Hace cuántos minutos ocurrió, si ella lo dijo.
+   *
+   * Ausente = no lo dijo, y entonces la pantalla registra **ahora** — pero lo
+   * dice antes de guardar, que es lo que faltaba.
+   *
+   * Existe por un error con consecuencia clínica: "hace", "rato", "horas" y
+   * "minutos" estaban en la lista de palabras de relleno, así que "me puse 6
+   * de rápida hace un rato" guardaba las 6 U **con la hora actual**. Una dosis
+   * vieja registrada como recién puesta infla la insulina activa, y la
+   * calculadora entonces resta de más: a Verónica le propuso 0 U teniendo 171
+   * mg/dL. Descartar el tiempo no era neutro.
+   */
+  minutesAgo?: number;
   glucose?: { value: number; unit: GlucoseUnit };
   carbsG?: number;
   rapidUnits?: number;
@@ -272,7 +328,8 @@ export interface EntryPrefill {
 export function toPrefill(intents: readonly LocalIntent[]): EntryPrefill {
   const prefill: EntryPrefill = {};
   for (const intent of intents) {
-    if (intent.kind === 'glucose') prefill.glucose = { value: intent.value, unit: intent.unit };
+    if (intent.kind === 'elapsed') prefill.minutesAgo = intent.minutesAgo;
+    else if (intent.kind === 'glucose') prefill.glucose = { value: intent.value, unit: intent.unit };
     else if (intent.kind === 'carbs') prefill.carbsG = intent.grams;
     else if (intent.kind === 'water') prefill.waterMl = intent.ml;
     else if (intent.insulinType === 'rapid') prefill.rapidUnits = intent.units;

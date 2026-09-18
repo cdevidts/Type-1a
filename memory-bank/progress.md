@@ -96,55 +96,36 @@ el picker no la necesita (`mediaTypes: ['images']` en cada `launchCameraAsync`).
 **Verificado en el manifiesto generado por `prebuild` ANTES de construir**, que
 es lo que faltó. `microphonePermissionSurvives()` lo detiene.
 
-### 🔴→✅ Un campo nuevo requerido rompió la app contra el servidor viejo (2026-09-11)
-`opens` entró **requerido** en `AgentTurnSchema` y el servidor desplegado no lo
-manda, así que el teléfono rechazaba **todas** las respuestas y le mostraba el
-volcado de Zod donde esperaba una frase. **Regla: un campo nuevo que el cliente
-LEE entra siempre con `.default()`.** Una app instalada siempre habla con un
-servidor que puede ser más viejo que ella.
+### 🔴→✅ Dos pantallas decían distinta insulina activa, y la hora se inventaba (2026-09-18)
+Ella lo cazó en el teléfono: la corrección decía **5,98 U activas** y la edición
+de la comida **2 U**, con las mismas dosis y en el mismo minuto.
 
-Dos más de la misma captura: el error mostraba `caught.message` crudo (un error
-técnico no es una respuesta) y un `say` vacío no se veía. Y si el fallo es de red
-**y** pedía una dosis, igual aparece el botón: la calculadora no usa internet.
+**No era un error de cálculo: era la etiqueta.** `InsulinBreakdown` rotulaba
+"Insulina todavía activa" y mostraba `applied` —lo que se alcanzó a descontar,
+topado por la corrección—, así que la misma etiqueta valía dos cantidades. Ahora
+la insulina activa se muestra **siempre entera**, y el descuento va en su propia
+fila. En una pantalla de dosis esto es lo que menos puede pasar.
 
-### 🔴→✅ El ruteo por frases no cubría cómo habla (2026-09-11)
-"Quiero hacerme una corregida" no lo tocaba ninguna frase listada. Ella lo dijo
-completo: *"no puede ser que palabras clave determinen la respuesta, es el
-contenido lo que importa"*, y describió la arquitectura: **su texto → el agente
-determina qué palabras del ruteo corresponden → ruteo → respuesta, con la IA de
-fallback para que nunca falte una respuesta coherente.**
+**Y una dosis de hace horas se registraba como recién puesta.** `confirmAgentDraft`
+estampaba `new Date()` siempre, y "hace", "rato", "horas" y "minutos" estaban en
+la lista de **palabras de relleno** del parser. "Me puse 6 de rápida hace un
+rato" → 6 U con la hora actual → insulina activa inflada → la calculadora resta
+de más y le propuso **0 U con 171 mg/dL**. Descartar el tiempo no era neutro.
+Ahora `parseElapsedMinutes` lo entiende cuando hay un número ("hace 2 horas",
+"hace media hora") y **no inventa nada** cuando no lo hay ("hace un rato"), la
+tarjeta muestra **siempre** con qué hora va a guardar, y `confirmAgentDraft` la
+respeta. ⚠️ `local-intent` **no tenía ningún test** hasta hoy.
 
-Tres capas: (1) el teléfono normaliza —sin tildes, minúsculas— y reconoce
-**raíces** (`correg|correcc|corrij` cubre corregirme/corregida/corrección),
-instantáneo y sin red; (2) el modelo decide con `opens`; (3) todo rechazo lleva
-botón. El test usa **las frases reales de sus capturas** + una invariante: todo
-lo que abre una calculadora tiene que ser algo que el guardia rechazaría — cazó
-una divergencia ("me pincho?").
+**El ruteo ya no secuestra la pantalla.** *"Si se detecta en el mensaje una
+palabra clave, te abre un modal aunque no sea lo que quieres"*. Dos reglas:
+preguntar por correcciones **pasadas** no rutea (`ASKS_ABOUT_HISTORY`), y
+`calculatorOpensOnItsOwn` exige que el mensaje sea **eso y nada más** —corto, sin
+nada que registrar, sin foto, sin dos preguntas— para abrirse solo. Con cualquier
+otra cosa viene un botón y decide ella. Concilia sus dos quejas opuestas.
 
-### 🔴→✅ El guardia tampoco veía esas frases (2026-09-11)
-Mismo origen, y no era comodidad: la pregunta **llegaba al modelo** (3,2 s contra
-los 0,7 s del guardia), que existe para no depender de que el modelo se porte
-bien. Ahora también va por raíz.
-
-### ✅ Y antes: la IA no estaba tonta, estaba sin cablear (2026-09-11)
-1. **La foto se descartaba** (`void imageBase64`) y el botón de cámara no hacía
-   nada. Ahora va a `/v1/ai/meal-analysis` y vuelve como borrador.
-2. **No había memoria**: no se mandaba `history`. Verificado en vivo: una
-   pregunta de seguimiento se entiende, y **dice que no tiene el dato en vez de
-   inventarlo**.
-3. **Pedir una dosis era un callejón.** Ahora abre la calculadora; el modelo
-   sigue sin dar números.
-
-Al cablear (3) **introduje un riesgo clínico y lo cazó la revisión**: un `return`
-temprano se comía el resto del mensaje, así que "me puse 4 de rápida, ¿cuánto me
-pincho?" navegaba **tirando las 4 U** y la calculadora afirmaba "no hay eventos
-registrados" sobre una dosis activa → propondría **más** corrección. Hoy el
-borrador se muestra **antes**, y con algo que guardar o con foto **no se navega**:
-aparece un botón. Los otros cinco hallazgos: el encuadre se pintaba en una
-pantalla que se cerraba en el mismo render (viaja como aviso); decía "tu glucosa
-del sensor" con `latestLiveReading`, que incluye manuales y sintéticas; sin
-parámetros mandaba a tres campos en blanco (ahora a Ajustes); el texto sin
-precarga negaba la lectura aunque ella la hubiera borrado; y se saltaba
-`openQuickRoute`. El error de red además **mentía** ("lo que escribiste sigue
-acá" con el cuadro vacío).
-
+### ✅ Cerradas el 2026-09-11 — detalle en `reference/failure-history.md`
+El micrófono sin permiso por otro plugin; el campo nuevo requerido que rompió la
+app contra el servidor viejo; el ruteo por frases que no cubría cómo habla; y la
+IA que parecía tonta y estaba sin cablear (foto descartada, sin memoria, dosis
+sin salida) — con el riesgo clínico que introduje al cablearla y que cazó la
+revisión.

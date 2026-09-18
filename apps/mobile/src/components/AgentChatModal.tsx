@@ -5,6 +5,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, 
 
 import {
   hasPrefill,
+  calculatorOpensOnItsOwn,
   insulinQuestionOpensCalculator,
   parseLocalIntent,
   toPrefill,
@@ -211,12 +212,20 @@ export function AgentChatModal({
     //    con foto, primero se guarda: el botón queda ahí y lo aprieta ella.
     const calculator = insulinQuestionOpensCalculator(trimmed);
     if (calculator !== null) {
-      const blocked = hasSomethingToLog || imageBase64 !== undefined;
+      // Se abre sola SOLO si el mensaje era eso y nada más. En cuanto trae algo
+      // que registrar, una foto, o parece una frase con más de un pedido
+      // adentro, viene con botón: la pantalla no se le mueve debajo de los
+      // dedos. Las dos quejas de ella, conciliadas.
+      const blocked = hasSomethingToLog
+        || imageBase64 !== undefined
+        || !calculatorOpensOnItsOwn(trimmed);
       push({
         id: newId(),
         role: 'assistant',
-        text: blocked
+        text: hasSomethingToLog
           ? 'La dosis no te la digo yo, la calcula la app con tus parámetros. Guarda primero lo de arriba para que entre en el cálculo, y después abre la calculadora.'
+          : blocked
+          ? 'La dosis la calcula la app con tus parámetros. Te dejo el acceso acá para que la abras cuando quieras.'
           // No se nombra la fuente de la glucosa: `latestLiveReading` incluye
           // lecturas manuales y sintéticas, y decir "del sensor" sería
           // presentarlas como lo que no son. La calculadora ya rotula la
@@ -534,6 +543,7 @@ function Bubble({
   const [saving, setSaving] = useState(false);
   const mine = message.role === 'user';
   const rows = useMemo(() => (message.prefill === undefined ? [] : describePrefill(message.prefill)), [message.prefill]);
+  const when = message.prefill === undefined ? null : describeEntryTime(message.prefill.minutesAgo);
 
   return (
     <View style={[styles.bubble, mine ? styles.mine : styles.theirs]}>
@@ -558,6 +568,14 @@ function Bubble({
               <Text style={styles.cardValue}>{row.value}</Text>
             </View>
           ))}
+          {when === null ? null : (
+            // La hora va SIEMPRE, incluso cuando es "Ahora": es el dato que
+            // decide cuánta insulina sigue activa, y se guardaba sin verse.
+            <View style={styles.cardRow}>
+              <Text style={styles.cardLabel}>Se guarda con la hora</Text>
+              <Text style={styles.cardValue}>{when}</Text>
+            </View>
+          )}
           {message.pending === true ? (
             <View style={styles.cardActions}>
               <Pressable
@@ -591,6 +609,21 @@ function Bubble({
 }
 
 /** Los campos del borrador, en palabras y con su unidad al lado. */
+/**
+ * Cuándo se va a guardar, en palabras.
+ *
+ * Va SIEMPRE en la tarjeta, incluso cuando es "ahora": la hora es el dato que
+ * decide cuánta insulina sigue activa, y se guardaba en silencio. Verlo antes
+ * de tocar Guardar es lo que permite cazarlo.
+ */
+export function describeEntryTime(minutesAgo: number | undefined): string {
+  if (minutesAgo === undefined || minutesAgo === 0) return 'Ahora';
+  if (minutesAgo < 60) return `Hace ${minutesAgo} min`;
+  const hours = Math.floor(minutesAgo / 60);
+  const rest = minutesAgo % 60;
+  return rest === 0 ? `Hace ${hours} h` : `Hace ${hours} h ${rest} min`;
+}
+
 export function describePrefill(prefill: EntryPrefill): { label: string; value: string }[] {
   const rows: { label: string; value: string }[] = [];
   if (prefill.glucose !== undefined) {

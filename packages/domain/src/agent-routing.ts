@@ -66,11 +66,25 @@ const MEAL_CONTEXT =
  * intención. Al revés, "me puse 4 de rápida" abriría una calculadora encima de
  * un dato que ella acaba de dictar — y eso ya pasó una vez.
  */
+/**
+ * Preguntas **sobre sus datos**, que nombran correcciones sin pedir una.
+ *
+ * "¿cómo me fue con las correcciones esta semana?" tiene la raíz `correcc` y
+ * no está pidiendo pincharse. Verónica lo reportó así: *"si se detecta en el
+ * mensaje una palabra clave, te abre un modal aunque no sea lo que quieres"*.
+ * Una app que secuestra la pantalla por una palabra es peor que una que no
+ * hace nada.
+ */
+const ASKS_ABOUT_HISTORY =
+  /\b(?:ayer|anoche|semana|mes|ultim|pasad|promedio|historial|estadistic|tendencia|como me fue|como estuve|cuantas veces|que tal)/u;
+
 export function insulinQuestionOpensCalculator(text: string): CalculatorRoute | null {
   const t = normalize(text);
 
   // "¿cuántas horas dura la basal?" pregunta por insulina y no pide dosis.
   if (INFORMATIONAL.test(t)) return null;
+  // Preguntar por sus correcciones pasadas no es pedir una ahora.
+  if (ASKS_ABOUT_HISTORY.test(t)) return null;
 
   const wantsCorrection = CORRECTION_STEM.test(t);
   // Pedir una cantidad, o preguntar si corresponde pincharse ahora.
@@ -91,4 +105,28 @@ export function insulinQuestionOpensCalculator(text: string): CalculatorRoute | 
   if (IS_A_LOG.test(t) && !asksAmount && !asksToCalculate && !wantsCorrection) return null;
 
   return MEAL_CONTEXT.test(t) ? 'meal' : 'correction';
+}
+
+/**
+ * Si la pantalla se puede abrir **sola**, o solo ofrecerse con un botón.
+ *
+ * La distinción existe porque las dos quejas de Verónica son opuestas y las
+ * dos son válidas: *"no me digas si tienes que abrirla, solo ábrela"* cuando
+ * pide una dosis y nada más, y *"te abre un modal aunque no sea lo que
+ * quieres"* cuando la frase decía otra cosa además.
+ *
+ * La regla que las concilia: **se abre sola solo cuando el mensaje es eso y
+ * nada más.** Una frase corta, sin nada que registrar, sin foto y sin otra
+ * pregunta adentro. En cuanto hay algo más, el turno trae un botón y decide
+ * ella — nunca se le mueve la pantalla debajo de los dedos.
+ */
+export function calculatorOpensOnItsOwn(text: string): boolean {
+  const route = insulinQuestionOpensCalculator(text);
+  if (route === null) return false;
+  const t = normalize(text).trim();
+  // Un mensaje largo casi siempre trae otra cosa además del pedido.
+  if (t.length > 70) return false;
+  // Dos preguntas en un mensaje: la segunda se perdería al cambiar de pantalla.
+  if ((t.match(/\?/gu) ?? []).length > 1) return false;
+  return true;
 }

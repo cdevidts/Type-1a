@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { insulinQuestionOpensCalculator } from './agent-routing';
+import { calculatorOpensOnItsOwn, insulinQuestionOpensCalculator } from './agent-routing';
 import { requestsInsulinAdvice } from './ai-safety';
 
 /**
@@ -73,5 +73,29 @@ describe('el guardia del servidor ve lo mismo', () => {
     for (const frase of ABRE_CORRECCION) {
       expect(requestsInsulinAdvice(frase), frase).toBe(true);
     }
+  });
+});
+
+describe('calculatorOpensOnItsOwn — cuándo se mueve la pantalla sola', () => {
+  it('se abre sola cuando el mensaje es solo eso', () => {
+    for (const frase of ['Quiero corregirme', 'me pincho?', 'cuánto me pongo']) {
+      expect(calculatorOpensOnItsOwn(frase), frase).toBe(true);
+    }
+  });
+
+  it('NO se abre sola si el mensaje trae algo más', () => {
+    // La queja de ella: "te abre un modal aunque no sea lo que quieres".
+    for (const frase of [
+      '¿cómo me fue con las correcciones esta semana?',
+      'quiero corregirme pero antes dime cómo estuve ayer y qué comí',
+      '¿me pincho? ¿o espero a comer?',
+    ]) {
+      expect(calculatorOpensOnItsOwn(frase), frase).toBe(false);
+    }
+  });
+
+  it('una pregunta sobre correcciones pasadas no rutea a ninguna parte', () => {
+    expect(insulinQuestionOpensCalculator('¿cómo me fue con las correcciones esta semana?')).toBeNull();
+    expect(insulinQuestionOpensCalculator('cuántas correcciones me puse ayer')).toBeNull();
   });
 });
